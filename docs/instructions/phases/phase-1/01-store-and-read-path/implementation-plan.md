@@ -69,6 +69,7 @@ The HTTP API. The React SPA.
 | **DEC-4** | **Findings carry severity; `is_valid` means no ERROR.** | Spec §4 grades V6 a warning. A single boolean would let a stray `.swp` file make an artifact uninstallable. | Boolean validity — rejected: blocks install on cosmetic findings. | C-3 |
 | **DEC-5** | **`--json` is the machine contract; human output is not.** | Frees the columnar format to change forever, and removes the brittle substring assertions the review flagged. | Human output as contract — rejected: every column tweak becomes breaking. Ruling R7. | C-5, T-7 |
 | **DEC-6** | **MCP wire payloads are shared DTOs in `application/read/dtos.py`.** | `mcp/` must not import `api/`, and initiative 03 must not invent a second serialisation of the same entity. | Inline dict construction per adapter — rejected: two serialisations of one entity, guaranteed to diverge. | C-7 |
+| **DEC-8** | **The `library.yaml` domain types (`ArtifactMetadata`, `Collection`, `LibraryMetadata`) move from T-4 into T-2.** | T-3 implements V7, which validates that every `library.yaml` entry resolves — so it consumes those types. With them in T-4, T-3 and T-4 share a type and must run sequentially. Moving the types into T-2, where the domain vocabulary already lives, leaves T-4 as a pure infrastructure reader and makes the pair genuinely independent: different files, different layers, both consuming frozen T-2 types. | Leaving them in T-4 — rejected: forces the only available parallelism in the plan to be given up for no structural benefit. Also considered moving V7 into T-4, rejected because it splits the validation rules across two layers and fights DEC-1. | T-2, T-3, T-4 |
 | **DEC-7** | **The MCP tool list is derived from one source, not hand-maintained beside it.** | A hand-written name tuple next to the schema list means the test guarding the read-only surface passes through exactly the change it exists to catch. | Parallel constant — rejected: the guard is theatre. | C-7, T-8 |
 
 ## 6. Contracts & interfaces (C-N)
@@ -90,7 +91,17 @@ one. Field lists and signatures only — the specialist writes the bodies.
 ## 7. Work breakdown & dispatch (T-N)
 
 All tasks: owner `backend-developer-specialist`, territory `src/harness_library/**` and `tests/**`.
-Serial — each consumes the previous task's frozen types. No parallel group.
+
+**Concurrency.** Graded per `cost-and-time.md` §2 — shared *files*, *types*, *vocabulary* and *test
+fixtures* all force sequencing, and topic separation is not independence. Exactly one pair qualifies.
+
+| Group | Tasks | Why |
+|---|---|---|
+| **P-A** | T-3 ∥ T-4 | Independent after DEC-8: `domain/assembly.py` vs `infrastructure/library_yaml.py`, different layers, no shared type. Run in separate worktrees, **gates staggered** (§3). |
+| — | all others | T-7 and T-8 both register commands in `cli/main.py` — a shared file, therefore sequential regardless of the wall-clock appeal. Every other task consumes the previous one's frozen types. |
+
+**T-1 is reconnaissance** (§4). The toolchain traps L1, L3 and L4 all land in it, and it runs alone
+before anything is scoped against its outcome.
 
 | # | Deliverable | Layer | Depends on |
 |---|---|---|---|

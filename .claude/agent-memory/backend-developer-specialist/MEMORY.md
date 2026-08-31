@@ -1,4 +1,0 @@
-- [Plan 1 review and frozen contracts](harness-library-plan1-review.md) — where the 8 locked contracts and the 9-task recut live; read §3 before implementing
-- [V3 false positives on redirect stubs](v3-redirect-stub-false-positives.md) — 7 expected V3 findings on the real library; not a regex bug
-- [pyyaml carve-out](pyyaml-carve-out.md) — banned by the skill, used here for library.yaml; ruling still owed
-- [tests/ package import trap](tests-package-import-trap.md) — `from tests.x import y` fails without __init__.py + pythonpath root

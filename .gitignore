@@ -19,5 +19,8 @@ dist/
 # uv.lock is intentionally NOT ignored: it is the reproducible resolution of the
 # dependency set approved in the backend charter §4.
 
-# Agent-local scratch state; durable lessons live in docs/instructions/specialist-dispatch-lessons.md
+# Agent-local scratch. Durable lessons live in docs/instructions/specialist-dispatch-lessons.md,
+# which is the delivery lead's to write and is pasted verbatim into every dispatch. Two homes for
+# one lesson is how they drift (see R13). Ruling R12.
 **/.claude/agent-memory/
+**/.claude/worktrees/

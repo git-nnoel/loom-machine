@@ -479,3 +479,153 @@ distinct names.
 
 No scanner, no repository, no use case, no adapter. No dependency change, no `pyproject.toml` edit,
 no commit. Nothing under `docs/` except this section.
+
+---
+
+# T-5 backend task plan — the scanner, the repository, and the fixture library
+
+Written before the first edit. Task: phase-1 / initiative 01-store-and-read-path / T-5.
+Layer: `infrastructure/` only, plus `tests/**`. Depends on T-3 (assembler) and T-4 (reader), both
+landed. Nothing under `domain/` is touched — if this task wants to, the seam is wrong (DEC-1).
+
+## Understanding
+
+Everything above this task is provably correct against literals and provably blind to the disk. T-3's
+own test module says so: it cannot prove the scanner *records* a symlink as skipped, only that a
+recorded skip becomes a V6 warning. T-5 is where every one of those assumptions meets a real
+filesystem. The deliverable is three things — a scanner that produces `RawArtifact` values, a
+repository that composes scanner + reader + `assemble_library` behind contract C-4, and a **committed
+fixture library** (P-4) that reproduces every failure charter §8 exists to catch.
+
+## The seam
+
+| File | Holds |
+|---|---|
+| `infrastructure/timestamps.py` | Ruling R5. `Timestamp`, the `ArtifactTimestamps` protocol, `GitTimestamps`, `FixedTimestamps` |
+| `infrastructure/scanner.py` | `scan_library(root) -> tuple[RawArtifact, ...]` — the walk, the skip decisions, hashing, entry parsing |
+| `infrastructure/repository.py` | `FilesystemArtifactRepository` — contract C-4 over a held snapshot |
+| `tests/fixtures/library/**` | The committed fixture library (P-4). Never deleted — charter §10 |
+
+`subprocess` lives in `timestamps.py` and nowhere else. This is the module lesson L13 predicted would
+be written into `domain/` next to the field it fills; it is not, and `tests/domain/test_purity.py` is
+left exactly as it is, still arming `subprocess` in `FORBIDDEN_ROOTS`.
+
+## R5, concretely
+
+`GitTimestamps` is constructed once per scan and asks git two questions up front, not per artifact:
+
+1. `git -C <root> rev-parse --show-toplevel --show-prefix` — is this a work tree, and where does the
+   library root sit inside it. A non-zero exit (no repository, or no `git`) means **every** artifact
+   takes the mtime path.
+2. `git -C <root> status --porcelain -z -uall -- .` — the set of paths with uncommitted changes, once.
+   `-z` because `core.quotePath` mangles non-ASCII names in the default format, and rename records
+   carry a second path field that the parser consumes explicitly.
+
+Then per artifact: dirty (by path prefix) → mtime, `is_dirty=True`. Otherwise
+`git log -1 --format=%cI -- :(literal)<path>`; empty output → mtime, `is_dirty=True`. The pathspec is
+the **artifact root**, so "the last commit touching the artifact's paths" is one question, and
+`:(literal)` stops a name containing a glob character from being read as a pattern.
+
+`is_dirty` is set on **both** fallback paths, which is what `Artifact.is_dirty`'s docstring already
+promises: it means "`updated_at` came from mtime rather than from git".
+
+mtime fallback = max mtime over the artifact's **scanned files**, or the artifact root's own mtime
+when it has none (a V1 directory has no files, and git cannot track an empty directory either).
+
+## Skip decisions (R6 and charter §8)
+
+Checked in this order, because `is_dir()` and `is_file()` follow links and `is_symlink()` does not:
+
+| Test | `SkipReason` |
+|---|---|
+| `is_symlink()` | `SYMLINK`, detail = the raw `readlink` target. **Never followed, never hashed** |
+| directory named `node_modules`, `.venv`, `venv`, `vendor` | `VENDOR_TREE`, and not descended |
+| directory named `.git` | `OTHER` — a nested repository is not a vendor tree, and `OTHER` exists so a scanner never has to choose between silence and a domain change |
+| `*.swp` `*.swo` `*.swn` `*~` `.#*` `#*#` | `EDITOR_SWAP` |
+| not a regular file (fifo, socket, device) | `OTHER` |
+| unreadable (`OSError`) | `OTHER`, detail = the errno string |
+
+Children are sorted by name at every level, so `files` and `skipped` are deterministic and two scans
+of one library produce the same report — the ordering discipline V7, V8 and V9 already follow.
+
+`is_text` is decided per file (charter §7): a NUL byte or a failed UTF-8 decode makes it binary.
+Binary is stored, hashed and readable; it is never searched, which is T-6's concern.
+
+## Decisions taken inside the task
+
+1. **The snapshot is taken once and held.** C-4 calls `list_all()` a point-in-time snapshot and
+   charter §12 says concurrent processes each hold their own. Re-scanning per call would let `get()`
+   disagree with `list_all()` inside one CLI run, and would re-run git per call. A new repository is
+   a new snapshot.
+2. **`read_bytes` validates in three stages, shape first.** Absolute path, or any `..` component →
+   `ValueError`, before anything touches the disk. Then membership in the snapshot's file set →
+   `FileNotFoundError`. Then a resolved-containment check and a symlink refusal as defence in depth.
+   Shape is checked first so the traversal test is aimed at the traversal guard and not at the
+   membership check that would incidentally also reject it.
+3. **No new `ErrorCode`.** Charter §9 forbids emitting a code that is not in the contract, and
+   `domain/errors.py` is out of bounds for this task. Unknown id, unknown path and a traversal
+   attempt therefore raise plain `KeyError` / `FileNotFoundError` / `ValueError`. **Flagged** — T-7
+   maps errors to exit codes and will want a ruling.
+4. **A malformed frontmatter block is not a raise.** The entry document exists, so V1 would be a lie;
+   there is no code for "unparseable frontmatter"; so the entry is carried with an empty frontmatter
+   mapping and the whole text as body, which fires V5 for every required key. **Flagged.**
+5. **A symlinked artifact *root* is not followed and not scanned.** R6 says never followed. Emitting
+   a `RawArtifact` for it would fire V1 — a false ERROR against a symlinked skill that loads
+   perfectly — and inventing that semantics is not a task-level call. Behaviour is pinned by a test
+   so it is visible rather than accidental. **Flagged as an open question.**
+6. **`library_findings()` is additive, not a change to C-4.** V7 and V9 land in
+   `AssembledLibrary.findings` and would otherwise be unreachable from the read path, so F-4 could
+   never report them. C-4's five methods are untouched. **Flagged.**
+
+## The fixture library, and what is deliberately not in it
+
+`tests/fixtures/library/` holds every case in the task brief: a skill with no `SKILL.md` (V1), a
+frontmatter name disagreeing with its directory (V2), a body citing a missing reference (V3), **two**
+redirect stubs whose citations must not fire V3 (6 + 1 = the seven of L5), an editor swap file, a
+nested `node_modules`, a symlink escaping the artifact root, a binary PNG that is not valid UTF-8,
+and a `library.yaml` exercising tags, collections and supersession — including one entry and one
+collection member that resolve to nothing (V7) and one `superseded_by` that does not resolve (V4).
+
+**V8 and V9 are proven against real files under `tmp_path`, not in the committed fixture.** Neither is
+in the brief's fixture list, and each carries a cost the committed tree should not: V8 needs two
+directories differing only by case, which **cannot be checked out on a case-insensitive filesystem**
+at all; V9 needs a duplicated key in the one `library.yaml` whose tag and collection behaviour the
+rest of the suite reads as a golden literal. `tmp_path` files are real files, so the guarantee is the
+same and the repository stays cloneable on macOS.
+
+**Fixture timestamps are never asserted.** The fixture lives inside this repository, so it is dirty
+while uncommitted and clean once the delivery lead commits it — `updated_at` and `is_dirty` on it
+would flip at the commit boundary. Fixture tests assert only that `updated_at` is timezone-aware. R5
+itself is proven in a purpose-built repository under `tmp_path` where the test owns the commit dates.
+
+## Verification
+
+The gate, whole, from the repo root, formatter first, never path-scoped (**L2**, **L9**):
+
+```
+export PATH="$HOME/.local/bin:$PATH"
+uv run ruff format --check . && uv run ruff check . && uv run mypy src tests && uv run lint-imports && uv run pytest
+```
+
+`git status --porcelain docs/` must show only this section (**L8** — `ruff format` rewrites Markdown
+code fences and names no files when it does; `docs/` is in ruff's `extend-exclude`, which is the
+mechanism, but it is confirmed rather than assumed).
+
+## Mutation check — assertion named in advance
+
+Stop the scanner recording skipped paths: drop each decision on the floor instead of appending a
+`SkippedPath`.
+
+**Must fail:** `tests/infrastructure/test_repository.py::test_a_real_symlink_becomes_a_v6_warning_on_the_assembled_artifact`
+— a real symlink, in a real directory, read through the repository. This sits **above** the fake: it
+is driven from the committed fixture tree, not from a hand-built `SkippedPath` list, which is the
+exact gap that let the superseded plan ship V6 unwired.
+**Must stay green:** `tests/domain/test_assembly.py::test_a_symlink_is_reported_as_a_v6_warning_and_never_blocks`
+— T-3's literal-driven test, which is correctly blind to the scanner and must remain so.
+
+## Out of scope
+
+No use case, no CLI, no MCP server. Nothing under `domain/` — including `tests/domain/test_purity.py`,
+whose expected list does not change because no domain module is added. No dependency change, no
+`pyproject.toml` or `uv.lock` edit. No write outside the repository, and nothing under `~/.claude/`.
+No commit.

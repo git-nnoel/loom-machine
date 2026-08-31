@@ -1,0 +1,42 @@
+# The fixture library's metadata. Exercises tags, collections and supersession, and deliberately
+# declares two ids that resolve to nothing so V7 fires against a real tree.
+
+artifacts:
+  skill/delivery-lead:
+    tags: [process, planning]
+
+  skill/messy:
+    tags: [process]
+
+  # The two redirect stubs. `superseded_by` is what exempts them from V3 (charter §8, L5):
+  # their bodies cite their successor's reference paths as prose, seven of them between them.
+  skill/legacy-orchestration:
+    superseded_by: skill/delivery-lead
+  skill/legacy-ctg-pattern:
+    superseded_by: skill/delivery-lead
+
+  # V4 — a successor this library does not have.
+  skill/dangling-successor:
+    superseded_by: skill/does-not-exist
+
+  agent/scribe:
+    tags: [writing]
+
+  # V7 — declared here, absent from the tree.
+  skill/never-existed:
+    tags: [ghost]
+
+collections:
+  delivery:
+    title: Delivery
+    description: Everything the delivery lead reaches for.
+    members:
+      - skill/delivery-lead
+      - agent/scribe
+      # V7 — a member that resolves to nothing.
+      - skill/also-never-existed
+
+  housekeeping:
+    title: Housekeeping
+    members:
+      - skill/messy

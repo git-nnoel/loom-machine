@@ -20,4 +20,4 @@ dist/
 # dependency set approved in the backend charter §4.
 
 # Agent-local scratch state; durable lessons live in docs/instructions/specialist-dispatch-lessons.md
-.claude/agent-memory/
+**/.claude/agent-memory/

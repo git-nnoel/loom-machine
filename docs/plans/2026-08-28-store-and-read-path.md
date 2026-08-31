@@ -1,3 +1,16 @@
+> # ⚠ SUPERSEDED — do not implement from this document
+>
+> Replaced 2026-08-28 by
+> `docs/instructions/phases/phase-1/01-store-and-read-path/implementation-plan.md`.
+>
+> Two reasons. First, a backend review found 38 defects here, 6 of them blockers — including two
+> validation rules that would have shipped non-functional and green. Second, this document contains
+> ~1,400 lines of class bodies, function bodies and test bodies, which are the specialist's work to
+> write with full file context, not the delivery lead's to specify in advance.
+>
+> Kept, not deleted, because the review that replaced it cites this document by task number
+> throughout. Read it as the thing that was reviewed, never as instructions.
+
 # Harness Library — Plan 1: Store, Validation, Read Path, MCP
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

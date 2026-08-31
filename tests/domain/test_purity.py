@@ -46,6 +46,28 @@ FORBIDDEN_ROOTS = frozenset(
 )
 
 
+EXPECTED_MODULES = frozenset(
+    {
+        "artifact",
+        "assembly",
+        "hashing",
+        "identity",
+        "metadata",
+        "raw",
+        "registry",
+        "repository",
+        "validation",
+    }
+)
+"""Every module the domain layer is known to hold.
+
+Discovery alone is not coverage: a module that failed to import, or that was never added, would
+simply not appear in the parametrisation and the suite would stay green having checked nothing about
+it. This list makes "the new modules are covered" an assertion instead of an assumption. Adding a
+domain module means adding it here — which is the point.
+"""
+
+
 def _domain_modules() -> list[ModuleType]:
     modules = [
         importlib.import_module(info.name)
@@ -54,6 +76,12 @@ def _domain_modules() -> list[ModuleType]:
         )
     ]
     assert modules, "positive control: no domain modules were discovered, so nothing was checked"
+    discovered = {module.__name__.rpartition(".")[2] for module in modules}
+    assert discovered == EXPECTED_MODULES, (
+        f"the purity guard covers {sorted(discovered)}; "
+        f"EXPECTED_MODULES names {sorted(EXPECTED_MODULES)}. A domain module missing from the "
+        "discovered set is a module nothing checked."
+    )
     return modules
 
 

@@ -161,3 +161,185 @@ carries its own positive control (an ERROR finding in the same test does invalid
 
 No validation *logic* (every rule V1–V7 is T-3's), no reader, no scanner, no repository
 implementation, no use case, no adapter. No dependency change. No commit.
+
+---
+
+# T-3 backend task plan — `RawArtifact` and the pure assembler (V1–V7)
+
+Written before the first edit. Task: phase-1 / initiative 01-store-and-read-path / T-3.
+Layer: `domain/` only. Runs concurrently with T-4 (`infrastructure/library_yaml.py`); no shared file.
+
+## Understanding
+
+Every validation rule in charter §8 becomes a pure function over a value, ahead of the repository.
+The scanner (T-5) will hand the assembler a `RawArtifact` — what it found on disk — and get a finished
+`Artifact` back. No rule may live in infrastructure, and no test of a rule may touch a disk. This is
+DEC-1: the superseded plan built the repository first and reopened it twice to retrofit validation.
+
+## The seam
+
+| File | Holds |
+|---|---|
+| `domain/raw.py` | `SkipReason`, `SkippedPath`, `RawEntry`, `RawArtifact` — the scanner's output value |
+| `domain/assembly.py` | `assemble_artifact`, `assemble_library`, `AssembledLibrary` — every rule V1–V7 |
+
+`RawArtifact` carries: `type`, `name`, `files: tuple[ArtifactFile, ...]` (C-1 reused — the scanner has
+already hashed and sized each file, so the assembler needs no bytes), `skipped: tuple[SkippedPath, ...]`,
+`entry: RawEntry | None` (the parsed frontmatter and body of the entry document, `None` when there is
+none), `updated_at` and `is_dirty` (R5, derived by the scanner, passed through).
+
+`kind`, `path` and the entry's own path are **derived from the registry**, never carried on the raw
+value — a second source of truth for the disk layout is how a scanner and a validator drift.
+
+## Rule placement — and why V4 joins V7 above the artifact
+
+Six rules are decidable from one artifact: **V1, V2, V3, V5, V6**. `assemble_artifact(raw, metadata)`
+implements those.
+
+**V4 and V7 both need the whole library in view** — "resolves to nothing" is a statement about the set of
+ids that exist. The task brief singles out V7; V4 has the identical information need, so both live in
+`assemble_library(raws, metadata) -> AssembledLibrary`, which assembles every artifact and then resolves
+ids against the set it just built. V4 is *about* an artifact, so it is appended to that artifact's
+findings; V7 is about `library.yaml`, so it lands in `AssembledLibrary.findings`.
+
+## Decisions taken inside the task
+
+1. **Skipped paths arrive; they are never discovered.** R6 — the assembler turns each `SkippedPath` into
+   one V6 WARNING. It never touches a filesystem to find one. `SkipReason` is closed
+   (`SYMLINK`, `EDITOR_SWAP`, `VENDOR_TREE`, `OTHER`) and shapes the message only.
+2. **V1 is "the entry document is absent"**, generalised from charter §8's "a skill directory with no
+   `SKILL.md`" so the rule is total over the type registry rather than hard-coding one type's filename.
+3. **V5 is suppressed when V1 fired.** A missing `SKILL.md` means every required key is missing; emitting
+   V1 plus one V5 per key reports one fault as three. The suppression carries a positive control.
+4. **V2 is suppressed when the `name` key is missing or empty** — that is V5's fault, not a disagreement.
+5. **V3's exemption reads `superseded_by` from `library.yaml` first, then from the entry's frontmatter.**
+   The exemption is a property of *being a redirect stub*; a library with no `library.yaml` must still get
+   it, or V3 floods (L5 — seven findings on the real library). `Artifact.superseded_by` is populated from
+   the same resolution, so V3, V4 and R8's ranking all read one value. **Flagged to the delivery lead**:
+   T-2's `ArtifactMetadata` documents `library.yaml` as the source and is silent on frontmatter.
+6. **Citations are extracted from the entry body only**, deduplicated, and reported in first-appearance
+   order — one finding per distinct missing path, so a stub repeating a path does not inflate the count.
+7. **R8 holds:** nothing here drops an artifact. `assemble_library` returns every input, superseded or not.
+8. **Severity is never passed by hand** — `ValidationFinding.for_code` throughout (R13).
+
+## Not implemented, and why
+
+Charter §7 says two artifact names differing only by case are "a V-error", but the §8 register has no
+code for it and charter §9 forbids emitting a code before it is in the contract. **Not emitted; reported
+to the delivery lead as an open question.**
+
+## Verification
+
+The gate, whole, from the repo root, formatter first, never path-scoped (**L2**):
+
+```
+export PATH="$HOME/.local/bin:$PATH"   # L9
+uv run ruff format --check . && uv run ruff check . && uv run mypy src tests && uv run lint-imports && uv run pytest
+```
+
+`domain-is-pure` stays KEPT and `tests/domain/test_purity.py` covers the two new modules — it discovers
+them by `pkgutil`, and gains an explicit assertion that both are in the discovered set so a module that
+never imports cannot be silently uncovered (**L13**).
+
+## Mutation check — assertions named in advance
+
+Delete the `superseded_by` exemption from V3.
+
+**Must fail:** `tests/domain/test_assembly.py::test_redirect_stubs_produce_seven_v3_findings_without_the_exemption`
+— the two-stub fixture, reporting **seven**.
+**Must stay green:** `tests/domain/test_assembly.py::test_a_missing_reference_on_a_live_artifact_is_a_v3_error`
+— a genuine V3 on a non-superseded artifact. Both going red would mean the exemption is implemented as
+"skip V3 entirely" for the wrong set of artifacts.
+
+**How seven is made deterministic** (L12): the fixture mirrors the real library's *two* stubs. Stub A's
+body cites six distinct missing `references/*.md` paths (one of them twice, to prove deduplication);
+stub B's cites one. Each stub's missing-path list is pinned as a **golden literal** and its count asserted
+separately (6 and 1); seven is then the asserted sum of two pinned parts, not a number that happened to
+come out right.
+
+## Out of scope
+
+No reader, no scanner, no repository, no use case, no adapter, no file I/O. Nothing under
+`infrastructure/` (T-4's territory this wave). No dependency change. No commit.
+
+---
+
+# T-4 backend task plan — the `library.yaml` reader
+
+Written before the first edit. Task: phase-1 / initiative 01-store-and-read-path / T-4.
+Layer: `infrastructure/` only. Produces **C-2**'s neighbours from T-2 (`LibraryMetadata`); opens **C-6**.
+Runs concurrently with T-3 (`domain/assembly.py`); shares no file with it except this plan.
+
+## Understanding
+
+`library.yaml` is the only place a user's hand-authored metadata enters the system. The reader turns it
+into the `LibraryMetadata` T-2 froze, and its whole job is to make a typo *loud and located* instead of
+turning it into a silent wrong answer. Four behaviours, four tests: absent file is empty metadata;
+malformed YAML raises with a **line number**; a null-valued key has a decided, defended outcome; a scalar
+where a list is expected is diagnosed rather than coerced or crashed on.
+
+**The seam.** Shape only. Whether `skill/delivery-lead` exists on disk is V7 and belongs to T-3, which
+sees the whole library at once. A `LibraryMetadata` naming an artifact that does not exist is *correct*
+output from this reader. The reader likewise does not check that a key parses as `<type>/<name>` —
+`parse_artifact_id` returns `None` for exactly that case so T-3 can report it as V7.
+
+## Approach — file by file
+
+| File | Holds | Why separate |
+|---|---|---|
+| `infrastructure/errors.py` | `ErrorCode` (StrEnum, closed), `HarnessLibraryError` (base), `LibraryYamlError` | charter §9 / **C-6**: one base exception, stable string codes, a code added to the contract before it is emitted. This is the taxonomy's first entry. |
+| `infrastructure/_yaml_document.py` | quarantined PyYAML use; a typed node model (`YamlScalar`/`YamlSequence`/`YamlMapping`) carrying 1-based line and column; `compose_document()` | PyYAML ships no type hints, so its surface is `Any`. Confining it to one module keeps the rest of the layer strictly typed instead of spraying `cast` through the reader. |
+| `infrastructure/library_yaml.py` | `LIBRARY_YAML_FILENAME`, `read_library_metadata(library_root)` | the reader itself, written entirely against the typed node model |
+| `tests/infrastructure/test_library_yaml.py` | real files under `tmp_path` (charter §10) | infrastructure is tested against a real filesystem, never a fake |
+
+## Decisions taken inside the task
+
+1. **`yaml.compose(..., Loader=yaml.SafeLoader)`, not `yaml.safe_load`.** R1's stated concern is a loader
+   that can construct arbitrary Python objects from a file that arrives out of a user's repository.
+   `compose` constructs *nothing* — it stops at the node tree — so it is strictly safer than `safe_load`,
+   not a relaxation. It is also the only way to keep the **line number** for a *shape* error: `safe_load`
+   discards every position, so `tags: process` could be diagnosed but never located, and a diagnosis with
+   no location is half of what this task exists to deliver. A test pins the safety property by feeding the
+   reader a `!!python/object/apply:os.system` tag and asserting it is rejected, not executed.
+   **Flagged to the delivery lead** as a reading of R1, not a departure from it.
+2. **One error code, `LIBRARY_YAML_INVALID`, covering both syntax and shape.** Not `…_MALFORMED`:
+   "malformed" reads as syntax-only, which would force a second code the moment `tags: process` is
+   diagnosed, and the first name would then be wrong. Nothing downstream branches differently between a
+   colon in the wrong place and a scalar where a list belongs — both are "your `library.yaml` is not
+   usable, here is the line" and both map to one CLI exit code and one HTTP status in 03. Per
+   `contracts.md`, a distinction no caller acts on does not go in a contract.
+3. **A null-valued key is the empty form of its type — accepted, not an error.** `tags:` → `()`,
+   `superseded_by:` → `None`, `artifacts:` → no artifacts, an entry `skill/foo:` → the empty declaration.
+   YAML's only idiom for "nothing here" *is* a bare key; rejecting it would fail a file whose meaning is
+   unambiguous, and this product exists to remove silent wrong answers, not to add gratuitous hard ones.
+   The distinction from absent is preserved where it could bite: null is never coerced into a *non-empty*
+   value — `tags:` yields an empty tuple, never a one-element tuple holding `None`.
+4. **An unknown key is an error, at every level.** `tag:` for `tags:`, `member:` for `members:`,
+   `artifact:` for `artifacts:` — silently ignoring these is precisely how a user's tags vanish with no
+   explanation. "Is this key well-formed" is the shape question this reader owns.
+5. **Errors carry `path`, `line` and `column` as fields**, not only inside the message. `line`/`column`
+   are `int | None`, present-and-null, null only when the failure has no position at all (an unreadable
+   or non-UTF-8 file). Every parse and shape failure sets them.
+
+## Verification
+
+The gate, whole, from the repo root, formatter first, never path-scoped (**L2**), `docs/` clean (**L8/R11**):
+
+```
+export PATH="$HOME/.local/bin:$PATH"   # L9
+uv run ruff format --check . && uv run ruff check . && uv run mypy src tests && uv run lint-imports && uv run pytest
+```
+
+## Mutation check — assertions named in advance
+
+Make the malformed-YAML path return `LibraryMetadata.empty()` instead of raising.
+
+**Must fail:** `tests/infrastructure/test_library_yaml.py::test_malformed_yaml_raises_with_the_line_number`.
+**Must stay green:** `tests/infrastructure/test_library_yaml.py::test_absent_file_is_empty_metadata`.
+If both go red the reader is conflating "no file" with "bad file", which is the confusion the task exists
+to prevent.
+
+## Out of scope
+
+No scanner, no repository, no use case, no adapter, no validation rule (V1–V7 are T-3/T-5). Nothing under
+`domain/`. No dependency change, no `pyproject.toml` edit, no commit.

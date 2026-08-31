@@ -66,21 +66,49 @@ identity is derivable from the tree. There is no stored id that can drift from t
 Domain layer. No filesystem access, no framework imports.
 
 ```
+ArtifactFile
+  path           str             relative to the artifact root
+  sha256         str             this file's own digest
+  size           int             bytes
+  is_text        bool            searchable and diffable, or opaque
+
 Artifact
   id             str             "skill/delivery-lead"
   type           ArtifactType    skill | agent
   name           str             slug; matches directory or file stem
   title          str | None      first H1 in the entry file
   description    str             frontmatter `description`
+  frontmatter    dict            the parsed block, kept for display
   kind           directory | file
-  files          list[Path]      relative to the artifact root
-  content_hash   str             sha256 over sorted (relpath, bytes)
-  updated_at     datetime        max mtime across files
-  tags           list[str]       from library.yaml
-  collections    list[str]       from library.yaml
-  superseded_by  str | None      artifact id
-  validity       Valid | Invalid(reasons: list[ValidationError])
+  files          tuple[ArtifactFile, ...]
+  content_hash   str             sha256 over sorted (path, bytes)
+  updated_at     datetime        last commit touching these paths; mtime fallback
+  is_dirty       bool            uncommitted changes present
+  tags           tuple[str, ...]               from library.yaml
+  collections    tuple[str, ...]               from library.yaml
+  superseded_by  str | None                    artifact id
+  findings       tuple[ValidationFinding, ...]
+
+ValidationFinding
+  code           ValidationCode  closed enum: V1..V7
+  severity       ERROR | WARNING
+  message        str
+  path           str | None      the file it concerns, when applicable
 ```
+
+**Per-file hashes are load-bearing, not a convenience.** `[DER]` §8.1 judges install **per path** on
+three hashes. A whole-artifact `content_hash` alone forces Plan 2 to re-implement scanning and hashing
+on a second code path, and the two would drift.
+
+**`updated_at` derives from git, not mtime.** `[OBS: ruling R5]` D2 makes `git clone` the distribution
+mechanism, and a clone rewrites every mtime to clone time — so mtime-based sorting is meaningless on
+every machine except the one that authored the artifact. The value is the last commit touching the
+artifact's paths, falling back to max mtime when the library is not a repository or the artifact has
+uncommitted changes, in which case `is_dirty` is set.
+
+**Findings carry severity.** `[DER]` §4 grades V6 a warning, so validity cannot be a single boolean: a
+stray `.swp` file must not make an artifact uninstallable. `is_valid` means "no finding of severity
+ERROR", and Plan 2 refuses to install only on ERROR.
 
 **`superseded_by` is first-class, not a tag.** `[OBS]` Two of the six current skills are already
 redirect stubs — `developers-orchestration` → `delivery-lead` and `frontend-ctg-system-pattern` →
@@ -157,9 +185,17 @@ Every rule below exists because the corresponding failure was observed on disk t
 | `V3` Every `references/…` path cited in body text must exist | The old `backend-system-architecture`, citing into an empty `references/` |
 | `V4` `superseded_by` must resolve to an existing artifact | A redirect pointing at a skill that was since renamed again |
 | `V5` Required frontmatter keys present and non-empty | A skill that loads but cannot be matched by description |
-| `V6` Files under an artifact root that are not declared content are reported as extraneous | The `.swp` file; the `node_modules/` tree |
+| `V6` Files under an artifact root that are not declared content are reported as extraneous | The `.swp` file; the `node_modules/` tree; any symlink (ruling R6) |
+| `V7` Every `library.yaml` entry, and every `collections[].members` id, must resolve to an artifact on disk | A rename that updates the tree but not the metadata, leaving a collection quietly one member short |
 
-`V1`–`V5` are errors. `V6` is a warning — it reports, never deletes.
+`V1`–`V5` and `V7` are `ERROR`. `V6` is `WARNING` — it reports, never deletes, and never blocks install.
+
+**V3 exempts artifacts with `superseded_by` set.** `[OBS]` A redirect stub's entire purpose is to say
+where its content went, which means citing the successor's reference paths as prose. Verified against
+the real library: the rule as originally written produces **exactly seven false positives** — six from
+`developers-orchestration`'s "Was → Now" table and one from `frontend-ctg-system-pattern` citing
+`references/brand-ctg.md`. Both artifacts are behaving exactly as intended. This is the irony §3.2 was
+written to avoid: supersession is first-class *so that* rules can treat these artifacts differently.
 
 An invalid artifact is **shown in the list with its reasons**, never omitted. `[INF]` Omission is how
 the current failure mode hides: the two broken skills were invisible rather than flagged.
@@ -260,7 +296,11 @@ state, one typed HTTP client, Zod-validated responses, no global-state library. 
 
 ```
 list_artifacts(type?, tag?)   → id, name, type, description, tags, superseded_by
-search_artifacts(query)       → matches with the matching line and context
+search_artifacts(query)       → matches: id, path, line number, the line,
+                                 one line of context either side; capped at
+                                 200 matches with `truncated: bool`; entry file
+                                 and .md references only, with each skipped
+                                 binary reported as `skipped_binary` (R4)
 get_artifact(id)              → entry file text + file listing
 get_reference(id, path)       → one reference file
 ```
@@ -429,11 +469,16 @@ a real Claude Code session. Both are verified by hand once, and recorded. `[GAP]
 3. **Non-Claude harness targets.** D2 says "other LLM sessions through different systems". MCP
    covers reading. Is *installing* into a non-Claude harness (different directory conventions) in
    scope, or does MCP fully cover that case? `[GAP]`
+7. ~~**Symlink policy.**~~ **RESOLVED 2026-08-28 — ruling R6.** Skipped, reported as a V6
+   warning, excluded from the hash, never installed. `[OBS]`
+
+8. ~~**File mode in the content hash.**~~ **RESOLVED 2026-08-28 — ruling R9.** Excluded; Plan 2
+   normalises on install. `[OBS]`
+
 4. **Editing references in the web UI.** The editor is specced for any file in an artifact. Confirm
    that includes `references/*.md`, not just the entry file. `[INF: assumed yes]`
-5. **Search depth.** Does `search_artifacts` search reference bodies, or only entry files and
-   frontmatter? Reference bodies are the bulk of the content but also the bulk of the scan cost.
-   `[INF: assumed reference bodies included]`
+5. ~~**Search depth.**~~ **RESOLVED 2026-08-28 — ruling R4.** Entry file plus every `.md`
+   reference; binary never searched and each skip reported. `[OBS]`
 6. **Scan performance.** Each `hl mcp` spawn rescans the tree. Estimated imperceptible at ~750KB
    across eight artifacts, but **unmeasured**. Time it once the store exists; if it registers, add
    an mtime-keyed cache — not a merged process. `[INF]`
@@ -445,3 +490,26 @@ a real Claude Code session. Both are verified by hand once, and recorded. `[GAP]
 `superpowers:writing-plans` to produce the implementation plan. This document does not contain
 phases, task breakdowns, or a delivery order — those belong to `delivery-lead` and the
 implementation plan, not to the spec.
+
+
+---
+
+## 14. Amendments
+
+Corrections to this document after its first draft. Each names what changed the answer.
+
+| Date | Section | Change | Cause |
+|---|---|---|---|
+| 2026-08-28 | §3.2 | Added `ArtifactFile` with per-file `sha256`; `files` now carries it | Backend review S4 — §8.1 judges install per path, so per-file digests must exist or Plan 2 builds a second scanner |
+| 2026-08-28 | §3.2 | `updated_at` redefined from max mtime to last-commit date, with `is_dirty` | Backend review S1 — a `git clone` rewrites every mtime, and D2 makes clones the normal case. Ruling R5 |
+| 2026-08-28 | §3.2 | `validity` sum type replaced by `findings` carrying `ValidationFinding(code, severity, message, path)` | Backend review S2 — §4 grades V6 a warning, so a stray `.swp` would otherwise block install |
+| 2026-08-28 | §3.2 | Added `frontmatter` to the entity | Backend review — Plan 3's detail screen renders it; without it the SPA re-parses |
+| 2026-08-28 | §4 | V3 now exempts artifacts with `superseded_by` set | Backend review S3 — verified: seven false positives on the two redirect stubs, both behaving correctly |
+| 2026-08-28 | §4 | Added V7 for unresolvable `library.yaml` and collection-member ids | Backend review S7 — §3.4 mandated this outcome but §4 had no rule for it |
+| 2026-08-28 | §4 | Severities stated explicitly per rule | Backend review S2 |
+| 2026-08-28 | §7.3 | `search_artifacts` result shape, 200-match cap, `truncated`, `skipped_binary` | Backend review S5 — "context" was undefined and an uncapped result crosses a pipe into a model's context window |
+| 2026-08-28 | §12 | Questions 5 (search depth), symlinks and file mode struck as resolved | Rulings R4, R6, R9 |
+
+**Not yet applied.** Review item S8 — the import-linter contract drafted in Plan 1 does not express
+§7.3's guarantee and separately permits `infrastructure → application`. §7.3's *statement* is correct;
+the defect is in the plan's translation of it, and is fixed there rather than here.

@@ -93,6 +93,8 @@ stops and reports.
 | V5 | ERROR | Missing or empty required frontmatter key |
 | V6 | **WARNING** | Extraneous file under an artifact root — swap files, vendor trees, symlinks. Reported, never deleted, never blocks install |
 | V7 | ERROR | A `library.yaml` entry or `collections[].members` id that resolves to nothing |
+| V8 | ERROR | Two artifacts of one type whose names differ only by case. §7 promised this rule and §8 did not define it; a specialist correctly refused to invent a code rather than emit one outside the contract. Decided at the library level, like V4 and V7 |
+| V9 | ERROR | A duplicate key in `library.yaml` — the same artifact id or collection key declared twice. Last-wins silently discards the first block's tags, which is the precise silent-data-loss failure this product exists to eliminate |
 
 New rules are added to this table first. `is_valid` means **no finding of severity ERROR**.
 

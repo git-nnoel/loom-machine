@@ -1,6 +1,6 @@
 # Implementation record — Store, validation, read path, MCP
 
-**Status:** Open — T-1 and T-2 accepted; T-3 ∥ T-4 next
+**Status:** Open — T-1…T-4 accepted; two follow-ups in flight, then T-5
 **Phase:** 1 · **Initiative:** 01-store-and-read-path · **Owner:** delivery lead
 **Last updated:** 2026-08-28
 
@@ -13,7 +13,9 @@ Backward-facing: what actually shipped. The forward-facing intent is `implementa
 | F-1 … F-6 | see plan §4 | Not started |
 | **T-1** | Scaffold, gate, three import contracts | **Accepted** 2026-08-28 — commit `9256c60` |
 | **T-2** | Domain vocabulary — C-1, C-2, C-3, registry, hashing, metadata types | **Accepted** 2026-08-28 — commit `57fff7f` |
-| T-3 … T-9 | see plan §7 | Not dispatched |
+| **T-3** | `RawArtifact`, the pure assembler, rules V1–V7 | **Accepted** 2026-08-28 — commit `519b7ed` |
+| **T-4** | `library.yaml` reader, error taxonomy | **Accepted** 2026-08-28 — commit `519b7ed` |
+| T-5 … T-9 | see plan §7 | Not dispatched |
 
 ## Evidence
 
@@ -36,6 +38,13 @@ Backward-facing: what actually shipped. The forward-facing intent is `implementa
 
 **Boundary:** only `src/**`, `tests/**` and the specialist's own task plan. No commit authored.
 
+**T-3 ∥ T-4 — the parallel wave, verified INTEGRATED rather than per-branch.** The two worktrees had zero file overlap outside the shared task plan. Merged, then the gate run **alone** on the integrated tree: **exit 0**, `149 passed`, `Contracts: 3 kept, 0 broken`.
+
+Both mutations re-run by the delivery lead on the integrated tree:
+- **T-3** — removing the V3 `superseded_by` exemption failed `test_redirect_stubs_produce_seven_v3_findings_without_the_exemption` plus one sibling. The named must-stay-green control, `test_a_missing_reference_on_a_live_artifact_is_a_v3_error`, **passed throughout** — so the exemption is not "skip V3 for the wrong set of artifacts".
+- **T-4** — making malformed YAML return empty metadata failed `test_malformed_yaml_raises_with_the_line_number` plus two siblings. The named control, `test_absent_file_is_empty_metadata`, **passed throughout** — a malformed file is not conflated with an absent one.
+- Restored: `149 passed`.
+
 ## Rulings (R-N)
 
 Every boundary call, numbered. Specialists do not read this file — the delivery lead carries each
@@ -51,6 +60,12 @@ binding ruling into the dispatch prompt in their own words.
 | **R6** | 2026-08-28 | **Symlinks are skipped and reported** as a V6 warning. Never followed, never hashed, never installed. A link resolving outside the artifact root is how a copy writes outside its target, and initiative 02 writes into `~/.claude`. | T-3, T-5; **initiative 02** |
 | **R7** | 2026-08-28 | **`--json` is contract; human columnar output is not.** Tests assert the JSON payload, never substrings of the human format. Initiative 04 consumes the API or `--json`, never the columnar text. | T-7 |
 | **R8** | 2026-08-28 | **Superseded artifacts appear in the default listing**, ranked below their successors, carrying `superseded_by` in every payload. `include_superseded` defaults true. Hiding them would make a redirect stub invisible, which is the opposite of why supersession is first-class. | T-6, T-8 |
+| **R15** | 2026-08-28 | **`library.yaml` is authoritative for `superseded_by`, with a fallback to the entry document's frontmatter.** Accepting the specialist's addition: V3's exemption is a property of *being a redirect stub*, and a library with no `library.yaml` still has stubs, so without the fallback V3 floods on exactly the case §8 carves out. Noted for a later initiative: spec §3.4's own principle — that `library.yaml` holds only what the artifact files cannot express — arguably favours frontmatter as the primary home. Not churning it now. | T-5, T-6 |
+| **R16** | 2026-08-28 | **`yaml.compose(..., Loader=yaml.SafeLoader)` satisfies R1**, whose literal words said `safe_load`. `compose` stops at the node tree and never reaches a constructor, so it meets R1's stated *reason* more strictly than `safe_load` does — and it is the only way to obtain a line number for a **shape** error, without which `tags: process` could be diagnosed but never located. Pinned by a test using a real `!!python/object/apply:os.system` payload and an observable marker file. R1's wording is hereby amended to name the reason, not the function. | T-4 onward |
+| **R17** | 2026-08-28 | **`errors.py` moves from `infrastructure/` to `domain/`, in T-5, before a second error code is added.** The reason is structural, not cosmetic: `application/` may not import `infrastructure/` — they are independent siblings under `layered-architecture` — so an application-layer error cannot inherit from a base living there. The specialist identified this while correctly staying inside its own territory. | T-5 |
+| **R18** | 2026-08-28 | **`types-PyYAML` is NOT added.** One `# type: ignore[import-untyped]` in the single quarantine module `infrastructure/_yaml_document.py`, which hands out a typed node model. A second module needing PyYAML is a stop-and-ask, not a second ignore. | any task touching YAML |
+| **R19** | 2026-08-28 | **V8 (case collision) is added to charter §8.** §7 asserted the rule and §8 never defined a code for it, and §9 forbids emitting a code before it is in the contract — so the specialist correctly left it unimplemented and reported. My charter defect. Decided at the library level, like V4 and V7. | T-3 follow-up |
+| **R20** | 2026-08-28 | **V9 (duplicate key in `library.yaml`) is added to charter §8**, and authorised as a follow-up. Last-wins silently discards the first block's tags — the exact silent-data-loss failure this product exists to eliminate. Detection is nearly free because the reader composes to a node tree, where `YamlMapping.pairs` is a list and both entries remain visible. | T-4 follow-up |
 | **R13** | 2026-08-28 | **A `ValidationFinding`'s severity must agree with its code's entry in charter §8.** The specialist added a `__post_init__` check and a `for_code()` constructor so a caller cannot hand-downgrade a V1 to a warning. C-3's frozen shape is unchanged — the field stays — but the register is now the single authority for what a code means. Accepted: two places holding one decision is how they drift. | T-3 onward |
 | **R14** | 2026-08-28 | **The `ArtifactRepository` protocol (C-4) stays in `domain/repository.py`**, declared with T-2's vocabulary rather than with T-5's implementation. A protocol is part of the domain's statement of what it needs; the implementation is infrastructure's answer. This is Mode A as the charter states it. | T-5, T-6 |
 | **R10** | 2026-08-28 | **`uv.lock` is committed.** This is an application, not a distributed library, and D2 makes clones the normal case — an unlocked resolution means the gate can pass on one machine and fail on another. Version floors stay out of `pyproject.toml`; the lockfile is the pin. | every task |
@@ -68,6 +83,7 @@ binding ruling into the dispatch prompt in their own words.
 
 | # | Defect | Fix |
 |---|---|---|
+| 3 | Charter §7 asserted a case-collision rule that charter §8 never gave a code, while §9 forbids emitting a code outside the contract. The rule was unimplementable as written. | V8 added to charter §8 (R19). The specialist reported rather than inventing a code, which is the asked-for behaviour. |
 | 2 | R12's `.gitignore` pattern `.claude/agent-memory/` never matched. A pattern containing a mid-string slash is anchored to the `.gitignore`'s own directory, so it matched only the repo root, never `docs/instructions/.claude/agent-memory/`. Every backend dispatch would have had to choose between violating the R11 boundary check and skipping its memory. | Corrected to `**/.claude/agent-memory/` and verified with `git check-ignore -v`. Found by the specialist, who correctly refused to edit a root config file outside its territory. |
 | 1 | T-1's dispatch said "nothing under `~/.claude/` has been **read**". That contradicts the specialist's standing instruction to consult `backend-system-architecture`, which lives at `~/.claude/skills/`. The plan's §8 criterion is correctly worded — *created, modified or deleted* — and the prompt was the defect, not the plan. | Prompt wording corrected from T-2 onward. The specialist flagged rather than guessed, which is the behaviour the prompt asks for. |
 

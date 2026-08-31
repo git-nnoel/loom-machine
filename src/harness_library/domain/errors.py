@@ -9,19 +9,25 @@ added to `ErrorCode` before it is emitted**, never invented at a raise site.
 cannot then disagree about their code, and adding a new code means adding a new class — which is
 the moment the taxonomy is meant to be reviewed.
 
-**Placement, flagged deliberately.** This taxonomy is project-wide: `cli/` maps codes to exit codes
-and `api/` will map them to HTTP statuses. Its natural home is `domain/`, which every layer may
-import; it lives here only because T-4 was scoped to `infrastructure/` while T-3 held `domain/`.
-`application/` may not import `infrastructure/` (they are independent siblings under the
-layered-architecture contract), so an application-layer error **cannot** inherit from this base
-while it sits here. Moving this module to `domain/errors.py` is a one-import-per-file change and
-should happen before the second code is added.
+**Placement.** This taxonomy is project-wide: `cli/` maps codes to exit codes and `api/` will map
+them to HTTP statuses. It lives in `domain/` because that is the only layer every other layer may
+import. `application/` and `infrastructure/` are independent siblings under the
+layered-architecture contract, so a base exception in either one is unreachable from the other, and
+an application-layer error could not inherit it. T-4 raised this against itself; T-4b moved it here
+under ruling R17, deliberately before a second `ErrorCode` existed.
+
+**`path` is a `str`, not a `pathlib.Path`, and that is load-bearing.** `domain/` performs no I/O and
+holds no filesystem library — `tests/domain/test_purity.py` enforces it beyond what `import-linter`
+can see. The field is the user-facing *location of the fault*, which is all any consumer reads it
+as; `_render` reduced it to text regardless. Narrowing the type was the only one of the three
+available repairs that weakened neither the guard nor the field: importing `Path` under
+`TYPE_CHECKING` would have routed around the guard, and removing `pathlib` from its forbidden set
+would have dismantled it.
 """
 
 from __future__ import annotations
 
 from enum import StrEnum
-from pathlib import Path
 
 
 class ErrorCode(StrEnum):
@@ -58,7 +64,7 @@ class LibraryYamlError(HarnessLibraryError):
 
     Attributes:
         code: always `ErrorCode.LIBRARY_YAML_INVALID`.
-        path: the `library.yaml` that failed. Absolute; always present.
+        path: the `library.yaml` that failed, as text. Absolute; always present.
         line: 1-based line of the offending construct, or `None` when the failure has no position
             at all (an unreadable or non-UTF-8 file). Present-and-null, never omitted. Every parse
             failure and every shape failure sets it.
@@ -73,7 +79,7 @@ class LibraryYamlError(HarnessLibraryError):
         self,
         reason: str,
         *,
-        path: Path,
+        path: str,
         line: int | None = None,
         column: int | None = None,
     ) -> None:
@@ -84,13 +90,13 @@ class LibraryYamlError(HarnessLibraryError):
         super().__init__(_render(reason, path=path, line=line, column=column))
 
 
-def _render(reason: str, *, path: Path, line: int | None, column: int | None) -> str:
+def _render(reason: str, *, path: str, line: int | None, column: int | None) -> str:
     """`path:line:column: reason`, dropping the parts that are unknown.
 
     The location goes in the message as well as in the fields because the CLI prints `str(error)`,
     and a diagnosis a user cannot locate is half a diagnosis.
     """
-    location = str(path)
+    location = path
     if line is not None:
         location = f"{location}:{line}"
         if column is not None:

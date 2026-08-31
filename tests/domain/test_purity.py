@@ -50,6 +50,7 @@ EXPECTED_MODULES = frozenset(
     {
         "artifact",
         "assembly",
+        "errors",
         "hashing",
         "identity",
         "metadata",

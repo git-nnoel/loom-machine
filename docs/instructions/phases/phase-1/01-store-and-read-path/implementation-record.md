@@ -1,6 +1,6 @@
 # Implementation record — Store, validation, read path, MCP
 
-**Status:** Open — T-1…T-4 accepted; two follow-ups in flight, then T-5
+**Status:** Open — T-1…T-4b accepted; T-5 next
 **Phase:** 1 · **Initiative:** 01-store-and-read-path · **Owner:** delivery lead
 **Last updated:** 2026-08-28
 
@@ -15,6 +15,7 @@ Backward-facing: what actually shipped. The forward-facing intent is `implementa
 | **T-2** | Domain vocabulary — C-1, C-2, C-3, registry, hashing, metadata types | **Accepted** 2026-08-28 — commit `57fff7f` |
 | **T-3** | `RawArtifact`, the pure assembler, rules V1–V7 | **Accepted** 2026-08-28 — commit `519b7ed` |
 | **T-4** | `library.yaml` reader, error taxonomy | **Accepted** 2026-08-28 — commit `519b7ed` |
+| **T-4b** | Corrections: errors.py → domain/, V8 case collision, V9 duplicate keys | **Accepted** 2026-08-28 |
 | T-5 … T-9 | see plan §7 | Not dispatched |
 
 ## Evidence
@@ -45,6 +46,11 @@ Both mutations re-run by the delivery lead on the integrated tree:
 - **T-4** — making malformed YAML return empty metadata failed `test_malformed_yaml_raises_with_the_line_number` plus two siblings. The named control, `test_absent_file_is_empty_metadata`, **passed throughout** — a malformed file is not conflated with an absent one.
 - Restored: `149 passed`.
 
+**T-4b — gate re-run by the delivery lead:** exit 0, `172 passed` (up from 149), 3 contracts kept. `infrastructure/errors.py` confirmed gone, not copied.
+- **V8 mutation** — grouping key made case-sensitive → `test_two_names_differing_only_by_case_are_a_v8_error` failed; the control `test_the_same_name_under_two_types_is_not_a_collision` **passed**, so `skill/foo` and `agent/foo` remain distinct.
+- **V9 mutation** — duplicate collection returned empty → `test_an_artifact_id_declared_twice_is_recorded_as_a_duplicate` plus one sibling failed; the control `test_a_key_declared_once_records_no_duplicate` **passed**.
+- Restored: `172 passed`.
+
 ## Rulings (R-N)
 
 Every boundary call, numbered. Specialists do not read this file — the delivery lead carries each
@@ -60,6 +66,8 @@ binding ruling into the dispatch prompt in their own words.
 | **R6** | 2026-08-28 | **Symlinks are skipped and reported** as a V6 warning. Never followed, never hashed, never installed. A link resolving outside the artifact root is how a copy writes outside its target, and initiative 02 writes into `~/.claude`. | T-3, T-5; **initiative 02** |
 | **R7** | 2026-08-28 | **`--json` is contract; human columnar output is not.** Tests assert the JSON payload, never substrings of the human format. Initiative 04 consumes the API or `--json`, never the columnar text. | T-7 |
 | **R8** | 2026-08-28 | **Superseded artifacts appear in the default listing**, ranked below their successors, carrying `superseded_by` in every payload. `include_superseded` defaults true. Hiding them would make a redirect stub invisible, which is the opposite of why supersession is first-class. | T-6, T-8 |
+| **R21** | 2026-08-28 | **`LibraryYamlError.path` is `str`, not `pathlib.Path`.** Moving the taxonomy into `domain/` (R17) collided with `test_purity.py`'s forbidden-stdlib set, which lists `pathlib`. Three repairs existed; two — a `TYPE_CHECKING` import, or removing `pathlib` from the forbidden set — work by disarming the guard. Narrowing the field was the only one that kept both mechanisms honest. The absolute location it names is unchanged. | T-5 onward |
+| **R22** | 2026-08-28 | **V9 is raised as a finding by the assembler, not as an error by the reader.** The reader *observes* each repeat and records a `DuplicateKey` with its line; the assembler decides severity and wording. This is V6's existing shape — observation in `infrastructure/`, severity in `domain/` — and V7 is the direct precedent: a `library.yaml` id resolving to nothing is a fault of the same document and is a finding. A rule in charter §8 that could never reach a report could never make `is_valid` false, so its row would be decorative. The surviving value stays last-wins, now documented: neither block can be preferred on merit, so the answer is the ERROR, not a cleverer merge. | T-6, T-7 |
 | **R15** | 2026-08-28 | **`library.yaml` is authoritative for `superseded_by`, with a fallback to the entry document's frontmatter.** Accepting the specialist's addition: V3's exemption is a property of *being a redirect stub*, and a library with no `library.yaml` still has stubs, so without the fallback V3 floods on exactly the case §8 carves out. Noted for a later initiative: spec §3.4's own principle — that `library.yaml` holds only what the artifact files cannot express — arguably favours frontmatter as the primary home. Not churning it now. | T-5, T-6 |
 | **R16** | 2026-08-28 | **`yaml.compose(..., Loader=yaml.SafeLoader)` satisfies R1**, whose literal words said `safe_load`. `compose` stops at the node tree and never reaches a constructor, so it meets R1's stated *reason* more strictly than `safe_load` does — and it is the only way to obtain a line number for a **shape** error, without which `tags: process` could be diagnosed but never located. Pinned by a test using a real `!!python/object/apply:os.system` payload and an observable marker file. R1's wording is hereby amended to name the reason, not the function. | T-4 onward |
 | **R17** | 2026-08-28 | **`errors.py` moves from `infrastructure/` to `domain/`, in T-5, before a second error code is added.** The reason is structural, not cosmetic: `application/` may not import `infrastructure/` — they are independent siblings under `layered-architecture` — so an application-layer error cannot inherit from a base living there. The specialist identified this while correctly staying inside its own territory. | T-5 |

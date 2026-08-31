@@ -52,6 +52,12 @@ class ValidationCode(StrEnum):
     V7 = "V7"
     """A `library.yaml` entry or `collections[].members` id that resolves to nothing."""
 
+    V8 = "V8"
+    """Two artifacts of one type whose names differ only by case."""
+
+    V9 = "V9"
+    """A duplicate key in `library.yaml` — the same id or collection key declared twice."""
+
     @property
     def severity(self) -> Severity:
         """The severity charter §8 assigns to this rule."""
@@ -67,6 +73,8 @@ SEVERITY_BY_CODE: Mapping[ValidationCode, Severity] = MappingProxyType(
         ValidationCode.V5: Severity.ERROR,
         ValidationCode.V6: Severity.WARNING,
         ValidationCode.V7: Severity.ERROR,
+        ValidationCode.V8: Severity.ERROR,
+        ValidationCode.V9: Severity.ERROR,
     }
 )
 """Charter §8's severity column. The single source; `ValidationCode.severity` reads it."""

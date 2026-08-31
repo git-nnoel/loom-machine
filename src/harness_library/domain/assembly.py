@@ -1,4 +1,4 @@
-"""Charter §8's validation register, as pure functions. Every rule V1-V7 lives here.
+"""Charter §8's validation register, as pure functions. Every rule V1-V9 lives here.
 
 This module is the reason the initiative was recut (DEC-1). The superseded plan built the repository
 first and retrofitted validation into it, so two of eight tasks existed only to reopen a third. Here
@@ -12,7 +12,8 @@ swap files destroyed by a copy. Charter §8 is the register; this is its enforce
 **Two levels, because two rules need more than one artifact.** `assemble_artifact` decides
 everything that is a property of a single artifact root: V1, V2, V3, V5, V6. `assemble_library`
 runs it over the whole scan and then answers the questions that need the set of ids that exist:
-V4 (`superseded_by` resolves) and V7 (a `library.yaml` entry or a collection member resolves).
+V4 (`superseded_by` resolves), V7 (a `library.yaml` entry or a collection member resolves), V8 (two
+names collide case-insensitively) and V9 (`library.yaml` declares a key twice).
 The brief singles out V7;
 V4 has the identical information need, so it lives at the same level rather than in a per-artifact
 function that would have to be handed the answer it is supposed to compute.
@@ -64,9 +65,11 @@ class AssembledLibrary:
     Attributes:
         artifacts: one per input `RawArtifact`, in input order, each carrying its own findings.
             Never filtered — not by validity, not by supersession (R8).
-        findings: the library-level findings. V7 only: a `library.yaml` entry or a
-            `collections[].members` id that resolves to nothing is a fault of the *document*, not of
-            any artifact, and there is by definition no artifact to hang it on.
+        findings: the library-level findings — V7 and V9. Both are faults of the `library.yaml`
+            *document* rather than of any artifact, and there is by definition no artifact to hang
+            them on. V8 is decided at this level too but is **not** here: a case collision has two
+            real artifacts to attach itself to, and attaching it only to the library would leave
+            `hl show skill/Foo` silent about it.
     """
 
     artifacts: tuple[Artifact, ...] = ()
@@ -81,13 +84,17 @@ class AssembledLibrary:
 def assemble_library(raws: Iterable[RawArtifact], metadata: LibraryMetadata) -> AssembledLibrary:
     """Turn a whole scan into finished artifacts. The entry point T-5 calls.
 
-    Runs `assemble_artifact` over every raw value, then makes the two passes that need the whole
-    library in view: V4 against each artifact's own `superseded_by`, and V7 against `library.yaml`.
+    Runs `assemble_artifact` over every raw value, then makes the passes that need the whole library
+    in view: V4 against each artifact's own `superseded_by`, V8 across the set of names, and V7 and
+    V9 against `library.yaml`.
     """
     assembled = [assemble_artifact(raw, metadata) for raw in raws]
     known_ids = frozenset(artifact.id for artifact in assembled)
     resolved = tuple(_apply_v4(artifact, known_ids) for artifact in assembled)
-    return AssembledLibrary(artifacts=resolved, findings=_check_v7(metadata, known_ids))
+    return AssembledLibrary(
+        artifacts=_apply_v8(resolved),
+        findings=_check_v7(metadata, known_ids) + _check_v9(metadata),
+    )
 
 
 def assemble_artifact(raw: RawArtifact, metadata: LibraryMetadata) -> Artifact:
@@ -283,6 +290,79 @@ def _check_v7(
         if member not in known_ids
     )
     return tuple(findings)
+
+
+def _apply_v8(artifacts: tuple[Artifact, ...]) -> tuple[Artifact, ...]:
+    """V8 — two artifacts of one type whose names differ only by case.
+
+    Library-level, like V4 and V7: "these two collide" is a statement about the set of names that
+    exist and cannot be decided from one artifact.
+
+    Why it is a rule at all, beyond tidiness. This library is distributed by `git clone` and
+    installed onto other machines, and on a case-insensitive filesystem `skills/Foo` and
+    `skills/foo` are one directory — the second install silently overwrites the first, with no
+    error anywhere. This scan is the only place the collision is visible, and it is cheap here.
+
+    **Attached to every colliding artifact, not to the library**, and each finding names the whole
+    colliding set: a user reading the report on one of them must be able to see what it collided
+    with, and a fault reported in only one direction sends them hunting for the other half. The set
+    is sorted so two scans of one library produce the same report.
+
+    Two *different types* never collide: `skill/foo` and `agent/foo` are distinct artifacts under
+    distinct directories, which is why the grouping key carries the type. Identical names are not
+    this rule either — they do not "differ only by case", and a scan cannot produce two of them from
+    one directory.
+    """
+    groups: dict[tuple[str, str], list[str]] = {}
+    for artifact in artifacts:
+        groups.setdefault((artifact.type.value, artifact.name.casefold()), []).append(artifact.id)
+
+    colliding = {key: sorted(set(ids)) for key, ids in groups.items() if len(set(ids)) > 1}
+    if not colliding:
+        return artifacts
+
+    return tuple(
+        _with_v8(artifact, colliding.get((artifact.type.value, artifact.name.casefold()), []))
+        for artifact in artifacts
+    )
+
+
+def _with_v8(artifact: Artifact, group: list[str]) -> Artifact:
+    """Attach V8 to one member of a colliding group, naming the others."""
+    others = [other for other in group if other != artifact.id]
+    if not others:
+        return artifact
+    finding = ValidationFinding.for_code(
+        ValidationCode.V8,
+        f"{artifact.id} differs only by case from {', '.join(others)}; on a case-insensitive "
+        "filesystem these are one path, and installing one silently overwrites the other",
+    )
+    return replace(artifact, findings=(*artifact.findings, finding))
+
+
+def _check_v9(metadata: LibraryMetadata) -> tuple[ValidationFinding, ...]:
+    """V9 — `library.yaml` declares the same key twice.
+
+    A fault of the document, so it sits beside V7 at the library level. The reader observed each
+    repeat and recorded it with both line numbers; the severity and the sentence are decided here,
+    because charter §8 is what says a duplicate key is an ERROR rather than something tolerated.
+
+    A **finding and not a raise**, deliberately. The document parses and both blocks are understood,
+    so it does not meet the reader's bar for "this file is unusable". Reported as a finding it joins
+    every other fault in one `hl validate` run and still fails the library, because V9 is an ERROR
+    and `is_valid` means no ERROR finding. Raised, it would report itself and nothing else — and a
+    rule that can never appear in a report can never make `is_valid` false, which would make its row
+    in the register decorative.
+    """
+    return tuple(
+        ValidationFinding.for_code(
+            ValidationCode.V9,
+            f"library.yaml declares {duplicate.key!r} twice in {duplicate.within} "
+            f"(line {duplicate.line} repeats line {duplicate.first_line}); "
+            "the earlier declaration is discarded",
+        )
+        for duplicate in metadata.duplicate_keys
+    )
 
 
 # --------------------------------------------------------------------------------------------

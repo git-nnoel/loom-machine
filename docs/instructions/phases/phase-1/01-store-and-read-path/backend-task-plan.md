@@ -343,3 +343,139 @@ to prevent.
 
 No scanner, no repository, no use case, no adapter, no validation rule (V1–V7 are T-3/T-5). Nothing under
 `domain/`. No dependency change, no `pyproject.toml` edit, no commit.
+
+---
+
+# T-4b backend task plan — errors to `domain/`, V8 and V9
+
+**Scope:** three corrections closing findings raised by the authors of T-3 and T-4. No scanner, no
+repository, no use case, no adapter — T-5's territory is untouched.
+
+## Understanding
+
+1. `infrastructure/errors.py` moves to `domain/errors.py`. T-4's author flagged it: `application/`
+   and `infrastructure/` are independent siblings under `layered-architecture`, so an
+   application-layer error cannot inherit a base that lives in `infrastructure/`. Doing the move
+   before a second `ErrorCode` exists is why it is first (R17).
+2. **V8** — two artifacts of one type whose names differ only by case. Charter §7 asserted the rule
+   and §8 had no code for it, so T-3 correctly refused to invent one. §8 now carries it (R19).
+3. **V9** — a duplicate key in `library.yaml`. Today it is silently last-wins (R20).
+
+## The one real obstacle in correction 1, and how it is resolved
+
+`LibraryYamlError` carries `path: Path`, and `pathlib` is in `tests/domain/test_purity.py`'s
+`FORBIDDEN_ROOTS`. Moving the module unchanged fails that guard — correctly, because the guard is
+what keeps `domain/` from acquiring a filesystem.
+
+Three ways out were weighed:
+
+* import `Path` under `if TYPE_CHECKING:` — routes around the guard, and teaches the next agent that
+  the guard is optional. Rejected.
+* drop `pathlib` from `FORBIDDEN_ROOTS` — weakens a mechanism to fit one field. Rejected.
+* **`LibraryYamlError.path` becomes `str`.** Taken. The field is the user-facing *location of the
+  fault*; `_render` already reduced it to `str(path)`, and no consumer does anything else with it.
+  The field stays present-and-absolute; only its Python type narrows. `path`, `line` and `column`
+  remain fields as well as message text.
+
+This changes one existing assertion — see "Existing tests changed" below.
+
+## Where V8 is decided, and how it is attached
+
+Library level, in `assemble_library`, beside V4 and V7: "these two names collide" is a statement
+about the set of names that exist and cannot be decided from one artifact. Artifacts are grouped by
+`(type, name.casefold())`; a group holding more than one *distinct* name is a collision.
+
+The finding is attached **to every artifact in the group**, the way V4 is attached, not to the
+library. A user reading the report on `skill/Delivery-Lead` must be able to see what it collides
+with, so each finding names the whole colliding set, sorted, so two scans report identically. It is
+not a library-level finding because — unlike V7 — there *are* artifacts to hang it on, and hanging it
+only on the library would make `hl show skill/Delivery-Lead` silent about the fault.
+
+Different types do not collide: `skill/foo` and `agent/foo` are distinct artifacts living in
+distinct directories, and the grouping key carries the type for exactly that reason.
+
+## Where V9 is raised — a finding, not a raise
+
+**V9 is a finding, emitted by the assembler at library level, not a `LibraryYamlError` from the
+reader.** The reader *observes* the duplication and records it; it does not decide severity.
+
+The defence, in order of weight:
+
+1. Charter §8 is the register of *findings*, and `is_valid` is defined there as "no finding of
+   severity ERROR". A rule that lives in that table and can never appear in a report has no way to
+   make `is_valid` false. R13 (`for_code`) points the same way.
+2. **V7 is the precedent.** A `library.yaml` id that resolves to nothing is a fault of the document,
+   and it is a finding. A duplicate key is a fault of the same document. Treating one as a finding
+   and the other as a fatal raise puts a distinction in the contract that no caller acts on.
+3. The reader's raise-seam is for documents that are *unusable* — cannot be parsed, or a value whose
+   meaning cannot be determined. A duplicate key is fully parsed and fully understood: both blocks
+   are visible. It does not meet that bar.
+4. `hl validate` is the consumer. A raise reports the duplicate and nothing else about the library;
+   a finding reports it alongside every other fault and still exits non-zero, because V9 is an ERROR.
+
+This mirrors **V6's** existing shape exactly: the scanner records `SkippedPath` values, the assembler
+turns each into a finding. Here the reader records `DuplicateKey` values and the assembler turns each
+into a V9. Observation in `infrastructure/`, severity and wording in `domain/`.
+
+The retained value stays last-wins and is now documented as such. Neither block can be preferred on
+merit — first-wins discards the second block's tags exactly as last-wins discards the first — so the
+answer is not a better merge but a loud ERROR saying the document is wrong. Nothing downstream should
+trust a merge from a library that is not `is_valid`.
+
+**Breadth:** the rule fires on *any* duplicate key in the document, which is what charter §8's
+headline says ("a duplicate key in `library.yaml`"); artifact ids and collection keys are its two
+named instances. A duplicated `tags:` inside one entry loses data the same way and would otherwise be
+a hole in a rule whose whole purpose is to close that hole. One recursive pass over the composed node
+tree, run *after* interpretation so a genuinely unusable document still raises exactly as before.
+
+## Approach — file by file
+
+* `src/harness_library/domain/errors.py` — moved from `infrastructure/`, `path` narrowed to `str`,
+  placement note replaced with why it lives here.
+* `src/harness_library/infrastructure/errors.py` — deleted.
+* `src/harness_library/infrastructure/_yaml_document.py`, `library_yaml.py` — import from
+  `domain.errors`; convert the path at each raise site.
+* `src/harness_library/domain/validation.py` — `V8`, `V9` members and their register rows.
+* `src/harness_library/domain/metadata.py` — `DuplicateKey`, and `LibraryMetadata.duplicate_keys`.
+* `src/harness_library/infrastructure/library_yaml.py` — collect duplicates from the node tree.
+* `src/harness_library/domain/assembly.py` — `_apply_v8` and `_check_v9`.
+* `tests/domain/test_purity.py` — `errors` added to `EXPECTED_MODULES` (**L13**).
+
+## Existing tests changed
+
+* `tests/infrastructure/test_library_yaml.py::test_malformed_yaml_raises_with_the_line_number` and
+  `::test_the_error_is_a_harness_library_error_with_a_stable_code` — `path` compared as `str`. What
+  is no longer guaranteed: that the error carries a `Path` object. The absolute location it names,
+  and its presence in `str(error)`, are still asserted.
+* `tests/domain/test_assembly.py::test_every_finding_takes_its_severity_from_the_register` — asserts
+  every code in `ValidationCode` is reachable from this layer, so its scenario gains a case collision
+  and a duplicate key. Weakening it to "V1–V7" instead would have been the wrong repair.
+* `tests/domain/test_validation.py` — `CHARTER_SECTION_8` gains the two rows.
+
+## Verification
+
+The gate, whole, from the repo root, formatter first, never path-scoped (**L2**), `docs/` clean
+(**L8/R11**):
+
+```
+export PATH="$HOME/.local/bin:$PATH"   # L9
+uv run ruff format --check . && uv run ruff check . && uv run mypy src tests && uv run lint-imports && uv run pytest
+```
+
+## Mutation checks — assertions named in advance
+
+**(a) Neuter V8.** Make the collision grouping key case-*sensitive*, so no group ever holds two
+distinct names.
+**Must fail:** `tests/domain/test_assembly.py::test_two_names_differing_only_by_case_are_a_v8_error`.
+**Must stay green:** `tests/domain/test_assembly.py::test_the_same_name_under_two_types_is_not_a_collision`
+— `skill/foo` and `agent/foo` are distinct artifacts and must remain so.
+
+**(b) Restore V9 to last-wins.** Stop collecting duplicate keys in the reader.
+**Must fail:** `tests/infrastructure/test_library_yaml.py::test_an_artifact_id_declared_twice_is_recorded_as_a_duplicate`.
+**Must stay green:** `tests/infrastructure/test_library_yaml.py::test_a_key_declared_once_records_no_duplicate`
+— a single occurrence is still read correctly and reports nothing.
+
+## Out of scope
+
+No scanner, no repository, no use case, no adapter. No dependency change, no `pyproject.toml` edit,
+no commit. Nothing under `docs/` except this section.

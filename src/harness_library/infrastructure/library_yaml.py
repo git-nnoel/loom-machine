@@ -14,6 +14,13 @@ artifact which does not exist is correct behaviour here. For the same reason the
 check that a key parses as `<type>/<name>` — `parse_artifact_id` returns `None` for exactly that
 case so V7 can report it.
 
+**Where V9 falls on that seam.** A duplicate key is neither: the document parses, and both blocks
+are fully understood. So it is neither a raise nor a resolution question — the reader *records* each
+repeat as a `DuplicateKey` and the assembler turns it into a V9 ERROR finding, the same division of
+labour V6 already uses between the scanner and the assembler. Raising instead would report the
+duplicate and nothing else about the library, and would leave a rule in charter §8's register that
+can never make `is_valid` false.
+
 **Absent, empty, and malformed are three different things.**
 
 * **Absent** — no `library.yaml` at all. `LibraryMetadata.empty()`. A library that declares no
@@ -35,7 +42,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from harness_library.domain.metadata import ArtifactMetadata, Collection, LibraryMetadata
+from harness_library.domain.errors import LibraryYamlError
+from harness_library.domain.metadata import (
+    ArtifactMetadata,
+    Collection,
+    DuplicateKey,
+    LibraryMetadata,
+)
 from harness_library.infrastructure._yaml_document import (
     YamlMapping,
     YamlNode,
@@ -43,7 +56,6 @@ from harness_library.infrastructure._yaml_document import (
     YamlSequence,
     compose_document,
 )
-from harness_library.infrastructure.errors import LibraryYamlError
 
 LIBRARY_YAML_FILENAME = "library.yaml"
 """The name of the metadata file, relative to the library root. Spec §3.4."""
@@ -80,12 +92,12 @@ def read_library_metadata(library_root: Path) -> LibraryMetadata:
         text = path.read_text(encoding="utf-8")
     except UnicodeDecodeError as error:
         raise LibraryYamlError(
-            f"{LIBRARY_YAML_FILENAME} is not valid UTF-8 text", path=path
+            f"{LIBRARY_YAML_FILENAME} is not valid UTF-8 text", path=str(path)
         ) from error
     except OSError as error:
         raise LibraryYamlError(
             f"{LIBRARY_YAML_FILENAME} exists but could not be read: {error.strerror or error}",
-            path=path,
+            path=str(path),
         ) from error
 
     root = compose_document(text, path=path)
@@ -95,7 +107,12 @@ def read_library_metadata(library_root: Path) -> LibraryMetadata:
 
 
 def _read_document(root: YamlNode, *, path: Path) -> LibraryMetadata:
-    """Interpret the root node. The document is a mapping of two optional keys."""
+    """Interpret the root node. The document is a mapping of two optional keys.
+
+    Duplicate keys are collected **after** interpretation, so a document that is genuinely unusable
+    still raises with its line exactly as it did before — a duplicate is a fault worth reporting,
+    not a reason to stop reading.
+    """
     artifacts: dict[str, ArtifactMetadata] = {}
     collections: list[Collection] = []
 
@@ -106,7 +123,11 @@ def _read_document(root: YamlNode, *, path: Path) -> LibraryMetadata:
         else:
             collections = _read_collections(value, path=path)
 
-    return LibraryMetadata(artifacts=artifacts, collections=tuple(collections))
+    return LibraryMetadata(
+        artifacts=artifacts,
+        collections=tuple(collections),
+        duplicate_keys=_collect_duplicate_keys(root),
+    )
 
 
 def _read_artifacts(node: YamlNode, *, path: Path) -> dict[str, ArtifactMetadata]:
@@ -145,7 +166,7 @@ def _read_collections(node: YamlNode, *, path: Path) -> list[Collection]:
         if not collection_key:
             raise LibraryYamlError(
                 "a collection key must not be empty",
-                path=path,
+                path=str(path),
                 line=key.line,
                 column=key.column,
             )
@@ -173,6 +194,57 @@ def _read_collection(node: YamlNode, *, key: str, path: Path) -> Collection:
 
 
 # ------------------------------------------------------------------------------------------------
+# V9 — duplicate keys, observed and recorded, never decided here.
+# ------------------------------------------------------------------------------------------------
+
+
+def _collect_duplicate_keys(root: YamlNode) -> tuple[DuplicateKey, ...]:
+    """Every key this document declares twice, in the order the repeats appear.
+
+    This is the whole reason R16 keeps the reader on `yaml.compose` rather than `yaml.safe_load`:
+    the composed tree keeps `YamlMapping.pairs` as a *list*, so both declarations are still visible.
+    `safe_load` would have collapsed them into a dict before this function could look, and the first
+    block's tags would vanish with no diagnostic — the precise silent-data-loss failure charter §8
+    added V9 to close.
+
+    Every mapping in the document is checked, not only `artifacts:` and `collections:`. Charter §8
+    heads the rule "a duplicate key in `library.yaml`"; a repeated artifact id and a repeated
+    collection key are its two named instances, and a `tags:` written twice inside one entry
+    discards a block just as silently. Deciding severity or wording is not this function's
+    job — see `DuplicateKey`.
+    """
+    found: list[DuplicateKey] = []
+    _walk_for_duplicates(root, context=(), found=found)
+    return tuple(found)
+
+
+def _walk_for_duplicates(
+    node: YamlNode, *, context: tuple[str, ...], found: list[DuplicateKey]
+) -> None:
+    """Depth-first over the node tree, recording repeats as they are met."""
+    if isinstance(node, YamlSequence):
+        for item in node.items:
+            _walk_for_duplicates(item, context=context, found=found)
+        return
+    if not isinstance(node, YamlMapping):
+        return
+
+    first_line_of: dict[str, int] = {}
+    for key, value in node.pairs:
+        name = key.value if isinstance(key, YamlScalar) else None
+        if name is not None:
+            first_line = first_line_of.get(name)
+            if first_line is None:
+                first_line_of[name] = key.line
+            else:
+                found.append(
+                    DuplicateKey(key=name, line=key.line, first_line=first_line, context=context)
+                )
+        nested = (*context, name) if name is not None else context
+        _walk_for_duplicates(value, context=nested, found=found)
+
+
+# ------------------------------------------------------------------------------------------------
 # Shape helpers. Each returns the value or raises with a location; none of them coerce.
 # ------------------------------------------------------------------------------------------------
 
@@ -187,7 +259,7 @@ def _mapping_pairs(
         return ()
     raise LibraryYamlError(
         f"{what} must be a mapping of keys to values, but is {_describe(node)}",
-        path=path,
+        path=str(path),
         line=node.line,
         column=node.column,
     )
@@ -203,7 +275,7 @@ def _key_name(node: YamlNode, *, allowed: tuple[str, ...], within: str, path: Pa
     if name not in allowed:
         raise LibraryYamlError(
             f"{name!r} is not a key of {within}; expected one of {', '.join(allowed)}",
-            path=path,
+            path=str(path),
             line=node.line,
             column=node.column,
         )
@@ -216,7 +288,7 @@ def _string(node: YamlNode, *, what: str, path: Path) -> str:
         return node.value
     raise LibraryYamlError(
         f"{what} must be a string, but is {_describe(node)}",
-        path=path,
+        path=str(path),
         line=node.line,
         column=node.column,
     )
@@ -242,14 +314,14 @@ def _string_list(node: YamlNode, *, what: str, path: Path) -> tuple[str, ...]:
         raise LibraryYamlError(
             f"{what} must be a list of strings, but is a single value; "
             f"write it as a list, e.g. [{node.value}]",
-            path=path,
+            path=str(path),
             line=node.line,
             column=node.column,
         )
     if not isinstance(node, YamlSequence):
         raise LibraryYamlError(
             f"{what} must be a list of strings, but is {_describe(node)}",
-            path=path,
+            path=str(path),
             line=node.line,
             column=node.column,
         )

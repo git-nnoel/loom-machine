@@ -23,6 +23,7 @@ from harness_library.domain.identity import ArtifactType
 from harness_library.domain.metadata import (
     ArtifactMetadata,
     Collection,
+    DuplicateKey,
     LibraryMetadata,
 )
 from harness_library.domain.raw import RawArtifact, RawEntry, SkippedPath, SkipReason
@@ -551,6 +552,180 @@ def test_an_empty_library_yaml_produces_no_v7_findings() -> None:
 
 
 # ==============================================================================================
+# V8 — two artifacts of one type whose names differ only by case
+# ==============================================================================================
+
+
+def test_two_names_differing_only_by_case_are_a_v8_error() -> None:
+    """The named assertion of mutation (a).
+
+    This is not tidiness. The library is distributed by `git clone` and installed onto machines
+    whose filesystem may be case-insensitive, where `skills/Foo` and `skills/foo` are one directory
+    and the second install silently overwrites the first. The scan is the only place it is visible.
+    """
+    library = assemble_library(
+        [raw_skill("Delivery-Lead"), raw_skill("delivery-lead")], NO_METADATA
+    )
+
+    by_id = library.by_id
+    assert codes(by_id["skill/Delivery-Lead"]) == [ValidationCode.V8]
+    assert codes(by_id["skill/delivery-lead"]) == [ValidationCode.V8]
+    assert by_id["skill/Delivery-Lead"].is_valid is False
+    assert by_id["skill/delivery-lead"].is_valid is False
+
+
+def test_a_case_collision_names_the_artifact_it_collides_with() -> None:
+    """Both halves must be discoverable from either half: a user reading the report on one of them
+    has to be told which other name it collided with, or the finding sends them hunting."""
+    library = assemble_library(
+        [raw_skill("Delivery-Lead"), raw_skill("delivery-lead")], NO_METADATA
+    )
+
+    by_id = library.by_id
+    assert "skill/delivery-lead" in by_id["skill/Delivery-Lead"].findings[0].message
+    assert "skill/Delivery-Lead" in by_id["skill/delivery-lead"].findings[0].message
+
+
+def test_the_v8_message_is_pinned() -> None:
+    """A golden literal, not an equality between two computed values (L12). The colliding ids are
+    sorted so two scans report identically; an accidental reordering is invisible to any assertion
+    that recomputes the same sort."""
+    library = assemble_library([raw_skill("foo"), raw_skill("FOO"), raw_skill("Foo")], NO_METADATA)
+
+    assert library.by_id["skill/foo"].findings[0].message == (
+        "skill/foo differs only by case from skill/FOO, skill/Foo; on a case-insensitive "
+        "filesystem these are one path, and installing one silently overwrites the other"
+    )
+
+
+def test_the_same_name_under_two_types_is_not_a_collision() -> None:
+    """Must stay green under mutation (a). `skill/foo` and `agent/foo` are distinct artifacts under
+    distinct directories and must remain so — the grouping key carries the type for this reason.
+
+    Deliberately holds no V8-positive assertion of its own: its positive control is the sibling
+    `test_two_names_differing_only_by_case_are_a_v8_error`, which proves this layer can emit V8 at
+    all. Putting the control inside this test would make it fail for the right rule's wrong reason.
+    """
+    agent_foo = RawArtifact(
+        type=ArtifactType.AGENT,
+        name="foo",
+        updated_at=SCANNED_AT,
+        files=(artifact_file("foo.md"),),
+        entry=RawEntry(frontmatter={"name": "foo", "description": "an agent"}, body="prose"),
+    )
+
+    library = assemble_library([raw_skill("foo"), agent_foo], NO_METADATA)
+
+    assert sorted(library.by_id) == ["agent/foo", "skill/foo"]
+    assert library.by_id["skill/foo"].findings == ()
+    assert library.by_id["agent/foo"].findings == ()
+
+
+def test_a_library_with_no_collision_reports_no_v8() -> None:
+    """Absence assertion; its positive control is the sibling above that does collide."""
+    library = assemble_library([raw_skill("alpha"), raw_skill("beta")], NO_METADATA)
+
+    assert [f for a in library.artifacts for f in a.findings] == []
+
+
+def test_v8_is_attached_to_the_artifacts_and_not_to_the_library() -> None:
+    """Unlike V7 there *are* artifacts to hang it on, and hanging it only on the library would
+    leave `hl show skill/Foo` silent about the fault."""
+    library = assemble_library([raw_skill("Foo"), raw_skill("foo")], NO_METADATA)
+
+    assert library.findings == ()
+    assert all(a.findings for a in library.artifacts)
+
+
+# ==============================================================================================
+# V9 — library.yaml declares the same key twice
+# ==============================================================================================
+
+
+def test_a_duplicate_key_in_library_yaml_is_a_v9_error() -> None:
+    metadata = LibraryMetadata(
+        artifacts={"skill/delivery-lead": ArtifactMetadata(tags=("second",))},
+        duplicate_keys=(
+            DuplicateKey(key="skill/delivery-lead", line=7, first_line=2, context=("artifacts",)),
+        ),
+    )
+
+    library = assemble_library([raw_skill("delivery-lead")], metadata)
+
+    assert [f.code for f in library.findings] == [ValidationCode.V9]
+    assert library.findings[0].severity is Severity.ERROR
+
+
+def test_the_v9_message_names_both_declarations() -> None:
+    """A golden literal (L12). Both line numbers are the fault — a diagnosis naming only the repeat
+    leaves the reader hunting for the block whose tags were discarded."""
+    metadata = LibraryMetadata(
+        duplicate_keys=(
+            DuplicateKey(key="skill/delivery-lead", line=7, first_line=2, context=("artifacts",)),
+        ),
+    )
+
+    library = assemble_library([], metadata)
+
+    assert library.findings[0].message == (
+        "library.yaml declares 'skill/delivery-lead' twice in 'artifacts' "
+        "(line 7 repeats line 2); the earlier declaration is discarded"
+    )
+
+
+def test_a_duplicate_at_the_top_level_says_so() -> None:
+    metadata = LibraryMetadata(
+        duplicate_keys=(DuplicateKey(key="artifacts", line=9, first_line=1),)
+    )
+
+    library = assemble_library([], metadata)
+
+    assert "the document" in library.findings[0].message
+
+
+def test_v9_findings_belong_to_the_library_and_not_to_any_artifact() -> None:
+    """The fault is in the document, not in the artifact the duplicated key happens to name — and
+    a duplicate id whose artifact does not exist has nothing to attach to at all."""
+    metadata = LibraryMetadata(
+        artifacts={"skill/delivery-lead": ArtifactMetadata()},
+        duplicate_keys=(
+            DuplicateKey(key="skill/delivery-lead", line=7, first_line=2, context=("artifacts",)),
+        ),
+    )
+
+    library = assemble_library([raw_skill("delivery-lead")], metadata)
+
+    assert library.findings
+    assert library.by_id["skill/delivery-lead"].findings == ()
+
+
+def test_a_library_yaml_with_no_duplicates_reports_no_v9() -> None:
+    """Absence assertion; the tests above are its positive controls, and the metadata here is
+    deliberately non-empty so an ignored `library.yaml` cannot pass as green."""
+    metadata = LibraryMetadata(
+        artifacts={"skill/delivery-lead": ArtifactMetadata(tags=("process",))}
+    )
+
+    library = assemble_library([raw_skill("delivery-lead")], metadata)
+
+    assert metadata.artifacts
+    assert library.findings == ()
+
+
+def test_every_duplicate_is_reported_in_the_order_the_reader_met_it() -> None:
+    metadata = LibraryMetadata(
+        duplicate_keys=(
+            DuplicateKey(key="skill/b", line=8, first_line=4, context=("artifacts",)),
+            DuplicateKey(key="skill/a", line=12, first_line=2, context=("artifacts",)),
+        ),
+    )
+
+    library = assemble_library([], metadata)
+
+    assert [f.message.split("'")[1] for f in library.findings] == ["skill/b", "skill/a"]
+
+
+# ==============================================================================================
 # Severity is never chosen by the emitter (R13)
 # ==============================================================================================
 
@@ -560,7 +735,10 @@ def test_every_finding_takes_its_severity_from_the_register() -> None:
         artifacts={
             "skill/ghost": ArtifactMetadata(superseded_by="skill/never-written"),
             "skill/never-declared": ArtifactMetadata(),
-        }
+        },
+        duplicate_keys=(
+            DuplicateKey(key="skill/never-declared", line=9, first_line=5, context=("artifacts",)),
+        ),
     )
     library = assemble_library(
         [
@@ -571,6 +749,7 @@ def test_every_finding_takes_its_severity_from_the_register() -> None:
                 frontmatter={"name": "wrong", "description": ""},
                 skipped=(SkippedPath("SKILL.md.swp", SkipReason.EDITOR_SWAP),),
             ),
+            raw_skill("Backend-Charter", body=LIVE_BODY),
         ],
         metadata,
     )
@@ -578,7 +757,7 @@ def test_every_finding_takes_its_severity_from_the_register() -> None:
     emitted = {finding.code for artifact in library.artifacts for finding in artifact.findings} | {
         finding.code for finding in library.findings
     }
-    assert emitted == set(ValidationCode), "every rule V1-V7 must be reachable from this layer"
+    assert emitted == set(ValidationCode), "every rule V1-V9 must be reachable from this layer"
 
     for finding in [f for a in library.artifacts for f in a.findings] + list(library.findings):
         assert finding.severity is finding.code.severity

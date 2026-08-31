@@ -12,12 +12,12 @@ from pathlib import Path
 
 import pytest
 
-from harness_library.domain.metadata import EMPTY_ARTIFACT_METADATA, LibraryMetadata
-from harness_library.infrastructure.errors import (
+from harness_library.domain.errors import (
     ErrorCode,
     HarnessLibraryError,
     LibraryYamlError,
 )
+from harness_library.domain.metadata import EMPTY_ARTIFACT_METADATA, LibraryMetadata
 from harness_library.infrastructure.library_yaml import (
     LIBRARY_YAML_FILENAME,
     read_library_metadata,
@@ -87,7 +87,7 @@ def test_malformed_yaml_raises_with_the_line_number(tmp_path: Path) -> None:
 
     assert caught.value.line == 4
     assert caught.value.code is ErrorCode.LIBRARY_YAML_INVALID
-    assert caught.value.path == path
+    assert caught.value.path == str(path)
     assert "4" in str(caught.value)
 
 
@@ -120,7 +120,7 @@ def test_a_malformed_file_is_not_confused_with_an_absent_one(tmp_path: Path) -> 
 
 def test_the_error_is_a_harness_library_error_with_a_stable_code() -> None:
     """Charter §9: adapters catch the base type and branch on `code`, never on the message."""
-    error = LibraryYamlError("something", path=Path("/library/library.yaml"), line=7, column=3)
+    error = LibraryYamlError("something", path="/library/library.yaml", line=7, column=3)
 
     assert isinstance(error, HarnessLibraryError)
     assert error.code is ErrorCode.LIBRARY_YAML_INVALID
@@ -428,3 +428,160 @@ def test_ids_that_resolve_to_nothing_are_returned_not_rejected(tmp_path: Path) -
     assert set(metadata.artifacts) == {"skill/does-not-exist", "not-even-an-id"}
     assert metadata.for_artifact("skill/does-not-exist").superseded_by == "skill/also-missing"
     assert metadata.collections[0].members == ("skill/nowhere",)
+
+
+# Behaviour 7 — V9: a key declared twice is recorded, never silently collapsed.
+#
+# What this layer is blind to: it records the duplication and nothing else. That a `DuplicateKey`
+# becomes a V9 ERROR finding is charter §8's decision and is asserted in
+# `tests/domain/test_assembly.py`. Recording without judging is the same division of labour the
+# scanner and the assembler already use for V6.
+
+
+def test_an_artifact_id_declared_twice_is_recorded_as_a_duplicate(tmp_path: Path) -> None:
+    """The named assertion of mutation (b).
+
+    `yaml.compose` (R16) is what makes this observable at all: `YamlMapping.pairs` is a list, so
+    both blocks survive. Under `safe_load` the first block's tags would already be gone.
+    """
+    write_library_yaml(
+        tmp_path,
+        "artifacts:\n"  # line 1
+        "  skill/one:\n"  # line 2
+        "    tags: [first]\n"  # line 3
+        "  skill/two:\n"  # line 4
+        "    tags: [other]\n"  # line 5
+        "  skill/one:\n"  # line 6 — the repeat
+        "    tags: [second]\n",  # line 7
+    )
+
+    metadata = read_library_metadata(tmp_path)
+
+    assert [(d.key, d.first_line, d.line, d.context) for d in metadata.duplicate_keys] == [
+        ("skill/one", 2, 6, ("artifacts",))
+    ]
+
+
+def test_a_key_declared_once_records_no_duplicate(tmp_path: Path) -> None:
+    """Must stay green under mutation (b): a single occurrence of a key is still read correctly and
+    reports nothing.
+
+    Deliberately holds no duplicate of its own — its positive control is the sibling above, which
+    proves the reader is capable of recording one. The tag assertions are what keep this test from
+    passing vacuously if the reader stopped reading altogether.
+    """
+    write_library_yaml(
+        tmp_path,
+        "artifacts:\n"
+        "  skill/one:\n"
+        "    tags: [first]\n"
+        "  skill/two:\n"
+        "    tags: [other]\n"
+        "collections:\n"
+        "  backend:\n"
+        "    members: [skill/one]\n",
+    )
+
+    metadata = read_library_metadata(tmp_path)
+
+    assert metadata.duplicate_keys == ()
+    assert metadata.for_artifact("skill/one").tags == ("first",)
+    assert metadata.for_artifact("skill/two").tags == ("other",)
+    assert metadata.collections[0].members == ("skill/one",)
+
+
+def test_a_duplicate_collection_key_is_recorded(tmp_path: Path) -> None:
+    write_library_yaml(
+        tmp_path,
+        "collections:\n"  # line 1
+        "  backend:\n"  # line 2
+        "    members: [skill/one]\n"  # line 3
+        "  backend:\n"  # line 4 — the repeat
+        "    members: [skill/two]\n",  # line 5
+    )
+
+    metadata = read_library_metadata(tmp_path)
+
+    assert [(d.key, d.first_line, d.line) for d in metadata.duplicate_keys] == [("backend", 2, 4)]
+    assert metadata.duplicate_keys[0].context == ("collections",)
+
+
+def test_a_repeated_key_inside_one_entry_is_recorded_with_its_context(tmp_path: Path) -> None:
+    """Charter §8 heads V9 "a duplicate key in `library.yaml`". A `tags:` written twice inside one
+    entry discards a block exactly as silently as a repeated id, so it is the same fault; the
+    context is what lets the report say which mapping it happened in."""
+    write_library_yaml(
+        tmp_path,
+        "artifacts:\n"  # line 1
+        "  skill/one:\n"  # line 2
+        "    tags: [first]\n"  # line 3
+        "    tags: [second]\n",  # line 4 — the repeat
+    )
+
+    metadata = read_library_metadata(tmp_path)
+
+    assert [(d.key, d.first_line, d.line, d.context) for d in metadata.duplicate_keys] == [
+        ("tags", 3, 4, ("artifacts", "skill/one"))
+    ]
+
+
+def test_a_top_level_section_declared_twice_is_recorded(tmp_path: Path) -> None:
+    write_library_yaml(
+        tmp_path,
+        "artifacts:\n"  # line 1
+        "  skill/one:\n"  # line 2
+        "collections: {}\n"  # line 3
+        "artifacts:\n"  # line 4 — the repeat
+        "  skill/two:\n",  # line 5
+    )
+
+    metadata = read_library_metadata(tmp_path)
+
+    assert [(d.key, d.first_line, d.line, d.context) for d in metadata.duplicate_keys] == [
+        ("artifacts", 1, 4, ())
+    ]
+
+
+def test_the_same_id_in_two_different_mappings_is_not_a_duplicate(tmp_path: Path) -> None:
+    """An id may legitimately appear under `artifacts:` and again as a collection member. Only a
+    key repeated *within one mapping* loses data."""
+    write_library_yaml(
+        tmp_path,
+        "artifacts:\n  skill/one:\n    tags: [a]\ncollections:\n  backend:\n    members:\n"
+        "      - skill/one\n",
+    )
+
+    metadata = read_library_metadata(tmp_path)
+
+    assert metadata.duplicate_keys == ()
+    assert metadata.collections[0].members == ("skill/one",)
+
+
+def test_a_duplicate_does_not_stop_the_document_being_read(tmp_path: Path) -> None:
+    """A duplicate is reported, not raised: the document parses and both blocks are understood, so
+    it does not meet this reader's bar for "unusable". The surviving value stays last-wins — neither
+    block can be preferred on merit — and the V9 ERROR is what says the document is wrong.
+    """
+    write_library_yaml(
+        tmp_path,
+        "artifacts:\n  skill/one:\n    tags: [first]\n  skill/one:\n    tags: [second]\n",
+    )
+
+    metadata = read_library_metadata(tmp_path)
+
+    assert metadata.for_artifact("skill/one").tags == ("second",)
+    assert metadata.duplicate_keys
+
+
+def test_a_document_that_cannot_be_used_still_raises_ahead_of_any_duplicate(
+    tmp_path: Path,
+) -> None:
+    """Collecting duplicates must not demote a shape failure into a finding: an unknown key in a
+    file that also repeats one is still the hard, located error it was before."""
+    write_library_yaml(
+        tmp_path,
+        "artifacts:\n  skill/one:\n    tag: [first]\n  skill/one:\n    tags: [second]\n",
+    )
+
+    with pytest.raises(LibraryYamlError, match="'tag' is not a key"):
+        read_library_metadata(tmp_path)

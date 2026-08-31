@@ -25,7 +25,7 @@ from typing import Any
 
 import yaml  # type: ignore[import-untyped]
 
-from harness_library.infrastructure.errors import LibraryYamlError
+from harness_library.domain.errors import LibraryYamlError
 
 STR_TAG = "tag:yaml.org,2002:str"
 """The tag PyYAML's safe resolver gives a plain or quoted string."""
@@ -102,7 +102,9 @@ def compose_document(text: str, *, path: Path) -> YamlNode | None:
         root: Any = yaml.compose(text, Loader=yaml.SafeLoader)
     except yaml.YAMLError as error:
         line, column = _position_of(error)
-        raise LibraryYamlError(_reason_of(error), path=path, line=line, column=column) from error
+        raise LibraryYamlError(
+            _reason_of(error), path=str(path), line=line, column=column
+        ) from error
     if root is None:
         return None
     return _convert(root)

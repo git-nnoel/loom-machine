@@ -19,10 +19,12 @@ CHARTER_SECTION_8 = {
     "V5": Severity.ERROR,
     "V6": Severity.WARNING,
     "V7": Severity.ERROR,
+    "V8": Severity.ERROR,
+    "V9": Severity.ERROR,
 }
 
 
-def test_the_code_set_is_exactly_v1_to_v7() -> None:
+def test_the_code_set_is_exactly_v1_to_v9() -> None:
     """Closed. Initiative 04 branches on the code, so a member added without a charter row —
     or a row added without a member — has to fail here."""
     assert [code.value for code in ValidationCode] == sorted(CHARTER_SECTION_8)

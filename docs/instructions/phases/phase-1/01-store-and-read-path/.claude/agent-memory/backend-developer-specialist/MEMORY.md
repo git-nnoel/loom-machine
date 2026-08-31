@@ -1,0 +1,3 @@
+- [uv toolchain bootstrap](uv-toolchain-bootstrap.md) — uv is not installed and pip blocks --user; how to get `uv run` working.
+- [The gate invocation](the-gate-invocation.md) — exact gate command, plus the verified import-linter semantics and the tests-importability setup.
+- [ruff format rewrites docs markdown](ruff-format-rewrites-docs-markdown.md) — why `docs/` is excluded from ruff; check `git status docs/` before reporting done.

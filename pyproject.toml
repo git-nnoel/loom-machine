@@ -1,0 +1,96 @@
+[project]
+name = "harness-library"
+version = "0.1.0"
+description = "A store, validator and read path over a Claude Code harness library."
+requires-python = ">=3.12"
+dependencies = [
+    "typer",
+    "pydantic",
+    "pydantic-settings",
+    "python-frontmatter",
+    "pyyaml",
+    "mcp",
+    "structlog",
+]
+
+# No [project.scripts] yet. The `hl` entry point lands with the CLI composition root in T-7;
+# an entry point naming a module that does not exist breaks the install.
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/harness_library"]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "ruff",
+    "mypy",
+    "import-linter",
+]
+
+# ---------------------------------------------------------------------------
+# Architecture contracts (charter §2). Enforced as a test, not as a lint step —
+# see tests/test_architecture.py. Config lives here and never in setup.cfg.
+# ---------------------------------------------------------------------------
+
+[tool.importlinter]
+root_packages = ["harness_library"]
+
+[[tool.importlinter.contracts]]
+name = "layered-architecture"
+type = "layers"
+# Ordered HIGH to LOW: the first entry may import everything below it, never the reverse.
+# `|` between siblings makes them independent of each other. `application` and
+# `infrastructure` are siblings, not a stack: infrastructure implements domain protocols,
+# and neither may reach into the other.
+layers = [
+    "harness_library.cli | harness_library.mcp",
+    "harness_library.application | harness_library.infrastructure",
+    "harness_library.domain",
+]
+
+[[tool.importlinter.contracts]]
+name = "mcp-is-read-only"
+type = "forbidden"
+source_modules = ["harness_library.mcp"]
+forbidden_modules = ["harness_library.application.write"]
+
+[[tool.importlinter.contracts]]
+name = "domain-is-pure"
+type = "forbidden"
+source_modules = ["harness_library.domain"]
+forbidden_modules = [
+    "harness_library.application",
+    "harness_library.infrastructure",
+    "harness_library.cli",
+    "harness_library.mcp",
+]
+
+# ---------------------------------------------------------------------------
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+# `ruff format` reformats Python code fences inside Markdown. `docs/` is the delivery
+# lead's territory and its code blocks are illustrative, not compiled — keep ruff out.
+extend-exclude = ["docs"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "SIM", "RUF"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+mypy_path = "src"
+namespace_packages = false
+warn_unreachable = true
+
+[tool.pytest.ini_options]
+# "." is required so `tests` and its subpackages import cleanly alongside the src layout.
+pythonpath = ["src", "."]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers --strict-config"

@@ -1,6 +1,6 @@
 # Implementation record — Store, validation, read path, MCP
 
-**Status:** Open — T-1…T-4b accepted; T-5 next
+**Status:** Open — T-1…T-5 accepted; T-6 next
 **Phase:** 1 · **Initiative:** 01-store-and-read-path · **Owner:** delivery lead
 **Last updated:** 2026-08-28
 
@@ -16,7 +16,8 @@ Backward-facing: what actually shipped. The forward-facing intent is `implementa
 | **T-3** | `RawArtifact`, the pure assembler, rules V1–V7 | **Accepted** 2026-08-28 — commit `519b7ed` |
 | **T-4** | `library.yaml` reader, error taxonomy | **Accepted** 2026-08-28 — commit `519b7ed` |
 | **T-4b** | Corrections: errors.py → domain/, V8 case collision, V9 duplicate keys | **Accepted** 2026-08-28 |
-| T-5 … T-9 | see plan §7 | Not dispatched |
+| **T-5** | Scanner, repository, committed fixture library | **Accepted** 2026-08-28 — commit `ff5f540` |
+| T-6 … T-9 | see plan §7 | Not dispatched |
 
 ## Evidence
 
@@ -51,6 +52,12 @@ Both mutations re-run by the delivery lead on the integrated tree:
 - **V9 mutation** — duplicate collection returned empty → `test_an_artifact_id_declared_twice_is_recorded_as_a_duplicate` plus one sibling failed; the control `test_a_key_declared_once_records_no_duplicate` **passed**.
 - Restored: `172 passed`.
 
+**T-5 — gate re-run by the delivery lead:** exit 0, `256 passed` (up from 172). `subprocess` confirmed confined to `infrastructure/`; `src/harness_library/domain/` and `tests/domain/` byte-for-byte unchanged.
+- **V6 mutation, above the fake** — dropping every `skipped.append` in the scanner failed `test_a_real_symlink_becomes_a_v6_warning_on_the_assembled_artifact`, driven off a symlink committed into the fixture library. The domain-level `test_a_symlink_is_reported_as_a_v6_warning_and_never_blocks` **stayed green**, correctly blind to a scanner defect. This is the check that would have caught the superseded plan shipping V6 entirely unwired.
+- **R5 mutation** — forcing `GitTimestamps.for_artifact` to the mtime fallback failed 8 tests, `test_updated_at_is_the_last_commit_touching_the_artifact_and_not_its_mtime` among them.
+- **Delivery-lead error, recorded for honesty:** my first attempt at the R5 mutation reported 256 passed and looked like a refuted claim. The regex had patched the *protocol stub* rather than `GitTimestamps.for_artifact`, so nothing was mutated. A no-op mutation is indistinguishable from a well-guarded one unless you check that the edit landed — verify the patch, not just the result.
+- Restored: `256 passed`.
+
 ## Rulings (R-N)
 
 Every boundary call, numbered. Specialists do not read this file — the delivery lead carries each
@@ -66,6 +73,9 @@ binding ruling into the dispatch prompt in their own words.
 | **R6** | 2026-08-28 | **Symlinks are skipped and reported** as a V6 warning. Never followed, never hashed, never installed. A link resolving outside the artifact root is how a copy writes outside its target, and initiative 02 writes into `~/.claude`. | T-3, T-5; **initiative 02** |
 | **R7** | 2026-08-28 | **`--json` is contract; human columnar output is not.** Tests assert the JSON payload, never substrings of the human format. Initiative 04 consumes the API or `--json`, never the columnar text. | T-7 |
 | **R8** | 2026-08-28 | **Superseded artifacts appear in the default listing**, ranked below their successors, carrying `superseded_by` in every payload. `include_superseded` defaults true. Hiding them would make a redirect stub invisible, which is the opposite of why supersession is first-class. | T-6, T-8 |
+| **R23** | 2026-08-28 | **`library_findings()` joins contract C-4.** V7 and V9 land on `AssembledLibrary.findings` and were otherwise unreachable from the read path, so F-4 could report neither. That is R22's "decorative row" failure arriving by a different door: a rule that cannot reach a report cannot make a library invalid. The specialist added it as explicitly additive and did not touch the contract, which was correct — amending C-4 is mine. | T-6, T-7 |
+| **R24** | 2026-08-28 | **The repository keeps raising plain Python exceptions; T-6's use cases translate them into typed errors with codes.** Charter §9 forbids emitting a code not in the contract, and `domain/errors.py` was outside T-5's territory, so it correctly raised `KeyError` / `FileNotFoundError` / `ValueError`. The application layer is where a code becomes meaningful, because that is what T-7 maps to an exit code and initiative 03 maps to an HTTP status. | T-6, T-7 |
+| **R25** | 2026-08-28 | **F-3's `skipped_binary` wording was wrong and the plan is corrected.** R4's rule is "the entry document and every `.md` reference", not "everything that is text". The bundled 184 KB HTML asset is valid UTF-8, so a decode-based `is_text` correctly calls it text — and it is still not searched, because it is not a markdown reference. The reason reported is *not a markdown reference*, never *binary*. My defect: I wrote a criterion that contradicted my own ruling. | T-6, T-8, T-9 |
 | **R21** | 2026-08-28 | **`LibraryYamlError.path` is `str`, not `pathlib.Path`.** Moving the taxonomy into `domain/` (R17) collided with `test_purity.py`'s forbidden-stdlib set, which lists `pathlib`. Three repairs existed; two — a `TYPE_CHECKING` import, or removing `pathlib` from the forbidden set — work by disarming the guard. Narrowing the field was the only one that kept both mechanisms honest. The absolute location it names is unchanged. | T-5 onward |
 | **R22** | 2026-08-28 | **V9 is raised as a finding by the assembler, not as an error by the reader.** The reader *observes* each repeat and records a `DuplicateKey` with its line; the assembler decides severity and wording. This is V6's existing shape — observation in `infrastructure/`, severity in `domain/` — and V7 is the direct precedent: a `library.yaml` id resolving to nothing is a fault of the same document and is a finding. A rule in charter §8 that could never reach a report could never make `is_valid` false, so its row would be decorative. The surviving value stays last-wins, now documented: neither block can be preferred on merit, so the answer is the ERROR, not a cleverer merge. | T-6, T-7 |
 | **R15** | 2026-08-28 | **`library.yaml` is authoritative for `superseded_by`, with a fallback to the entry document's frontmatter.** Accepting the specialist's addition: V3's exemption is a property of *being a redirect stub*, and a library with no `library.yaml` still has stubs, so without the fallback V3 floods on exactly the case §8 carves out. Noted for a later initiative: spec §3.4's own principle — that `library.yaml` holds only what the artifact files cannot express — arguably favours frontmatter as the primary home. Not churning it now. | T-5, T-6 |
@@ -102,6 +112,8 @@ binding ruling into the dispatch prompt in their own words.
 | Review item S8 — the import-linter contract as drafted did not express spec §7.3's guarantee and permitted `infrastructure → application` | Fixed in plan DEC-2 and T-1's mutation check; spec §14 records that §7.3's statement was correct and the translation was not |
 | Spec §12.2 plugin-format export | Shapes 02's export; C-4's `read_bytes` is frozen here to keep it possible |
 | Scan-cost measurement | Plan §2 Deferred; measure at T-9 |
+| **A symlinked artifact *root* is skipped silently.** Not followed (R6) and not scanned, so a symlinked skill that would load perfectly is absent from the library with no diagnostic. Silent omission is the failure this product exists to eliminate, so this is a real gap — but no rule covers it, and inventing a decorative charter row is worse. | **Decision point at T-9.** Either a new rule with an implementation in the same change, or an explicit recorded "won't fix" for initiative 02. Not left to a task. |
+| Unparseable frontmatter fires V5 (entry declares nothing) rather than a dedicated code | Acceptable; revisit if a user hits it and the message misleads |
 | `mcp` pulls `starlette`/`uvicorn`/`sse-starlette` transitively — an HTTP stack is present in the venv that T-8 must not touch | Lesson L11, bound to T-8 |
 | No `py.typed` marker in `src/harness_library/` | Not needed while nothing imports the library externally; revisit if initiative 03 or 04 consumes it as a package |
 

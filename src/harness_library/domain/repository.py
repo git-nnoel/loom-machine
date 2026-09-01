@@ -20,6 +20,7 @@ from typing import Protocol, runtime_checkable
 
 from harness_library.domain.artifact import Artifact
 from harness_library.domain.metadata import Collection
+from harness_library.domain.validation import ValidationFinding
 
 
 @runtime_checkable
@@ -49,4 +50,15 @@ class ArtifactRepository(Protocol):
 
     def list_collections(self) -> list[Collection]:
         """Every collection the library declares, in declaration order."""
+        ...
+
+    def library_findings(self) -> list[ValidationFinding]:
+        """The findings that belong to no single artifact — V7 and V9.
+
+        Both are faults of the `library.yaml` *document*, so the assembler puts them on the library
+        rather than on an artifact and there is by definition no artifact to hang them on. Declared
+        here because ruling R23 made this method part of contract C-4: without it the validate use
+        case cannot reach V7 or V9, and two rows of charter §8's register are decorative — a rule
+        that cannot reach a report can never make a library invalid.
+        """
         ...

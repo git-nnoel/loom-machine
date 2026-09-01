@@ -1,0 +1,156 @@
+"""A hand-written contract C-4 repository, in memory. Charter §10.
+
+The application layer is tested against this and never against a disk. That is not merely faster:
+`application/` may not import `infrastructure/`, so a test that reached for the real repository
+would be testing an import the architecture contract forbids.
+
+**What this fake cannot prove, stated once so no later task mistakes a green run for proof of it.**
+It cannot prove that a real scan records a symlink, that `updated_at` came from git, that a real
+`library.yaml` parses, or that a real binary file fails to decode. Every one of those is proven at
+the infrastructure level against real files (T-5). What it *can* prove is the only thing this layer
+decides: which artifacts a filter admits, what order they come back in, what is searched and what
+is skipped, which findings reach a report, and which builtin becomes which error code.
+
+The failures are injected as *builtins* — `KeyError`, `FileNotFoundError`, `ValueError`,
+`UnicodeDecodeError` — because that is exactly what the real repository raises (ruling R24). A fake
+that raised the project's own errors would make the translation untestable by pre-supplying its
+result.
+"""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+
+from harness_library.domain.artifact import Artifact, ArtifactFile, ArtifactKind
+from harness_library.domain.hashing import content_hash_of_files, hash_bytes
+from harness_library.domain.identity import ArtifactType
+from harness_library.domain.metadata import Collection
+from harness_library.domain.registry import spec_for
+from harness_library.domain.validation import ValidationCode, ValidationFinding
+
+UPDATED_AT = datetime(2026, 8, 31, 12, 0, tzinfo=UTC)
+"""The instant every artifact is pinned to unless a test is about ordering by time."""
+
+
+class FakeArtifactRepository:
+    """Contract C-4 over dictionaries.
+
+    Attributes:
+        contents: `(artifact_id, path)` to the file's bytes. A path an artifact declares in
+            `files` but that is missing here raises `FileNotFoundError`, which is how the real
+            repository answers a path outside its snapshot.
+    """
+
+    def __init__(
+        self,
+        artifacts: list[Artifact] | None = None,
+        *,
+        contents: dict[tuple[str, str], bytes] | None = None,
+        collections: list[Collection] | None = None,
+        library_findings: list[ValidationFinding] | None = None,
+    ) -> None:
+        self._artifacts = list(artifacts or [])
+        self.contents = dict(contents or {})
+        self._collections = list(collections or [])
+        self._library_findings = list(library_findings or [])
+        self.read_calls: list[tuple[str, str]] = []
+
+    def list_all(self) -> list[Artifact]:
+        return list(self._artifacts)
+
+    def get(self, artifact_id: str) -> Artifact | None:
+        return next((a for a in self._artifacts if a.id == artifact_id), None)
+
+    def read_bytes(self, artifact_id: str, path: str) -> bytes:
+        self.read_calls.append((artifact_id, path))
+        if self.get(artifact_id) is None:
+            raise KeyError(f"no artifact {artifact_id!r} in this library")
+        if not path or path.startswith("/") or ".." in path.split("/"):
+            raise ValueError(f"{path!r} may not climb out of the artifact root")
+        try:
+            return self.contents[(artifact_id, path)]
+        except KeyError as error:
+            raise FileNotFoundError(f"{artifact_id} contains no file at {path!r}") from error
+
+    def read_text(self, artifact_id: str, path: str) -> str:
+        return self.read_bytes(artifact_id, path).decode("utf-8")
+
+    def list_collections(self) -> list[Collection]:
+        return list(self._collections)
+
+    def library_findings(self) -> list[ValidationFinding]:
+        return list(self._library_findings)
+
+
+def make_file(path: str, content: bytes = b"body\n", *, is_text: bool = True) -> ArtifactFile:
+    """One `ArtifactFile` whose digest and size really describe `content`."""
+    return ArtifactFile(path=path, sha256=hash_bytes(content), size=len(content), is_text=is_text)
+
+
+def make_artifact(
+    name: str,
+    *,
+    artifact_type: ArtifactType = ArtifactType.SKILL,
+    files: tuple[ArtifactFile, ...] = (),
+    tags: tuple[str, ...] = (),
+    superseded_by: str | None = None,
+    findings: tuple[ValidationFinding, ...] = (),
+    updated_at: datetime = UPDATED_AT,
+    description: str | None = "a description",
+    frontmatter: dict[str, object] | None = None,
+) -> Artifact:
+    """An artifact whose `path` and `kind` come from the type registry, not from a literal."""
+    spec = spec_for(artifact_type)
+    return Artifact(
+        type=artifact_type,
+        name=name,
+        kind=spec.kind,
+        path=spec.root_path(name),
+        content_hash=content_hash_of_files(files),
+        updated_at=updated_at,
+        description=description,
+        frontmatter=frontmatter or {},
+        superseded_by=superseded_by,
+        tags=tags,
+        files=files,
+        findings=findings,
+    )
+
+
+def finding(
+    code: ValidationCode, message: str = "something", path: str | None = None
+) -> ValidationFinding:
+    """A finding whose severity comes from the register (ruling R13), never from the test."""
+    return ValidationFinding.for_code(code, message, path)
+
+
+def skill_with_entry(
+    name: str,
+    entry_body: str = "# entry\n",
+    *,
+    references: dict[str, str] | None = None,
+    extra_files: tuple[ArtifactFile, ...] = (),
+    **kwargs: object,
+) -> tuple[Artifact, dict[tuple[str, str], bytes]]:
+    """A skill plus the bytes of its files, ready to hand to the fake.
+
+    Returns the artifact and a `contents` fragment so a test can write one literal instead of
+    keeping a file list and a byte map in step by hand.
+    """
+    spec = spec_for(ArtifactType.SKILL)
+    entry_path = spec.entry_path(name)
+    files = [make_file(entry_path, entry_body.encode("utf-8"))]
+    for reference_path, body in (references or {}).items():
+        files.append(make_file(reference_path, body.encode("utf-8")))
+    files.extend(extra_files)
+
+    artifact = make_artifact(name, files=tuple(files), **kwargs)  # type: ignore[arg-type]
+    contents: dict[tuple[str, str], bytes] = {
+        (artifact.id, entry_path): entry_body.encode("utf-8"),
+    }
+    for reference_path, body in (references or {}).items():
+        contents[(artifact.id, reference_path)] = body.encode("utf-8")
+    return artifact, contents
+
+
+ARTIFACT_KINDS = (ArtifactKind.DIRECTORY, ArtifactKind.FILE)

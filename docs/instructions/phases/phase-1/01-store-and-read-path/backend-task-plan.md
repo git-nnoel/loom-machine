@@ -629,3 +629,125 @@ No use case, no CLI, no MCP server. Nothing under `domain/` — including `tests
 whose expected list does not change because no domain module is added. No dependency change, no
 `pyproject.toml` or `uv.lock` edit. No write outside the repository, and nothing under `~/.claude/`.
 No commit.
+
+---
+
+# T-6 backend task plan — the read use cases, collections, and the C-7 DTOs
+
+Written before the first edit. Task: phase-1 / initiative 01-store-and-read-path / T-6.
+
+## Understanding
+
+Deliver `application/read/`: seven use-case **functions** over contract C-4, and the Pydantic
+payloads (contract C-7) that the CLI's `--json`, the MCP server and initiative 03's HTTP API all
+render from. This is the last layer where a behaviour is decided — T-7 and T-8 render and nothing
+more — so filtering, every ordering including ruling R8's ranking, the search cap and ruling R24's
+error translation all land here rather than above.
+
+## The seam
+
+`application/` may not import `infrastructure/`, so the repository arrives as the `ArtifactRepository`
+protocol and every test runs against a hand-written fake with zero disk access.
+
+**What this layer is blind to, stated once (charter §10).** The fake cannot prove that a real scan
+records a symlink, that `updated_at` came from git rather than mtime, that `library.yaml` parses, or
+that a real binary file fails to decode. All four are proven at the infrastructure level against real
+files (T-5). What this layer decides, and therefore what these tests can prove, is: which artifacts a
+filter admits, what order they come back in, what is searched and what is skipped, which findings
+reach a report, and which builtin becomes which error code.
+
+## The one change below this layer, and why
+
+`domain/repository.py` did not declare `library_findings()`. Ruling R23 and plan §6 both make it part
+of contract C-4 — the delivery lead amended C-4 in the record at `f1102cb` — but the protocol file
+still carried T-5's five methods, because T-5 correctly added the method to its implementation only
+and left amending the contract to the delivery lead. The amendment had been made; the code had not
+caught up. Adding the method here transcribes an existing ruling rather than making a new one, and
+without it the validate use case cannot reach V7 or V9 at all under `mypy --strict`. **Flagged in the
+report.** One existing test changed as a direct consequence — see below.
+
+## Approach — file by file
+
+| File | Holds |
+|---|---|
+| `read/queries.py` | `SortKey`, `ArtifactFilter` — what a caller *asks* for. Frozen dataclasses: constructed in Python by an adapter, not parsed from an untrusted document |
+| `read/dtos.py` | Contract C-7 — what a caller gets *back*. Pydantic, frozen, `extra="forbid"` |
+| `read/_access.py` | Ruling R24 in one place: the repository's builtins become the taxonomy |
+| `read/artifacts.py` | `list_artifacts`, `get_artifact`, `get_artifact_file`, plus the shared `select_artifacts` and `sort_artifacts` |
+| `read/search.py` | `search_artifacts`, rulings R4 and R25, the cap |
+| `read/validation.py` | `validate_library`, rulings R22 and R23 |
+| `read/collections.py` | `list_collections`, `get_collection` |
+| `read/__init__.py` | Re-exports the whole surface, so an adapter imports one module path |
+
+## Decisions taken inside the task
+
+1. **`UnicodeDecodeError` is caught before `ValueError`, and it is load-bearing.** The former is a
+   subclass of the latter, so the obvious handler order reports every binary file as a malformed
+   path — the wrong code, the wrong HTTP status in initiative 03, and a diagnosis aimed at the
+   caller's request rather than at the file. Stated in `_access.py` rather than left to be
+   rediscovered; no type checker catches the reordering.
+2. **Ruling R8 is the *primary* sort key, above the requested one.** A superseded artifact ranks
+   below every live artifact under `name`, `updated` and `size` alike. Sorting only by the requested
+   key would interleave a retired artifact among current ones under `--sort size`, which is the
+   presentation R8 rejects. Every key ends in the artifact id, so the order is total.
+3. **`R25` is satisfied structurally, not by wording.** `is_searchable` reads the *path* and nothing
+   else, and runs before anything is read. A non-markdown file therefore cannot be reported as
+   undecodable whatever its bytes are, so the 184 KB HTML asset can only ever carry
+   `not_a_markdown_reference`. A second reason, `unreadable_as_text`, exists for a `.md` reference
+   whose bytes contradict the scan — reachable only past the path test, which is what keeps it from
+   becoming the "binary" reason R25 rejects. **Flagged**: C-5 named this field `skipped_binary`;
+   R25 supersedes that wording, and the field is `skipped`.
+4. **An unknown collection key raises; an unknown tag does not.** A collection key is *declared* in
+   `library.yaml`, so an unrecognised one is a mistake and charter §13's fail-loudly posture applies.
+   A tag is free-form, so an unused one is indistinguishable from a misspelt one.
+5. **`get_artifact` never raises on the artifact's own defects.** A skill with no `SKILL.md`, and an
+   entry document that does not decode, both come back with `entry_text` null and their findings
+   attached. Feature F-2 exists for exactly that case.
+6. **A path outside the snapshot is handed back to the repository to classify.** T-5 checks shape
+   before membership deliberately, so a traversal attempt is `INVALID_FILE_PATH` and a typo is
+   `FILE_NOT_FOUND`. Restating that rule here would be a second opinion that drifts.
+7. **The validation report lists only artifacts carrying findings**, with `artifact_count` covering
+   everything checked. That is what makes "this rule does not fire on a clean artifact" an assertion
+   a test can make.
+8. **Six new `ErrorCode` members**, each added to `domain/errors.py` with its class in the same edit,
+   before any of them was emitted (charter §9): `ARTIFACT_NOT_FOUND`, `FILE_NOT_FOUND`,
+   `INVALID_FILE_PATH`, `FILE_NOT_TEXT`, `COLLECTION_NOT_FOUND`, `INVALID_QUERY`.
+
+## Existing tests changed
+
+`tests/domain/test_repository.py` — its `FakeRepository` gained `library_findings()`, because the
+protocol it is asserted to satisfy now declares it. Nothing is no longer guaranteed: the sibling
+positive control (`ReadTextOnlyRepository` must *not* satisfy the protocol) is untouched and still
+passes, so the `isinstance` assertion is still capable of failing. No test was deleted or weakened.
+
+## Verification
+
+The gate, whole, from the repository root, formatter first, never path-scoped (**L2**, **L9**):
+
+```
+export PATH="$HOME/.local/bin:$PATH"
+uv run ruff format --check . && uv run ruff check . && uv run mypy src tests && uv run lint-imports && uv run pytest
+```
+
+`git status --porcelain docs/` must show only this section (**L8**).
+
+## Mutation checks — assertions named in advance
+
+**(a) Remove the search result cap.**
+Must fail: `tests/application/test_search.py::test_a_result_set_above_the_cap_is_truncated`.
+Must stay green:
+`tests/application/test_search.py::test_an_under_cap_search_returns_every_match_and_is_not_truncated`
+— the cap must bound a large answer without clipping a small one.
+
+**(b) Make `validate_library` ignore `library_findings()`.**
+Must fail:
+`tests/application/test_validation.py::test_a_library_level_v7_reaches_the_report_and_makes_the_library_invalid`.
+This is ruling R23's whole point: V7 and V9 exist only at library level, and a report that cannot
+reach them leaves two rows of charter §8 unable to fail anything.
+
+## Out of scope
+
+No CLI, no MCP server, no HTTP concern, no composition root. Nothing under `infrastructure/`, and
+nothing under `domain/` beyond `errors.py` and the one protocol method above. No dependency change,
+no `pyproject.toml` or `uv.lock` edit. No write outside the repository, nothing under `~/.claude/`.
+No commit.

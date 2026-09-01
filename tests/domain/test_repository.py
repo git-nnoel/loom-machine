@@ -13,6 +13,7 @@ from harness_library.domain.artifact import Artifact, ArtifactKind
 from harness_library.domain.identity import ArtifactType
 from harness_library.domain.metadata import Collection
 from harness_library.domain.repository import ArtifactRepository
+from harness_library.domain.validation import ValidationFinding
 
 
 class FakeRepository:
@@ -36,6 +37,9 @@ class FakeRepository:
 
     def list_collections(self) -> list[Collection]:
         return list(self._collections)
+
+    def library_findings(self) -> list[ValidationFinding]:
+        return []
 
 
 class ReadTextOnlyRepository:

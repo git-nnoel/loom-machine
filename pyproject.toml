@@ -43,11 +43,14 @@ root_packages = ["harness_library"]
 name = "layered-architecture"
 type = "layers"
 # Ordered HIGH to LOW: the first entry may import everything below it, never the reverse.
-# `|` between siblings makes them independent of each other. `application` and
+# `|` between siblings makes them independent of each other. `cli` sits ABOVE `mcp` (ruling R28):
+# `cli` owns the composition root and the process entry point, and hands `mcp` a ready repository.
+# `application` and
 # `infrastructure` are siblings, not a stack: infrastructure implements domain protocols,
 # and neither may reach into the other.
 layers = [
-    "harness_library.cli | harness_library.mcp",
+    "harness_library.cli",
+    "harness_library.mcp",
     "harness_library.application | harness_library.infrastructure",
     "harness_library.domain",
 ]

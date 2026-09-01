@@ -751,3 +751,114 @@ No CLI, no MCP server, no HTTP concern, no composition root. Nothing under `infr
 nothing under `domain/` beyond `errors.py` and the one protocol method above. No dependency change,
 no `pyproject.toml` or `uv.lock` edit. No write outside the repository, nothing under `~/.claude/`.
 No commit.
+
+---
+
+# T-7 backend task plan — the read CLI, the composition root, and the exit-code table
+
+Written before the first edit. Task: phase-1 / initiative 01-store-and-read-path / T-7.
+
+## Understanding
+
+Deliver the first surface a human touches: `hl list`, `hl show`, `hl search`, `hl validate` and
+`hl collections`, each with `--json` and a global `--library`. Plus the composition root (C-8) and
+the `ErrorCode`-to-exit-code mapping (C-6). Everything below this layer is proven and frozen, so
+this task **renders and nothing more** — no filtering, no ordering, no cap, no re-sorting of ruling
+R8's ranking. A computation appearing here would be a second answer to a question `application/`
+has already answered.
+
+## Two structural findings, established by probe before any code was written
+
+**1. `cli/` may not import `mcp/`.** The `layered-architecture` contract puts them in one layer
+separated by `|`, which makes them *independent*, not stacked. Probed by adding
+`import harness_library.mcp` to a throwaway `cli/` module: `layered-architecture BROKEN`. This
+matters to T-7 only in what it implies for T-8 — a `hl mcp` command whose body lives in `mcp/`
+cannot be registered from `cli/main.py` until that contract puts `cli` *above* `mcp` rather than
+beside it. Flagged; the contract edit is plan-level and is not made here.
+
+**2. The composition root therefore lives in `cli/`, and `mcp/` must be handed a repository rather
+than resolve one.** With `cli` and `mcp` independent, no adapter-level module is shared, and
+`application/` may not import `infrastructure/`, so there is no lower home for a root resolver that
+constructs a `FilesystemArtifactRepository`. Keeping the resolver in `cli/` and passing the built
+repository into `mcp/`'s server entry point satisfies C-8 ("every adapter resolves the root
+identically" — there is one resolver and one entry point) and R2 (one settings object, one reader
+of the environment). It is recorded here because it constrains T-8's shape.
+
+## The seam
+
+`cli/` sees exactly two things: the use-case surface re-exported from
+`harness_library.application.read`, and `FilesystemArtifactRepository` for construction. Every
+command is: resolve the root → build the repository → call one use case → render. `--json` prints
+`payload.model_dump_json()` (ruling R7); the human format is a separate rendering of the *same*
+payload object, never a dict rebuilt from an entity.
+
+**What this layer is blind to, stated once (charter §10).** Nothing here can prove a rule fires, an
+order is correct, or a file is skipped for the right reason — those are decided below and are
+proven below. What these tests can prove, and what nothing else can: which exit status a failure
+produces, that `--json` emits the frozen payload verbatim, that no log record reaches stdout, that
+the root-resolution precedence is what §13 says, and that a non-library directory fails loudly.
+
+## Approach — file by file
+
+| File | Holds |
+|---|---|
+| `cli/settings.py` | Ruling R2 — the single `pydantic-settings` object, the sole reader of the environment |
+| `cli/composition.py` | Contract C-8 — precedence, the is-this-a-library test, repository construction |
+| `cli/exit_codes.py` | Contract C-6 — the `ErrorCode`-to-exit-status **table**, exhaustive over the enum |
+| `cli/logging.py` | Ruling R3 — structlog configured to stderr, re-resolved per invocation |
+| `cli/rendering.py` | The two renderings of one payload: `--json`, and the human columnar format |
+| `cli/main.py` | The Typer app and the five commands. The `hl` entry point |
+
+## Decisions taken inside the task
+
+1. **A directory is a library when it holds `library.yaml` or any artifact directory.** The
+   artifact directory list is read from `domain/registry.ARTIFACT_DIRECTORIES`, never restated, so
+   adding an artifact type cannot leave the composition root behind. An empty directory, a home
+   directory and a source checkout all fail loudly, which is charter §13's whole point.
+2. **The exit-status table is exhaustive over `ErrorCode` and a test walks the enum.** A new code
+   with no exit status fails that test, which is the same guard `domain/registry.py` uses. A chain
+   of `if`s was rejected by ruling R24 in advance.
+3. **Errors are rendered to stderr, payloads to stdout, in both modes.** stdout carries only what a
+   caller asked for, so `hl list --json | jq` is safe on the failure path as well as the success
+   one. In `--json` mode the stderr diagnosis is itself JSON, so a wrapper reads one format.
+4. **`hl validate` exit status is decided by `report.is_valid`, not by counting findings in the
+   CLI.** Ruling R22 is already answered below; recomputing it here is exactly the second opinion
+   this layer must not hold.
+5. **`hl collections` takes an optional key** rather than splitting into a sub-application:
+   with no key it lists, with a key it shows one. One command, both payloads, no bare-`collections`
+   usage error.
+6. **A non-library directory exits with the "library unusable" status and no `ErrorCode`.** There
+   is no code in the taxonomy for it and charter §9 forbids emitting one that is not in the
+   contract, so the composition root raises a CLI-local bootstrap failure carrying a message and no
+   code. **Flagged as an open question** — adding `NOT_A_LIBRARY` to `ErrorCode` is a contract
+   amendment, which charter §6 makes a plan-level decision, and initiative 03 will need it to
+   return an HTTP status for the same condition.
+
+## Verification
+
+The gate, whole, from the repository root, formatter first, never path-scoped (**L2**, **L9**):
+
+```
+export PATH="$HOME/.local/bin:$PATH"
+uv run ruff format --check . && uv run ruff check . && uv run mypy src tests && uv run lint-imports && uv run pytest
+```
+
+`git status --porcelain docs/` must show only this section (**L8**).
+
+## Mutation checks — assertions named in advance
+
+**(a) Make `hl validate` always exit 0.**
+Must fail: `tests/cli/test_validate.py::test_validate_exits_non_zero_when_an_error_finding_exists`.
+Must stay green:
+`tests/cli/test_validate.py::test_validate_exits_zero_when_the_only_findings_are_warnings` — ruling
+R22, and the half of F-4 that a "return 1 always" fix would break instead.
+
+**(b) Make `hl show` propagate instead of rendering findings for a broken artifact.**
+Must fail: `tests/cli/test_show.py::test_show_renders_findings_for_the_entry_less_skill`.
+Must stay green: `tests/cli/test_show.py::test_show_renders_a_valid_artifact` — the case that
+already worked must keep working, or the mutation proves only that something broke.
+
+## Out of scope
+
+No MCP server and no `hl mcp` stub. Nothing under `domain/`, `application/` or `infrastructure/`.
+No dependency change; the only `pyproject.toml` edit is the `[project.scripts]` line. No commit.

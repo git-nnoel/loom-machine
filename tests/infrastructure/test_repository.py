@@ -548,3 +548,66 @@ def test_a_malformed_library_yaml_propagates_the_taxonomy_error(tmp_path: Path) 
 
     with pytest.raises(LibraryYamlError):
         open_library(tmp_path).list_all()
+
+
+# ==================================================================================================
+# Observed on the real library during T-9 acceptance
+# ==================================================================================================
+
+
+UNQUOTED_COLON_FRONTMATTER = (
+    "name: frontend-system-pattern\n"
+    "description: Use when writing frontend code. Covers every brand: the project's brand "
+    "reference is the visual authority."
+)
+"""The exact shape found in `~/.claude/skills/frontend-system-pattern/SKILL.md`.
+
+A plain YAML scalar containing `": "` is a `ScannerError`, so the whole block fails to parse even
+though both keys are plainly present to a human reader.
+"""
+
+
+def test_a_colon_in_an_unquoted_description_loses_the_whole_frontmatter(tmp_path: Path) -> None:
+    """Characterisation, not endorsement: this is what the software does today, and T-9 found it
+    doing it to real content on the first run.
+
+    `_parse_entry` treats any parse failure as "this document declares nothing", so a single
+    unquoted `": "` inside a description silently discards `name` and `description` together. The
+    user then reads *required frontmatter key 'name' is missing* about a file whose second line is
+    `name:`, which is a true finding with a false diagnosis. Pinned so that a future dedicated code
+    for "unparseable frontmatter" changes this test deliberately rather than by accident.
+    """
+    write_skill(tmp_path, "frontend-system-pattern", frontmatter=UNQUOTED_COLON_FRONTMATTER)
+
+    repository = open_library(tmp_path)
+    artifact = repository.get("skill/frontend-system-pattern")
+
+    assert artifact is not None
+    assert codes(repository, "skill/frontend-system-pattern") == [
+        ValidationCode.V5,
+        ValidationCode.V5,
+    ]
+    assert artifact.description is None
+    assert dict(artifact.frontmatter) == {}
+
+
+def test_quoting_the_same_description_makes_the_artifact_clean(tmp_path: Path) -> None:
+    """The positive control for the test above.
+
+    Without it, "two V5 findings" would be indistinguishable from a helper that never writes usable
+    frontmatter at all. One character — the quoting — is the whole difference.
+    """
+    quoted = (
+        "name: frontend-system-pattern\n"
+        "description: \"Use when writing frontend code. Covers every brand: the project's brand "
+        'reference is the visual authority."'
+    )
+    write_skill(tmp_path, "frontend-system-pattern", frontmatter=quoted)
+
+    repository = open_library(tmp_path)
+    artifact = repository.get("skill/frontend-system-pattern")
+
+    assert artifact is not None
+    assert artifact.findings == ()
+    assert artifact.description is not None
+    assert "Covers every brand:" in artifact.description

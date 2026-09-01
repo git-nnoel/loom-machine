@@ -761,3 +761,78 @@ def test_every_finding_takes_its_severity_from_the_register() -> None:
 
     for finding in [f for a in library.artifacts for f in a.findings] + list(library.findings):
         assert finding.severity is finding.code.severity
+
+
+# ==============================================================================================
+# V3 against a FILE-kind artifact — observed on the real library during T-9 acceptance
+# ==============================================================================================
+
+CROSS_ARTIFACT_BODY = """
+Consult the `backend-system-architecture` skill. Its topic references are required reading:
+
+| You are touching | Read first |
+|---|---|
+| ORM models and queries | `references/persistence.md` |
+"""
+"""An agent citing *another artifact's* references — the shape both real agent files use."""
+
+
+def raw_agent(name: str, *, body: str) -> RawArtifact:
+    """A scanned agent. A FILE-kind artifact *is* its entry document, so it has exactly one file
+    whose path is its own basename — the scanner cannot produce any other path for it."""
+    return RawArtifact(
+        type=ArtifactType.AGENT,
+        name=name,
+        updated_at=SCANNED_AT,
+        files=(artifact_file(f"{name}.md"),),
+        entry=RawEntry(frontmatter={"name": name, "description": f"what {name} does"}, body=body),
+    )
+
+
+def test_a_file_kind_artifact_cannot_satisfy_v3_for_any_citation() -> None:
+    """Characterisation, not endorsement. T-9 found this firing eight times on real content, and
+    every one of the eight paths exists — under the *skill* the agent points at.
+
+    The finding is structural rather than incidental: a FILE-kind artifact holds exactly one file,
+    its own basename, so `raw.file_paths` can never contain a `references/…` path and the
+    `cited not in present` test in V3 is unconditionally true. The rule therefore has no reachable
+    passing case here, which is asserted below rather than inferred.
+    """
+    raw = raw_agent("backend-developer-specialist", body=CROSS_ARTIFACT_BODY)
+
+    assert raw.file_paths == {"backend-developer-specialist.md"}, (
+        "the premise: a FILE-kind artifact has one file and it is not under references/"
+    )
+    assert not any(path.startswith("references/") for path in raw.file_paths)
+
+    assembled = assemble_artifact(raw, NO_METADATA)
+
+    assert findings_for(assembled, ValidationCode.V3) == ["references/persistence.md"]
+    assert assembled.is_valid is False
+
+
+def test_a_file_kind_artifact_citing_nothing_is_clean() -> None:
+    """The positive control. Without it, the test above is satisfied by an agent that is invalid
+    for some unrelated reason, and "V3 always fires" would be unfalsifiable.
+    """
+    assembled = assemble_artifact(
+        raw_agent("frontend-developer-specialist", body="Prose with no citation."), NO_METADATA
+    )
+
+    assert assembled.findings == ()
+    assert assembled.is_valid is True
+
+
+def test_a_directory_kind_artifact_citing_the_same_path_can_be_clean() -> None:
+    """The contrast that makes the structural claim concrete: identical prose, identical citation,
+    and the only difference is that a DIRECTORY-kind artifact *can* hold the file."""
+    assembled = assemble_artifact(
+        raw_skill(
+            "backend-system-architecture",
+            body=CROSS_ARTIFACT_BODY,
+            extra_files=(artifact_file("references/persistence.md", b"# persistence"),),
+        ),
+        NO_METADATA,
+    )
+
+    assert ValidationCode.V3 not in codes(assembled)

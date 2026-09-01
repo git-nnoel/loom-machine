@@ -990,3 +990,99 @@ fires, the read-only guarantee is theatre and the wiring is fixed before anythin
 No write path, no HTTP, no resources and no prompts — four tools, nothing else. Nothing under
 `application/`, `infrastructure/`, or `domain/` beyond `ErrorCode.NOT_A_LIBRARY`. No dependency
 change and no `pyproject.toml` or `uv.lock` edit. No commit.
+
+---
+
+# T-9 backend task plan — acceptance against the real library
+
+Written before the first command. Task: phase-1 / initiative 01-store-and-read-path / T-9.
+
+## Understanding
+
+The last task, and not a feature task. Everything so far was proven against fixtures built to be
+provable; T-9 points the finished software at `~/.claude/` — six skills and two agents nobody wrote
+for this tool — and records what honestly happens. The deliverable is a report, not code. Where the
+software is wrong, the report says the software is wrong.
+
+Five things to establish, in order: the CLI's real output; the V3 stub exemption proved on real
+content and the gap around it characterised; a **measured** scan cost, since the estimate in play has
+never been checked; the MCP server driven over real JSON-RPC; and F-3 settled on the 184 KB HTML
+asset that exists only here.
+
+## The constraint that shapes everything
+
+`~/.claude/` is the user's live harness. Read-only, absolutely: nothing under it is created,
+modified, deleted or moved, and both `library.yaml` experiments run against `cp -a` copies in a
+scratch directory. Verified by a 48-entry SHA-256 manifest taken before and after, diffed to empty.
+
+## What a run against `~/.claude` cannot prove (L6, L22)
+
+It is a **target** layout, not a library layout — no `library.yaml`, so tags, collections and
+supersession all read empty, and **F-5 is untestable here**. It is not a git work tree, so R5 takes
+the mtime path and every artifact reads dirty. Both are recorded in the report rather than allowed
+to make a green line look like more than it is.
+
+## Approach
+
+1. `list` / `validate` / `search` / `collections`, with and without `--json`, output pasted verbatim.
+2. Count V3 on the two stubs (expect **seven** — L5, do not debug the regex), then copy the tree and
+   add a `library.yaml` declaring both supersessions; contrast the two reports. Also exercise R15's
+   frontmatter fallback on a second copy, since it is the cheaper thing a user might author.
+3. Time `hl list` end to end, then decompose: bare interpreter, import-only, and the snapshot timed
+   in-process. An end-to-end number alone would have attributed import cost to the scan.
+4. Drive `hl mcp` over raw pipes — initialize, tools/list, two tools/call — reading all four
+   response lines **before** closing stdin, with a watchdog (**L31**).
+5. Find a term that occurs only inside the HTML asset, and record the skip reason. Per R25 it must
+   never be *binary*; the asset is verified as valid UTF-8 first, so the point is not hypothetical.
+
+## Tests added
+
+Only to pin what the run discovered. No behaviour changed — the report is the deliverable, and
+changing the software to make the report look better is the one thing forbidden.
+
+- `tests/domain/test_assembly.py` — V3 has no reachable passing case for a FILE-kind artifact
+  (defect D-1), plus two controls: a FILE-kind artifact citing nothing is clean, and a DIRECTORY-kind
+  artifact citing the same path can be clean.
+- `tests/infrastructure/test_repository.py` — an unquoted `": "` in a description loses the whole
+  frontmatter block and is reported as two missing keys (defect D-2), with the quoted form as the
+  positive control.
+
+## Verification
+
+The gate, whole, from the repository root, formatter first, never path-scoped (**L2**, **L9**):
+
+```
+export PATH="$HOME/.local/bin:$PATH"
+uv run ruff format --check . && uv run ruff check . && uv run mypy src tests && uv run lint-imports && uv run pytest
+```
+
+Plus the manifest diff over `~/.claude`, which must be empty.
+
+## Mutation checks — assertions named in advance
+
+**(a) Make `_check_v3` skip FILE-kind artifacts.** Must fail:
+`tests/domain/test_assembly.py::test_a_file_kind_artifact_cannot_satisfy_v3_for_any_citation`, at
+`findings_for(assembled, ValidationCode.V3) == ["references/persistence.md"]`. Must **stay green**:
+every stub-exemption test and `test_a_missing_reference_on_a_live_artifact_is_a_v3_error` — if a
+DIRECTORY-kind test also reddens, the two cases are not independent.
+
+**(b) Make `_parse_entry` return empty frontmatter on the *success* path.** Must fail:
+`tests/infrastructure/test_repository.py::test_quoting_the_same_description_makes_the_artifact_clean`
+at `assert artifact.findings == ()`. The characterisation test beside it must **stay green** — that
+pairing is what proves the control is capable of failing rather than agreeing by construction.
+
+Both mutations sit above the only fake in play (`FixedTimestamps`, which pins R5 alone): (a) is pure
+domain, (b) is observed through real files on disk.
+
+## Out of scope
+
+No fix for any defect found — D-1, D-2 and D-3 are reported and pinned, not repaired, because two of
+the three are plan-level rule changes. No implementation of the symlinked-artifact-root rule; input
+given, ruling deferred. No dependency change, no `pyproject.toml` or `uv.lock` edit. No commit.
+
+## Findings
+
+Recorded in `2026-09-01-acceptance.md`. Three defects: **D-1** V3 cannot be satisfied by a FILE-kind
+artifact (8 false positives, 0 true positives on real content); **D-2** one unquoted `:` discards a
+whole frontmatter block and the diagnosis names the wrong fault; **D-3** `hl list` pays 1.31 s
+importing the MCP SDK it never uses, against a 16 ms scan.

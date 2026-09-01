@@ -1,6 +1,6 @@
 # Implementation record — Store, validation, read path, MCP
 
-**Status:** Open — T-1…T-7 accepted; T-8 next
+**Status:** Open — T-1…T-8 accepted; T-9 (acceptance) is the last task
 **Phase:** 1 · **Initiative:** 01-store-and-read-path · **Owner:** delivery lead
 **Last updated:** 2026-08-28
 
@@ -19,7 +19,8 @@ Backward-facing: what actually shipped. The forward-facing intent is `implementa
 | **T-5** | Scanner, repository, committed fixture library | **Accepted** 2026-08-28 — commit `ff5f540` |
 | **T-6** | Read use cases, wire DTOs (C-5, C-7), error codes | **Accepted** 2026-09-01 |
 | **T-7** | Read CLI, composition root, exit-code table (C-6, C-8) | **Accepted** 2026-09-01 — commit `785fb74` |
-| T-8, T-9 | see plan §7 | Not dispatched |
+| **T-8** | Read-only stdio MCP server, four tools, `NOT_A_LIBRARY` | **Accepted** 2026-09-01 |
+| T-9 | Acceptance against the real library | Not dispatched |
 
 ## Evidence
 
@@ -72,6 +73,11 @@ Both mutations re-run by the delivery lead on the integrated tree:
 - **Mutation** — forcing `hl validate` to exit 0 failed `test_validate_exits_non_zero_when_an_error_finding_exists`; the control `test_validate_exits_zero_when_the_only_findings_are_warnings` **stayed green**. The specialist additionally ran the converse (always exit 1) to prove the pair is not satisfiable by a constant.
 - Restored: `381 passed`.
 
+**T-8 — gate re-run by the delivery lead:** exit 0, `405 passed` (up from 381). The MCP suite costs ~50s of the 60s wall clock, all subprocess spawn — that cost buys stdout purity being a fact about bytes rather than an inspection.
+- **stdout-purity mutation** — a stray line in the `hl mcp` command body failed 3 purity tests; the control `test_the_server_still_reports_its_tool_calls_on_stderr` **stayed green**, so the rule is "nothing on stdout", not "no logging".
+- **read-only mutation** — importing `application.write` into `mcp/tools.py` broke the `mcp-is-read-only` contract **and** failed `tests/test_architecture.py` on two assertions. Both halves fired, so the guarantee is structural rather than a promise.
+- Restored: `405 passed`, `Contracts: 3 kept, 0 broken`.
+
 ## Rulings (R-N)
 
 Every boundary call, numbered. Specialists do not read this file — the delivery lead carries each
@@ -87,6 +93,8 @@ binding ruling into the dispatch prompt in their own words.
 | **R6** | 2026-08-28 | **Symlinks are skipped and reported** as a V6 warning. Never followed, never hashed, never installed. A link resolving outside the artifact root is how a copy writes outside its target, and initiative 02 writes into `~/.claude`. | T-3, T-5; **initiative 02** |
 | **R7** | 2026-08-28 | **`--json` is contract; human columnar output is not.** Tests assert the JSON payload, never substrings of the human format. Initiative 04 consumes the API or `--json`, never the columnar text. | T-7 |
 | **R8** | 2026-08-28 | **Superseded artifacts appear in the default listing**, ranked below their successors, carrying `superseded_by` in every payload. `include_superseded` defaults true. Hiding them would make a redirect stub invisible, which is the opposite of why supersession is first-class. | T-6, T-8 |
+| **R30** | 2026-09-01 | **T-8 was right to read SCOPE over CONSTRAINTS on `cli/composition.py`.** My prompt required it to make `LibraryRootError` a `HarnessLibraryError`, then omitted the file that class lives in from the permitted list. It made the minimal edit, propagated the one consequence (`_run`'s now-redundant `except` branch, which would otherwise have reported `code: null` for a condition that now has a code), and flagged both plainly rather than silently. Accepted. The prompt was internally inconsistent; that is my defect. | every task |
+| **R31** | 2026-09-01 | **`[project.scripts] hl` is declared.** T-7 wrote it; my `git restore` of a broken TOML edit reverted it while it was still uncommitted, and my re-apply failed to match without my noticing — so the T-7 commit message claiming it was in the diff was **false**, and no `hl` binary existed. My hand-verification of the CLI had passed against a stale installed entry point, which is verification of nothing. Found and reported by T-8. Fixed and verified. | initiative 03 |
 | **R28** | 2026-09-01 | **`cli` sits ABOVE `mcp` in the layer contract**; they are no longer independent siblings. `cli/` owns the process entry point and the composition root, and hands `mcp/` a ready repository — a real hierarchy, not a fudge to get an import through. This keeps R2 (one environment reader) and C-8 (one root resolver) true across both adapters. My defect: T-7's brief told it that T-8 would register `hl mcp` into `cli/main.py`, which the contract forbade. It probed with a throwaway import before writing any code, reported, and built for this resolution rather than working around it. | T-8, initiative 03 |
 | **R29** | 2026-09-01 | **`NOT_A_LIBRARY` is added to `ErrorCode`, in T-8.** Charter §13 demands a loud failure for a directory that is not a library, and §9 forbids inventing a code at a raise site — so T-7 correctly left `LibraryRootError` uncoded, mapping it to exit 5 by class. It grepped the ruling table per L25 first and found nothing, so this is an amendment rather than a transcription. Initiative 03 needs an HTTP status for the same condition. | T-8 |
 | **R26** | 2026-09-01 | **Transcribing an existing ruling into code is not amending a contract.** T-6 added `library_findings()` to `domain/repository.py`. R23 and plan §6 had already made it part of C-4, but the amendment landed only in the documents — T-5 added the method to its implementation and left the contract to me, and I amended the plan without dispatching the protocol edit. Under `mypy --strict` R23 was therefore unimplementable. Accepted; the gap was mine. **When a ruling amends a contract, the protocol change must be scoped into the next dispatch explicitly.** | every task |

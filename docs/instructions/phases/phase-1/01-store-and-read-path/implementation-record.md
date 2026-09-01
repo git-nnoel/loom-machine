@@ -1,6 +1,6 @@
 # Implementation record — Store, validation, read path, MCP
 
-**Status:** Open — T-1…T-5 accepted; T-6 next
+**Status:** Open — T-1…T-6 accepted; T-7 next
 **Phase:** 1 · **Initiative:** 01-store-and-read-path · **Owner:** delivery lead
 **Last updated:** 2026-08-28
 
@@ -17,7 +17,8 @@ Backward-facing: what actually shipped. The forward-facing intent is `implementa
 | **T-4** | `library.yaml` reader, error taxonomy | **Accepted** 2026-08-28 — commit `519b7ed` |
 | **T-4b** | Corrections: errors.py → domain/, V8 case collision, V9 duplicate keys | **Accepted** 2026-08-28 |
 | **T-5** | Scanner, repository, committed fixture library | **Accepted** 2026-08-28 — commit `ff5f540` |
-| T-6 … T-9 | see plan §7 | Not dispatched |
+| **T-6** | Read use cases, wire DTOs (C-5, C-7), error codes | **Accepted** 2026-09-01 |
+| T-7 … T-9 | see plan §7 | Not dispatched |
 
 ## Evidence
 
@@ -58,6 +59,12 @@ Both mutations re-run by the delivery lead on the integrated tree:
 - **Delivery-lead error, recorded for honesty:** my first attempt at the R5 mutation reported 256 passed and looked like a refuted claim. The regex had patched the *protocol stub* rather than `GitTimestamps.for_artifact`, so nothing was mutated. A no-op mutation is indistinguishable from a well-guarded one unless you check that the edit landed — verify the patch, not just the result.
 - Restored: `256 passed`.
 
+**T-6 — gate re-run by the delivery lead:** exit 0, `321 passed` (up from 256).
+- **Search-cap mutation** → 2 named tests failed; the control `test_an_under_cap_search_returns_every_match_and_is_not_truncated` **stayed green**.
+- **`library_findings()` mutation** → 4 tests failed including the named V7 and V9 cases, confirming R23: without it those two rules can never fail a library.
+- **Third mutation, run on my initiative** — swapping the handler order so `ValueError` shadows `UnicodeDecodeError` failed 3 tests. The trap the specialist flagged is genuinely guarded, not merely commented.
+- Restored: `321 passed`.
+
 ## Rulings (R-N)
 
 Every boundary call, numbered. Specialists do not read this file — the delivery lead carries each
@@ -73,6 +80,8 @@ binding ruling into the dispatch prompt in their own words.
 | **R6** | 2026-08-28 | **Symlinks are skipped and reported** as a V6 warning. Never followed, never hashed, never installed. A link resolving outside the artifact root is how a copy writes outside its target, and initiative 02 writes into `~/.claude`. | T-3, T-5; **initiative 02** |
 | **R7** | 2026-08-28 | **`--json` is contract; human columnar output is not.** Tests assert the JSON payload, never substrings of the human format. Initiative 04 consumes the API or `--json`, never the columnar text. | T-7 |
 | **R8** | 2026-08-28 | **Superseded artifacts appear in the default listing**, ranked below their successors, carrying `superseded_by` in every payload. `include_superseded` defaults true. Hiding them would make a redirect stub invisible, which is the opposite of why supersession is first-class. | T-6, T-8 |
+| **R26** | 2026-09-01 | **Transcribing an existing ruling into code is not amending a contract.** T-6 added `library_findings()` to `domain/repository.py`. R23 and plan §6 had already made it part of C-4, but the amendment landed only in the documents — T-5 added the method to its implementation and left the contract to me, and I amended the plan without dispatching the protocol edit. Under `mypy --strict` R23 was therefore unimplementable. Accepted; the gap was mine. **When a ruling amends a contract, the protocol change must be scoped into the next dispatch explicitly.** | every task |
+| **R27** | 2026-09-01 | **C-5's search-skip field is `skipped: tuple[SkippedFile, ...]` carrying a `SearchSkipReason`, not `skipped_binary: list[str]`.** Follows R25. The enum's second member `unreadable_as_text` — a `.md` reference whose bytes contradict the scan — is accepted as new closed-enum surface; it is structurally unreachable for a non-markdown file because the path test runs first and reads nothing. Plan §6 corrected. | T-7, T-8, initiative 03 |
 | **R23** | 2026-08-28 | **`library_findings()` joins contract C-4.** V7 and V9 land on `AssembledLibrary.findings` and were otherwise unreachable from the read path, so F-4 could report neither. That is R22's "decorative row" failure arriving by a different door: a rule that cannot reach a report cannot make a library invalid. The specialist added it as explicitly additive and did not touch the contract, which was correct — amending C-4 is mine. | T-6, T-7 |
 | **R24** | 2026-08-28 | **The repository keeps raising plain Python exceptions; T-6's use cases translate them into typed errors with codes.** Charter §9 forbids emitting a code not in the contract, and `domain/errors.py` was outside T-5's territory, so it correctly raised `KeyError` / `FileNotFoundError` / `ValueError`. The application layer is where a code becomes meaningful, because that is what T-7 maps to an exit code and initiative 03 maps to an HTTP status. | T-6, T-7 |
 | **R25** | 2026-08-28 | **F-3's `skipped_binary` wording was wrong and the plan is corrected.** R4's rule is "the entry document and every `.md` reference", not "everything that is text". The bundled 184 KB HTML asset is valid UTF-8, so a decode-based `is_text` correctly calls it text — and it is still not searched, because it is not a markdown reference. The reason reported is *not a markdown reference*, never *binary*. My defect: I wrote a criterion that contradicted my own ruling. | T-6, T-8, T-9 |

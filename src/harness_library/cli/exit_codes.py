@@ -40,9 +40,10 @@ BAD_REQUEST = 4
 LIBRARY_UNUSABLE = 5
 """The library could not be read at all.
 
-Covers both `LIBRARY_YAML_INVALID` and the composition root's `LibraryRootError`. From a caller's
-side these are one situation — nothing can be answered until the library is fixed — and the two
-differ only in which file is at fault, which the stderr diagnosis already says.
+Covers both `LIBRARY_YAML_INVALID` and `NOT_A_LIBRARY`. From a caller's side these are one
+situation — nothing can be answered until the library is fixed — and they differ only in whether
+the metadata document is broken or the directory was never a library, which the stderr diagnosis
+already says.
 """
 
 EXIT_STATUS: dict[ErrorCode, int] = {
@@ -53,6 +54,7 @@ EXIT_STATUS: dict[ErrorCode, int] = {
     ErrorCode.INVALID_FILE_PATH: BAD_REQUEST,
     ErrorCode.FILE_NOT_TEXT: BAD_REQUEST,
     ErrorCode.INVALID_QUERY: BAD_REQUEST,
+    ErrorCode.NOT_A_LIBRARY: LIBRARY_UNUSABLE,
 }
 """One entry per `ErrorCode`. A member without one fails `tests/cli/test_exit_codes.py`."""
 

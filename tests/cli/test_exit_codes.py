@@ -69,5 +69,6 @@ def test_the_statuses_group_by_what_the_user_must_do() -> None:
         ErrorCode.INVALID_QUERY,
     }
     assert {code for code, status in EXIT_STATUS.items() if status == LIBRARY_UNUSABLE} == {
-        ErrorCode.LIBRARY_YAML_INVALID
+        ErrorCode.LIBRARY_YAML_INVALID,
+        ErrorCode.NOT_A_LIBRARY,
     }

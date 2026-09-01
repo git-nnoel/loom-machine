@@ -18,27 +18,29 @@ from __future__ import annotations
 from pathlib import Path
 
 from harness_library.cli.settings import Settings
+from harness_library.domain.errors import ErrorCode, HarnessLibraryError
 from harness_library.domain.registry import ARTIFACT_DIRECTORIES
 from harness_library.infrastructure.library_yaml import LIBRARY_YAML_FILENAME
 from harness_library.infrastructure.repository import FilesystemArtifactRepository
 
 
-class LibraryRootError(Exception):
+class LibraryRootError(HarnessLibraryError):
     """The library root could not be resolved to a usable library.
 
-    **Deliberately outside `ErrorCode`.** Charter §9 says a code is added to the taxonomy before it
-    is emitted, and no code covers "this directory is not a library"; inventing one at this raise
-    site is the exact thing §9 forbids. This failure happens during composition, before any typed
-    error can be raised, and it maps to its own exit status rather than through the code table. See
-    `cli.exit_codes.LIBRARY_UNUSABLE`.
-
-    Flagged to the delivery lead: initiative 03 must return an HTTP status for this same condition,
-    and at that point it needs a code in the contract rather than an exception the API cannot see.
+    **In the taxonomy since ruling R29.** T-7 raised this class carrying no `ErrorCode` at all,
+    because charter §9 forbids inventing a code at a raise site and none covered "this directory is
+    not a library". The delivery lead has since ruled `NOT_A_LIBRARY` into the contract, so this is
+    now an ordinary `HarnessLibraryError`: `cli/main.py` reports it through the same branch as every
+    other typed failure, the exit status comes from the table rather than from a special case, and
+    initiative 03 reads a code instead of re-deriving one from an exception type it cannot see.
 
     Attributes:
+        code: always `ErrorCode.NOT_A_LIBRARY`.
         path: the directory that was rejected, as text.
         reason: the human sentence. Not contract.
     """
+
+    code = ErrorCode.NOT_A_LIBRARY
 
     def __init__(self, path: Path, reason: str) -> None:
         self.path = str(path)

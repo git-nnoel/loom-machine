@@ -42,12 +42,13 @@ from harness_library.application.read import (
     get_artifact as read_artifact,
 )
 from harness_library.cli import rendering
-from harness_library.cli.composition import LibraryRootError, open_library
-from harness_library.cli.exit_codes import LIBRARY_UNUSABLE, OK, VALIDATION_FAILED, exit_status_for
+from harness_library.cli.composition import open_library
+from harness_library.cli.exit_codes import OK, VALIDATION_FAILED, exit_status_for
 from harness_library.cli.logging import configure_logging
 from harness_library.domain.errors import HarnessLibraryError
 from harness_library.domain.identity import ArtifactType
 from harness_library.domain.repository import ArtifactRepository
+from harness_library.mcp import serve_stdio
 
 app = typer.Typer(
     name="hl",
@@ -217,6 +218,24 @@ def collections_command(
             _emit(get_collection(repository, key), as_json, rendering.render_collection_detail)
 
 
+@app.command("mcp")
+def mcp_command(ctx: typer.Context) -> None:
+    """Serve this library to an MCP client over stdio. Read-only; four tools.
+
+    A client spawns this command and speaks JSON-RPC to it on stdin and stdout, so **stdout is the
+    transport and carries nothing else** (charter §11). Every diagnosis and every log line goes to
+    stderr, including the loud failure on a directory that is not a library: a byte of prose on
+    stdout would reach the client as a malformed frame and kill the connection with nothing in it
+    to diagnose.
+
+    Composition happens here, above `mcp/`: the library is resolved by contract C-8's precedence
+    like every other command and handed in ready, so the server cannot be pointed at a different
+    library from the one `hl list` shows (ruling R28).
+    """
+    with _run(as_json=False):
+        serve_stdio(_open(ctx))
+
+
 def _open(ctx: typer.Context) -> ArtifactRepository:
     """The library this invocation is about. Contract C-8's precedence, applied once per command."""
     context: CliContext = ctx.ensure_object(CliContext)
@@ -246,16 +265,15 @@ def _run(as_json: bool) -> Iterator[None]:
     with whatever the last branch happened to return.
 
     Diagnoses go to **stderr in both modes** (charter §11). stdout carries payloads and nothing
-    else, so `hl list --json | jq` is as safe on the failure path as on the success path, and T-8's
-    stdout-purity requirement is not a special case bolted on later.
+    else, so `hl list --json | jq` is as safe on the failure path as on the success path, and
+    `hl mcp`'s stdout-purity requirement is not a special case bolted on later.
+
+    `LibraryRootError` had a branch of its own until **ruling R29** gave it `NOT_A_LIBRARY`. It is
+    now an ordinary member of the taxonomy, so the special case is gone: keeping it would report
+    `code: null` for a condition that has a code, which is the taxonomy lying about itself.
     """
     try:
         yield
-    except LibraryRootError as error:
-        # Composition failed before the taxonomy could apply: there is no `ErrorCode` for "this
-        # directory is not a library" and charter §9 forbids inventing one here. Flagged to the
-        # delivery lead — initiative 03 needs a code to map to an HTTP status.
-        _fail(code=None, message=str(error), status=LIBRARY_UNUSABLE, as_json=as_json)
     except HarnessLibraryError as error:
         _fail(
             code=error.code.value,

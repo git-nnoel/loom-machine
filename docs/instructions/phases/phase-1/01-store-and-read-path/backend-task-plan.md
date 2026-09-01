@@ -862,3 +862,131 @@ already worked must keep working, or the mutation proves only that something bro
 
 No MCP server and no `hl mcp` stub. Nothing under `domain/`, `application/` or `infrastructure/`.
 No dependency change; the only `pyproject.toml` edit is the `[project.scripts]` line. No commit.
+
+---
+
+# T-8 backend task plan — the read-only stdio MCP server and `hl mcp`
+
+Written before the first edit. Task: phase-1 / initiative 01-store-and-read-path / T-8.
+
+## Understanding
+
+Deliver `harness_library.mcp`: four read-only tools — `list_artifacts`, `search_artifacts`,
+`get_artifact`, `get_reference` — served over stdio JSON-RPC, plus the `hl mcp` command a client
+spawns. Like T-7 this layer **renders and nothing more**; every behaviour was decided in
+`application/read` and is proven there.
+
+Plus ruling R29: `NOT_A_LIBRARY` enters `ErrorCode`, `LibraryRootError` becomes a
+`HarnessLibraryError` carrying it, and the exit table gains its row. T-7 raised this against itself
+and correctly refused to invent a code; the delivery lead has now ruled.
+
+## The seam
+
+R28 puts `cli` **above** `mcp` in the layer contract, so `hl mcp` registers in `cli/main.py` and the
+composition root stays in `cli/`. `mcp/` is handed a ready `ArtifactRepository` and never resolves a
+root, never reads the environment, never touches `pyproject`-level configuration. `mcp/` imports
+`application.read` and `domain/` only — the `mcp-is-read-only` contract makes the read-only promise
+structural, and a fifth tool reaching for `application.write` fails the suite.
+
+**What this layer is blind to, stated once (charter §10).** Nothing here can prove a rule fires, an
+order is right or a file is skipped for the right reason. What these tests prove, and nothing else
+can: that a real client handshake enumerates exactly the tools the server holds, that a tool call
+returns the frozen C-7 payload and nothing else, that an unknown id crosses the pipe as an MCP error
+result rather than an exception, and that **no byte reaches stdout that is not a JSON-RPC frame**.
+
+## The single source for the tool list
+
+`mcp/tools.py` holds one `TOOLS: tuple[ToolSpec, ...]`. Each `ToolSpec` carries its name, its prose,
+a Pydantic **arguments** model and the C-7 **payload** model, and the handler that joins them. Both
+JSON schemas are *generated* from those two models — nothing is hand-written and nothing is
+restated. `tools/list` maps over `TOOLS`; `tools/call` dispatches through a mapping built from
+`TOOLS`. There is no name tuple anywhere to drift from a schema list, and **the tests enumerate the
+tools by asking the running server over the wire**, never by importing a constant. A test that
+compared a constant to its neighbour would pass through exactly the change it exists to catch.
+
+Declaring `outputSchema` from the C-7 model is what makes "`mcp/` renders the same payload
+`cli --json` does" structural rather than a promise: the MCP client itself revalidates every
+successful result against that schema, and `Payload` is `extra="forbid"`, so the schema forbids a
+field nobody declared. That is also how `get_reference` **provably cannot** carry its parent's entry
+text — `FileContent` has no field for it and the declared schema rejects one.
+
+## Approach — file by file
+
+| File | Holds |
+|---|---|
+| `mcp/tools.py` | The registry: `ToolSpec`, the four argument models, the four handlers, `TOOLS` |
+| `mcp/dispatch.py` | `tools/call` as one **synchronous** function — ruling R24's errors become MCP error results, R3's one log line per call |
+| `mcp/server.py` | The low-level `Server`, its two handlers, and `serve_stdio(repository)` |
+| `mcp/__init__.py` | The re-exports an adapter needs |
+| `cli/main.py` | The `hl mcp` command, and the `_run` branch R29 makes redundant |
+
+## Decisions taken inside the task
+
+1. **The SDK's `stdio_server()` already diverts fd 1 to stderr while it serves**, and serves the
+   wire from a private duplicate. A stray `print` from a handler therefore cannot reach the client.
+   The window that is *not* covered is the entry path **before** the transport claims the
+   descriptor — logging setup, root resolution, repository construction — which is precisely where
+   the mutation check writes its stray line and precisely where charter §11 has to hold on its own.
+2. **The error envelope is the CLI's, verbatim**: `{"error": {"code", "message"}}`, `code` null when
+   no `ErrorCode` covers the condition. An unknown tool name and malformed arguments are client
+   mistakes with no code in the taxonomy, and charter §9 forbids inventing one at a raise site.
+3. **Only `HarnessLibraryError` and `pydantic.ValidationError` are caught.** An unexpected exception
+   is a bug and is left to the SDK, which answers it as a JSON-RPC error — still not a crash across
+   the pipe, and still visible as a fault rather than swallowed as an empty result.
+4. **`asyncio.run`, not `anyio.run`.** The stdio transport runs unchanged on a plain asyncio loop,
+   and reaching for `anyio` directly would put a transitive dependency in the import graph for no
+   gain. `starlette`, `uvicorn` and `sse-starlette` are present in the venv and are **not used**:
+   D8 fixes the transport as stdio (lesson L11).
+5. **Tests drive a real subprocess.** Two levels: the SDK's own client over `stdio_client` for the
+   handshake, the tool enumeration and the schema revalidation; and a raw line-oriented exchange
+   over `Popen` for byte-level stdout purity, which is the only level at which "nothing but JSON-RPC
+   frames" is a statement about bytes.
+6. **`python -m harness_library.cli.main` is the spawn command**, because `[project.scripts]` is
+   still absent from `pyproject.toml` and this task may not add it. Flagged.
+
+## Ruling R29, and its consequences above `domain/`
+
+`LibraryRootError` gains `code = ErrorCode.NOT_A_LIBRARY`, so `cli/main.py::_run`'s dedicated
+`except LibraryRootError` branch — which reported `code: null` — is **removed**: the generic
+`HarnessLibraryError` branch now produces the right code and the same exit status through the table.
+Leaving it would have the taxonomy report null for a condition that has a code.
+
+Two existing tests are touched, both by the guard working as designed — listed below.
+
+## Existing tests changed
+
+- `tests/cli/test_exit_codes.py::test_the_statuses_group_by_what_the_user_must_do` — the
+  `LIBRARY_UNUSABLE` set gains `NOT_A_LIBRARY`. Still asserted as a whole set, so a code moving
+  between groups still fails it. Nothing is no longer guaranteed.
+- No other test changed.
+
+## Verification
+
+The gate, whole, from the repository root, formatter first, never path-scoped (**L2**, **L9**):
+
+```
+export PATH="$HOME/.local/bin:$PATH"
+uv run ruff format --check . && uv run ruff check . && uv run mypy src tests && uv run lint-imports && uv run pytest
+```
+
+`git status --porcelain docs/` must show only this section (**L8**).
+
+## Mutation checks — assertions named in advance
+
+**(a) Write one line to stdout in the `hl mcp` entry path**, before the transport claims fd 1.
+Must fail: `tests/mcp/test_stdout_purity.py::test_every_byte_on_stdout_is_a_json_rpc_frame`.
+Must **stay green**:
+`tests/mcp/test_stdout_purity.py::test_the_server_still_reports_its_tool_calls_on_stderr` — the rule
+is "nothing on stdout", not "no logging at all", and a fix that silenced logging would satisfy the
+first assertion while destroying every diagnostic the server has.
+
+**(b) Add a fifth tool whose handler calls `application.write`.**
+Must fail **both** `lint-imports`' `mcp-is-read-only` contract **and**
+`tests/test_architecture.py::test_contract_is_configured_and_kept[mcp-is-read-only]`. If only one
+fires, the read-only guarantee is theatre and the wiring is fixed before anything is reported.
+
+## Out of scope
+
+No write path, no HTTP, no resources and no prompts — four tools, nothing else. Nothing under
+`application/`, `infrastructure/`, or `domain/` beyond `ErrorCode.NOT_A_LIBRARY`. No dependency
+change and no `pyproject.toml` or `uv.lock` edit. No commit.

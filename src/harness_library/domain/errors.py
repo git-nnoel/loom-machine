@@ -100,6 +100,21 @@ class ErrorCode(StrEnum):
     as truncated. That is a confidently wrong answer to a question the user did not ask.
     """
 
+    NOT_A_LIBRARY = "NOT_A_LIBRARY"
+    """The resolved library root is not a library, or is not a readable directory at all.
+
+    Added by T-8 under **ruling R29**. Charter §13 requires resolution to fail loudly on a
+    directory that is not a library — an empty listing is a fact about a library and must never
+    also be how a missing one looks — and T-7 correctly refused to invent a code for it at the
+    raise site, leaving `cli.composition.LibraryRootError` uncoded. This is that condition given a
+    place in the contract: `cli/` maps it to the "library unusable" exit status and initiative 03
+    maps it to an HTTP status without re-deriving one from an exception type it cannot see.
+
+    Raised during **composition**, before any repository exists, which is what distinguishes it
+    from `LIBRARY_YAML_INVALID`: that one is a library whose metadata document is broken, this one
+    is not a library at all.
+    """
+
 
 class HarnessLibraryError(Exception):
     """Base of every error this project raises deliberately at a user-facing boundary.

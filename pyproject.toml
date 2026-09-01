@@ -13,8 +13,8 @@ dependencies = [
     "structlog",
 ]
 
-# No [project.scripts] yet. The `hl` entry point lands with the CLI composition root in T-7;
-# an entry point naming a module that does not exist breaks the install.
+[project.scripts]
+hl = "harness_library.cli.main:app"
 
 [build-system]
 requires = ["hatchling"]

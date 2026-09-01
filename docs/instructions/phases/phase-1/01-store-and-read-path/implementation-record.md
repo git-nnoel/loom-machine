@@ -1,6 +1,6 @@
 # Implementation record — Store, validation, read path, MCP
 
-**Status:** Open — T-1…T-6 accepted; T-7 next
+**Status:** Open — T-1…T-7 accepted; T-8 next
 **Phase:** 1 · **Initiative:** 01-store-and-read-path · **Owner:** delivery lead
 **Last updated:** 2026-08-28
 
@@ -18,7 +18,8 @@ Backward-facing: what actually shipped. The forward-facing intent is `implementa
 | **T-4b** | Corrections: errors.py → domain/, V8 case collision, V9 duplicate keys | **Accepted** 2026-08-28 |
 | **T-5** | Scanner, repository, committed fixture library | **Accepted** 2026-08-28 — commit `ff5f540` |
 | **T-6** | Read use cases, wire DTOs (C-5, C-7), error codes | **Accepted** 2026-09-01 |
-| T-7 … T-9 | see plan §7 | Not dispatched |
+| **T-7** | Read CLI, composition root, exit-code table (C-6, C-8) | **Accepted** 2026-09-01 — commit `785fb74` |
+| T-8, T-9 | see plan §7 | Not dispatched |
 
 ## Evidence
 
@@ -65,6 +66,12 @@ Both mutations re-run by the delivery lead on the integrated tree:
 - **Third mutation, run on my initiative** — swapping the handler order so `ValueError` shadows `UnicodeDecodeError` failed 3 tests. The trap the specialist flagged is genuinely guarded, not merely commented.
 - Restored: `321 passed`.
 
+**T-7 — gate re-run by the delivery lead:** exit 0, `381 passed` (up from 321). Nothing below `cli/` changed; the `pyproject.toml` diff is the authorised `[project.scripts]` line only.
+- **Exercised by hand, not only by test.** `hl validate` against the fixture library exits **1** and reports 9 errors and 3 warnings, with `skill/messy` correctly `[ok]` despite three V6 warnings (R22) and the two V7s landing under `library.yaml` (R23). `hl list --json` parses as JSON and reports 11 artifacts. A non-library directory exits **5** with a message naming what it expected.
+- **F-2 verified directly:** `hl show skill/no-entry` — the entry-less fixture skill — exits **0** and renders the artifact. This is the case the superseded plan crashed on with an unhandled `FileNotFoundError`.
+- **Mutation** — forcing `hl validate` to exit 0 failed `test_validate_exits_non_zero_when_an_error_finding_exists`; the control `test_validate_exits_zero_when_the_only_findings_are_warnings` **stayed green**. The specialist additionally ran the converse (always exit 1) to prove the pair is not satisfiable by a constant.
+- Restored: `381 passed`.
+
 ## Rulings (R-N)
 
 Every boundary call, numbered. Specialists do not read this file — the delivery lead carries each
@@ -80,6 +87,8 @@ binding ruling into the dispatch prompt in their own words.
 | **R6** | 2026-08-28 | **Symlinks are skipped and reported** as a V6 warning. Never followed, never hashed, never installed. A link resolving outside the artifact root is how a copy writes outside its target, and initiative 02 writes into `~/.claude`. | T-3, T-5; **initiative 02** |
 | **R7** | 2026-08-28 | **`--json` is contract; human columnar output is not.** Tests assert the JSON payload, never substrings of the human format. Initiative 04 consumes the API or `--json`, never the columnar text. | T-7 |
 | **R8** | 2026-08-28 | **Superseded artifacts appear in the default listing**, ranked below their successors, carrying `superseded_by` in every payload. `include_superseded` defaults true. Hiding them would make a redirect stub invisible, which is the opposite of why supersession is first-class. | T-6, T-8 |
+| **R28** | 2026-09-01 | **`cli` sits ABOVE `mcp` in the layer contract**; they are no longer independent siblings. `cli/` owns the process entry point and the composition root, and hands `mcp/` a ready repository — a real hierarchy, not a fudge to get an import through. This keeps R2 (one environment reader) and C-8 (one root resolver) true across both adapters. My defect: T-7's brief told it that T-8 would register `hl mcp` into `cli/main.py`, which the contract forbade. It probed with a throwaway import before writing any code, reported, and built for this resolution rather than working around it. | T-8, initiative 03 |
+| **R29** | 2026-09-01 | **`NOT_A_LIBRARY` is added to `ErrorCode`, in T-8.** Charter §13 demands a loud failure for a directory that is not a library, and §9 forbids inventing a code at a raise site — so T-7 correctly left `LibraryRootError` uncoded, mapping it to exit 5 by class. It grepped the ruling table per L25 first and found nothing, so this is an amendment rather than a transcription. Initiative 03 needs an HTTP status for the same condition. | T-8 |
 | **R26** | 2026-09-01 | **Transcribing an existing ruling into code is not amending a contract.** T-6 added `library_findings()` to `domain/repository.py`. R23 and plan §6 had already made it part of C-4, but the amendment landed only in the documents — T-5 added the method to its implementation and left the contract to me, and I amended the plan without dispatching the protocol edit. Under `mypy --strict` R23 was therefore unimplementable. Accepted; the gap was mine. **When a ruling amends a contract, the protocol change must be scoped into the next dispatch explicitly.** | every task |
 | **R27** | 2026-09-01 | **C-5's search-skip field is `skipped: tuple[SkippedFile, ...]` carrying a `SearchSkipReason`, not `skipped_binary: list[str]`.** Follows R25. The enum's second member `unreadable_as_text` — a `.md` reference whose bytes contradict the scan — is accepted as new closed-enum surface; it is structurally unreachable for a non-markdown file because the path test runs first and reads nothing. Plan §6 corrected. | T-7, T-8, initiative 03 |
 | **R23** | 2026-08-28 | **`library_findings()` joins contract C-4.** V7 and V9 land on `AssembledLibrary.findings` and were otherwise unreachable from the read path, so F-4 could report neither. That is R22's "decorative row" failure arriving by a different door: a rule that cannot reach a report cannot make a library invalid. The specialist added it as explicitly additive and did not touch the contract, which was correct — amending C-4 is mine. | T-6, T-7 |
@@ -122,6 +131,7 @@ binding ruling into the dispatch prompt in their own words.
 | Spec §12.2 plugin-format export | Shapes 02's export; C-4's `read_bytes` is frozen here to keep it possible |
 | Scan-cost measurement | Plan §2 Deferred; measure at T-9 |
 | **A symlinked artifact *root* is skipped silently.** Not followed (R6) and not scanned, so a symlinked skill that would load perfectly is absent from the library with no diagnostic. Silent omission is the failure this product exists to eliminate, so this is a real gap — but no rule covers it, and inventing a decorative charter row is worse. | **Decision point at T-9.** Either a new rule with an implementation in the same change, or an explicit recorded "won't fix" for initiative 02. Not left to a task. |
+| **F-3's 184 KB HTML asset is not in the committed fixture library.** The acceptance criterion names it, but only the real library has it. T-9 runs against both and must cover it there, or the criterion is untested. | **T-9** |
 | Unparseable frontmatter fires V5 (entry declares nothing) rather than a dedicated code | Acceptable; revisit if a user hits it and the message misleads |
 | `mcp` pulls `starlette`/`uvicorn`/`sse-starlette` transitively — an HTTP stack is present in the venv that T-8 must not touch | Lesson L11, bound to T-8 |
 | No `py.typed` marker in `src/harness_library/` | Not needed while nothing imports the library externally; revisit if initiative 03 or 04 consumes it as a package |

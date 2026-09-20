@@ -182,13 +182,23 @@ Every rule below exists because the corresponding failure was observed on disk t
 |---|---|
 | `V1` A skill directory must contain `SKILL.md` | `delivery-lead/`, `solution-designer/` — directories with only an empty `references/`; never loaded, never reported |
 | `V2` Frontmatter `name` must equal directory/file name | `frontend-ctg-system-pattern` documenting its own path as another skill's directory |
-| `V3` Every `references/…` path cited in body text must exist | The old `backend-system-architecture`, citing into an empty `references/` |
+| `V3` Every `references/…` path cited in body text must exist **under that artifact**. **Directory-kind artifacts only** — a single-file artifact cannot own a `references/` folder, so a citation in one is prose about another artifact's files (DEC-9 / R32) | The old `backend-system-architecture`, citing into an empty `references/`. The scope clause was added after the rule fired 15 times on the real library with **zero** true positives |
 | `V4` `superseded_by` must resolve to an existing artifact | A redirect pointing at a skill that was since renamed again |
 | `V5` Required frontmatter keys present and non-empty | A skill that loads but cannot be matched by description |
 | `V6` Files under an artifact root that are not declared content are reported as extraneous | The `.swp` file; the `node_modules/` tree; any symlink (ruling R6) |
 | `V7` Every `library.yaml` entry, and every `collections[].members` id, must resolve to an artifact on disk | A rename that updates the tree but not the metadata, leaving a collection quietly one member short |
+| `V8` Two artifacts of one type whose names differ only by case | A case-insensitive install target silently merging two skills into one |
+| `V9` A duplicate key in `library.yaml` | Last-wins silently discarding the first block's tags |
+| `V10` The entry document's frontmatter does not parse | A single unquoted colon making a working skill report every required key as missing |
 
-`V1`–`V5` and `V7` are `ERROR`. `V6` is `WARNING` — it reports, never deletes, and never blocks install.
+`V1`–`V5`, `V7`, `V8`, `V9` and `V10` are `ERROR`. `V6` is `WARNING` — it reports, never deletes, and never blocks install.
+
+**V10 suppresses V2, V3 and V5.** `[OBS]` When the frontmatter block did not parse, nothing is known
+about what it declares — so reporting a missing key, a name disagreement, or a lost `superseded_by`
+exemption are all claims the tool cannot support. V3 is included because its exemption depends on
+`superseded_by`, which comes from frontmatter when no `library.yaml` declares it: without the
+suppression, one unquoted colon in a redirect stub floods V3 with exactly the findings the exemption
+exists to prevent, burying the one true cause among them.
 
 **V3 exempts artifacts with `superseded_by` set.** `[OBS]` A redirect stub's entire purpose is to say
 where its content went, which means citing the successor's reference paths as prose. Verified against
@@ -299,8 +309,11 @@ list_artifacts(type?, tag?)   → id, name, type, description, tags, superseded_
 search_artifacts(query)       → matches: id, path, line number, the line,
                                  one line of context either side; capped at
                                  200 matches with `truncated: bool`; entry file
-                                 and .md references only, with each skipped
-                                 binary reported as `skipped_binary` (R4)
+                                 and .md references only. Each unsearched file
+                                 is reported in `skipped`, carrying a reason
+                                 that is *not a markdown reference* — never
+                                 "binary": the bundled 184 KB HTML asset is
+                                 valid UTF-8 and is still not searched (R4, R25)
 get_artifact(id)              → entry file text + file listing
 get_reference(id, path)       → one reference file
 ```
@@ -479,8 +492,11 @@ a real Claude Code session. Both are verified by hand once, and recorded. `[GAP]
    that includes `references/*.md`, not just the entry file. `[INF: assumed yes]`
 5. ~~**Search depth.**~~ **RESOLVED 2026-08-28 — ruling R4.** Entry file plus every `.md`
    reference; binary never searched and each skip reported. `[OBS]`
-6. **Scan performance.** Each `hl mcp` spawn rescans the tree. Estimated imperceptible at ~750KB
-   across eight artifacts, but **unmeasured**. Time it once the store exists; if it registers, add
+6. ~~**Scan performance.**~~ **RESOLVED 2026-09-01 — measured at T-9.** The scan is **17 ms** over the
+   real library. The estimate was right about the scan and wrong about what a user waits for: importing
+   the CLI cost **1811 ms**, of which 1277 ms was an MCP SDK no read command touches. Fixed in T-10 —
+   now 534 ms. No cache is warranted. `[OBS]`
+   ~~Estimated imperceptible at ~750KB across eight artifacts, but **unmeasured**.~~ Time it once the store exists; if it registers, add
    an mtime-keyed cache — not a merged process. `[INF]`
 
 ---
@@ -509,6 +525,13 @@ Corrections to this document after its first draft. Each names what changed the 
 | 2026-08-28 | §4 | Severities stated explicitly per rule | Backend review S2 |
 | 2026-08-28 | §7.3 | `search_artifacts` result shape, 200-match cap, `truncated`, `skipped_binary` | Backend review S5 — "context" was undefined and an uncapped result crosses a pipe into a model's context window |
 | 2026-08-28 | §12 | Questions 5 (search depth), symlinks and file mode struck as resolved | Rulings R4, R6, R9 |
+
+| 2026-09-20 | §4 | V8, V9 and V10 added to the register; severities stated | Rulings R19, R20, R33 — all three shipped in initiative 01 and the spec still listed V1–V7 |
+| 2026-09-20 | §4 | V3 scoped to directory-kind artifacts | DEC-9 / R32 — the rule fired 15 times on the real library with **zero** true positives; references belong to the skill that owns them |
+| 2026-09-20 | §4 | V10 suppresses V2, V3 and V5 | R33, widened to V3 on 2026-09-20 — the exemption depends on frontmatter, so one unquoted colon would otherwise flood V3 |
+| 2026-09-20 | §7.3 | `skipped_binary` replaced by `skipped` with a reason that is never "binary" | R25 / R27 — the 184 KB HTML asset is valid UTF-8 and still unsearched; the reason is *not a markdown reference* |
+| 2026-09-20 | §12.6 | Scan performance struck as resolved; real numbers recorded | Measured at T-9: 17 ms scan against a 1811 ms import, now 534 ms |
+| 2026-09-20 | — | These five amendments were owed from 2026-08-28 and were found missing by a `phase-reviewer` cold read, not by the delivery lead | The instruction tree had moved ahead of the spec in six places while the spec remained precedence 1 |
 
 **Not yet applied.** Review item S8 — the import-linter contract drafted in Plan 1 does not express
 §7.3's guarantee and separately permits `infrastructure → application`. §7.3's *statement* is correct;

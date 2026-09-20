@@ -1,8 +1,9 @@
 # Implementation plan — Store, validation, read path, MCP
 
-**Status:** Awaiting user review — **not dispatchable**
+**Status:** CLOSED 2026-09-20 — all ten tasks accepted. **Frozen-contract source for initiatives 02–04.**
 **Phase:** 1 · **Initiative:** 01-store-and-read-path · **Owner:** delivery lead
-**Last updated:** 2026-08-28
+**Last updated:** 2026-09-20
+**Reviewed:** 2026-09-20 · `phase-reviewer` · **NOT READY** · 8 blocking · see the record's Reviewed row for the disposition of each
 **Derived from:** `docs/specs/2026-08-28-harness-library-design.md` · `2026-08-28-backend-review.md`
 **Depends on:** nothing · **Blocks:** 02-install-and-drift, 03-http-api, 04-web-ui
 **Independently deployable:** Yes — a working read-only CLI and MCP server
@@ -46,7 +47,7 @@ The HTTP API. The React SPA.
 | P-1 | Git repository initialised, spec and plan committed | delivery lead | **Done** — `main`, 2 commits |
 | P-2 | `uv` available on the build machine | specialist | Yes — T-1 |
 | P-3 | Approved dependency set (charter §4) | delivery lead | **Done** — R1, R2, R3 |
-| P-4 | A fixture library committed to the repo, distinct from `~/.claude/` | specialist, in T-5 | Yes — T-9 cannot use `~/.claude/` (L6) |
+| P-4 | A fixture library committed to the repo, distinct from `~/.claude/` | specialist, in T-5 | Yes — T-9 needs it **in addition to** `~/.claude/`, which cannot prove collections, tags or supersession (L6) |
 
 ## 4. Features (F-N)
 
@@ -110,11 +111,12 @@ before anything is scoped against its outcome.
 | **T-2** | Domain vocabulary: `ArtifactType`, `ArtifactKind`, `ValidationCode`, `Severity`, `ValidationFinding`, `ArtifactFile`, `Artifact`, content hashing, the type registry. | domain | T-1 |
 | **T-3** | `RawArtifact` and the pure assembler, including **all of V1–V7**. The task that removes the rework (DEC-1). | domain | T-2 |
 | **T-4** | `library.yaml` reader with shape validation and line-numbered failures. | domain + infra | T-2 |
+| **T-4b** | Corrections arising mid-initiative: the error taxonomy moved from `infrastructure/` to `domain/` (R17), V8 case collision (R19), V9 duplicate `library.yaml` keys (R20). Added after T-4 returned; recorded here so the task list accounts for every dispatch. | domain + infra | T-4 |
 | **T-5** | The scanner and the repository, composed from T-3 and T-4. Includes the committed fixture library (P-4). | infrastructure | T-3, T-4 |
 | **T-6** | Read use cases, including collections. | application | T-5 |
 | **T-7** | Read CLI, composition root, `--json` output, loud failure on a non-library root. | cli | T-6 |
 | **T-8** | MCP server driven over real JSON-RPC frames, plus the stdout-purity test. | mcp | T-6 |
-| **T-9** | Acceptance against the real library, output recorded in the implementation record. | — | T-7, T-8 |
+| **T-9** | Acceptance against **both trees**: the committed fixture library, which is the only one that proves collections, tags and supersession; **and** `~/.claude`, which is the only one that holds real authored content and the 184 KB HTML asset. Output recorded in `<date>-acceptance.md` and cited from the implementation record. | — | T-7, T-8 |
 | **T-10** | Corrections from acceptance: V3 scoped to directory-kind artifacts (DEC-9), V10 for unparseable frontmatter, and a lazy MCP import so every non-`mcp` command stops paying 1.3 s for an SDK it never touches. | domain + cli | T-9 |
 
 **Changed from the superseded plan:** old T-1+T-2 merged into T-2 · old T-5 (validation) moved **ahead**
@@ -130,7 +132,7 @@ Per feature, so F-N ↔ acceptance stays traceable.
 | **F-1** | Every artifact in the fixture library appears in `hl list --json`, including invalid ones. Each filter returns exactly the expected id set. Each sort key returns a defined, stable order. Superseded artifacts appear by default, ranked below their successors (R8). |
 | **F-2** | `hl show <id>` returns entry text, file list and frontmatter for a valid artifact, **and for an invalid one returns its findings rather than raising**. A skill with no `SKILL.md` is shown with its V1 finding — this is the case §4 exists to serve, and the superseded plan crashed on it. |
 | **F-3** | A phrase present only in a reference file is found, with correct path, line number and context. Only the entry document and `.md` references are searched, per R4. The 184 KB HTML asset is not searched and is reported as skipped — it is valid UTF-8, so the reason is *not a markdown reference*, never *binary*. A genuinely non-UTF-8 file is reported the same way. A result set above the cap sets `truncated: true`. |
-| **F-4** | Each of V1–V7 fires on a fixture built for it and does **not** fire on a clean artifact. V6 findings do not make an artifact invalid. `hl validate` exits non-zero on ERROR, zero when only warnings exist. |
+| **F-4** | Each of **V1–V10** fires on a fixture built for it and does **not** fire on a clean artifact. (V8, V9 and V10 were added mid-initiative by R19, R20 and R33; V8/V9/V10 are proven under `tmp_path` rather than in the committed fixture — see `tests/fixtures/README.md` for why.) V6 findings do not make an artifact invalid. `hl validate` exits non-zero on ERROR, zero when only warnings exist. |
 | **F-5** | `hl list --collection <key>` returns exactly the declared members. A member id that resolves to nothing produces V7. |
 | **F-6** | A real MCP client handshake enumerates exactly four tools, **read from the server** rather than a constant. Each tool returns its documented payload. `get_reference` returns one reference without its parent's entry text. `hl mcp` emits **nothing** on stdout under any error, including an invalid flag. |
 
@@ -174,7 +176,7 @@ failing. An absence test with no positive control is not evidence.
 | A contract in §6 turns out unbuildable, forcing a rewrite of finished tasks | They were derived by the specialist who reviewed the whole plan, not by the delivery lead. A task that finds one wrong **stops and reports** rather than adapting locally. |
 | `import-linter`'s layer ordering silently permits what it appears to forbid | T-1's mutation check is exactly this, and it is the first check performed (L3). |
 | `updated_at` from git costs a subprocess per artifact on every scan | Measure in T-9 before optimising. The fallback path is already specified, so a cache is additive, not a redesign. |
-| Acceptance against `~/.claude/` looks green while proving little | T-9 runs against the committed fixture library. `~/.claude/` is a target layout, not a library (L6). |
+| Acceptance against `~/.claude/` looks green while proving little | T-9 runs against **both** trees and states what each proves. `~/.claude/` is a target layout with no `library.yaml`, so it cannot exercise collections, tags or supersession (L6); the fixture library cannot exercise real authored content. Neither alone is acceptance. |
 | The seven V3 stub findings are mistaken for a regex bug and "fixed" | L5 is pasted verbatim into T-3 and T-9, and the exemption is in charter §8. |
 
 ## 11. Next

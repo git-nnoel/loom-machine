@@ -2,7 +2,8 @@
 
 **Status:** CLOSED — all ten tasks accepted. Initiative 01 is complete.
 **Phase:** 1 · **Initiative:** 01-store-and-read-path · **Owner:** delivery lead
-**Last updated:** 2026-08-28
+**Last updated:** 2026-09-20
+**Reviewed:** 2026-09-20 · `phase-reviewer` · **NOT READY** · 8 blocking · resolved: B-3, B-4, B-7, B-8 fixed here; B-1, B-2, B-5 recorded as carried-forward and raised to the user; B-6 disputed in writing below and the remedy offered
 
 Backward-facing: what actually shipped. The forward-facing intent is `implementation-plan.md`.
 
@@ -10,16 +11,21 @@ Backward-facing: what actually shipped. The forward-facing intent is `implementa
 
 | Id | What | Status |
 |---|---|---|
-| F-1 … F-6 | see plan §4 | Not started |
+| **F-1** Browse the library | `hl list` with filters and sorts, `--json` | **Delivered** — fixture + real library |
+| **F-2** Inspect one artifact | `hl show`, incl. a broken artifact without raising | **Delivered** — verified on the entry-less fixture skill |
+| **F-3** Search the library | `hl search` | **Delivered with a gap** — the matching line and number ship; **"one line of context either side" (spec §7.3) was never built**. See Carried forward |
+| **F-4** Know what is broken | `hl validate`, exit non-zero on ERROR | **Delivered** — acceptance criterion covers V1–V7 only; V8–V10 shipped with tests but no criterion |
+| **F-5** Collections | `hl collections` | **Delivered, proven against the fixture library only.** `~/.claude` declares no collections, so real-content proof was not available. Acceptance basis raised to the user |
+| **F-6** MCP reach | four read-only tools over stdio | **Delivered** — verified over real JSON-RPC against the real library |
 | **T-1** | Scaffold, gate, three import contracts | **Accepted** 2026-08-28 — commit `9256c60` |
 | **T-2** | Domain vocabulary — C-1, C-2, C-3, registry, hashing, metadata types | **Accepted** 2026-08-28 — commit `57fff7f` |
 | **T-3** | `RawArtifact`, the pure assembler, rules V1–V7 | **Accepted** 2026-08-28 — commit `519b7ed` |
 | **T-4** | `library.yaml` reader, error taxonomy | **Accepted** 2026-08-28 — commit `519b7ed` |
-| **T-4b** | Corrections: errors.py → domain/, V8 case collision, V9 duplicate keys | **Accepted** 2026-08-28 |
+| **T-4b** | Corrections: errors.py → domain/, V8 case collision, V9 duplicate keys | **Accepted** 2026-08-28 — commit `61d9c2f` |
 | **T-5** | Scanner, repository, committed fixture library | **Accepted** 2026-08-28 — commit `ff5f540` |
-| **T-6** | Read use cases, wire DTOs (C-5, C-7), error codes | **Accepted** 2026-09-01 |
+| **T-6** | Read use cases, wire DTOs (C-5, C-7), error codes | **Accepted** 2026-09-01 — commit `2679cf2` |
 | **T-7** | Read CLI, composition root, exit-code table (C-6, C-8) | **Accepted** 2026-09-01 — commit `785fb74` |
-| **T-8** | Read-only stdio MCP server, four tools, `NOT_A_LIBRARY` | **Accepted** 2026-09-01 |
+| **T-8** | Read-only stdio MCP server, four tools, `NOT_A_LIBRARY` | **Accepted** 2026-09-01 — commit `b569f92` |
 | **T-9** | Acceptance against the real library | **Accepted** 2026-09-01 — commit `c5c38e8` |
 | **T-10** | Corrections: V3 scope, V10, lazy MCP import | **Accepted** 2026-09-20 — commit `12896e1` |
 
@@ -68,7 +74,11 @@ Both mutations re-run by the delivery lead on the integrated tree:
 - **Third mutation, run on my initiative** — swapping the handler order so `ValueError` shadows `UnicodeDecodeError` failed 3 tests. The trap the specialist flagged is genuinely guarded, not merely commented.
 - Restored: `321 passed`.
 
-**T-7 — gate re-run by the delivery lead:** exit 0, `381 passed` (up from 321). Nothing below `cli/` changed; the `pyproject.toml` diff is the authorised `[project.scripts]` line only.
+**T-7 — gate re-run by the delivery lead:** exit 0, `381 passed` (up from 321). Nothing below `cli/` changed.
+
+~~the `pyproject.toml` diff is the authorised `[project.scripts]` line only~~ — **struck 2026-09-20.** False. `git show 785fb74 -- pyproject.toml` contains no `[project.scripts]`; that line first landed in `b569f92` (T-8). The diff that *was* there is the **R28 layer-contract change** — `"harness_library.cli | harness_library.mcp"` split into two ordered layers — which is the one structural edit in that commit and went unnamed in this Evidence block. R31 below already records the underlying incident; this line was never corrected to match it.
+
+~~`hl validate` / `hl list --json` / F-2 verified directly~~ — **re-attributed 2026-09-20.** Those hand-runs executed against a **stale installed entry point** (R31), so they verified nothing about the tree as committed. The conclusions survive on other evidence: F-2 is covered by `tests/cli/test_show.py::test_show_renders_findings_for_the_entry_less_skill` through Typer's runner rather than the installed binary, and the 9-error/3-warning figure reconciles rule-by-rule against `tests/fixtures/README.md`.
 - **Exercised by hand, not only by test.** `hl validate` against the fixture library exits **1** and reports 9 errors and 3 warnings, with `skill/messy` correctly `[ok]` despite three V6 warnings (R22) and the two V7s landing under `library.yaml` (R23). `hl list --json` parses as JSON and reports 11 artifacts. A non-library directory exits **5** with a message naming what it expected.
 - **F-2 verified directly:** `hl show skill/no-entry` — the entry-less fixture skill — exits **0** and renders the artifact. This is the case the superseded plan crashed on with an unhandled `FileNotFoundError`.
 - **Mutation** — forcing `hl validate` to exit 0 failed `test_validate_exits_non_zero_when_an_error_finding_exists`; the control `test_validate_exits_zero_when_the_only_findings_are_warnings` **stayed green**. The specialist additionally ran the converse (always exit 1) to prove the pair is not satisfiable by a constant.
@@ -78,6 +88,8 @@ Both mutations re-run by the delivery lead on the integrated tree:
 - **stdout-purity mutation** — a stray line in the `hl mcp` command body failed 3 purity tests; the control `test_the_server_still_reports_its_tool_calls_on_stderr` **stayed green**, so the rule is "nothing on stdout", not "no logging".
 - **read-only mutation** — importing `application.write` into `mcp/tools.py` broke the `mcp-is-read-only` contract **and** failed `tests/test_architecture.py` on two assertions. Both halves fired, so the guarantee is structural rather than a promise.
 - Restored: `405 passed`, `Contracts: 3 kept, 0 broken`.
+
+**T-9 — acceptance.** Full output in the sibling document `2026-09-01-acceptance.md`, which plan §7 requires this record to reference and previously did not. Verdict there: F-1, F-2, F-3, F-6 pass against real content; F-4 passes on mechanism; **F-5 NOT PROVABLE against `~/.claude`**, which declares no collections.
 
 **T-10 — gate re-run by the delivery lead:** exit 0, `427 passed` (up from 410).
 - **Real library, verified directly:** `hl --library ~/.claude validate` reports **7 V3** (all two redirect stubs), **1 V10**, **1 V1**. Both agents are clean; the 8 false positives are gone. `frontend-system-pattern` reports one V10 naming line 3 — the description line — with no false V5.
@@ -147,14 +159,22 @@ binding ruling into the dispatch prompt in their own words.
 |---|---|
 | Review item S8 — the import-linter contract as drafted did not express spec §7.3's guarantee and permitted `infrastructure → application` | Fixed in plan DEC-2 and T-1's mutation check; spec §14 records that §7.3's statement was correct and the translation was not |
 | Spec §12.2 plugin-format export | Shapes 02's export; C-4's `read_bytes` is frozen here to keep it possible |
-| Scan-cost measurement | Plan §2 Deferred; measure at T-9 |
-| **A symlinked artifact *root* is skipped silently.** Not followed (R6) and not scanned, so a symlinked skill that would load perfectly is absent from the library with no diagnostic. Silent omission is the failure this product exists to eliminate, so this is a real gap — but no rule covers it, and inventing a decorative charter row is worse. | **Decision point at T-9.** Either a new rule with an implementation in the same change, or an explicit recorded "won't fix" for initiative 02. Not left to a task. |
+| **F-3's "one line of context either side" was never built.** Spec §7.3 and plan §4 both require it; the shipped `SearchMatch` carries four fields and no context lines, and the DTO docstring *redefines* the requirement (*"this is the context feature F-3 asks for"*) rather than meeting it. It survived T-6, T-7 and T-9 because plan §8's F-3 criterion said only "and context" — wording no test can fail. **C-5 is frozen and 03/04 render from it, so the cost of deciding rises once 03 starts.** | **Raised to the user:** build it, or amend spec §7.3 to the shipped shape. Found by `phase-reviewer`, B-1 |
+| **Six shipped behaviours have no spec amendment.** Spec §4 still lists V1–V7 and states V3 unqualified; §7.3 and §14 still say `skipped_binary`; §12.6 still calls scan cost unmeasured. Shipped: V8 (R19), V9 (R20), V10 (R33), V3 narrowed to directory-kind (R32/DEC-9), `skipped: tuple[SkippedFile, …]` (R25/R27), and a measured scan cost. `README.md` and the review profile both say the spec is amended at the source, never patched from here. | **Raised to the user** — the amendments are theirs to make. Found by `phase-reviewer`, B-2 |
+| Scan-cost measurement | Plan §2 Deferred; **measured at T-9** — 17 ms scan against a 1.81 s import, now 534 ms. Spec §12.6 still calls it unmeasured |
+| **A symlinked artifact *root* is skipped silently.** Not followed (R6) and not scanned, so a symlinked skill that would load perfectly is absent from the library with no diagnostic. Silent omission is the failure this product exists to eliminate, so this is a real gap — but no rule covers it, and inventing a decorative charter row is worse. | **Retargeted to initiative 02, 2026-09-20.** The T-9 decision point passed unanswered — T-9, T-10 and the initiative all closed without it, and this row still pointed at a finished task. T-9's recommendation is written and argued: defer to 02, because 02 must answer the symlink question at the install target anyway, where following one writes outside the target and replacing one destroys the user's dev link. **Still needs the user's yes.** Found by `phase-reviewer`, B-5 |
 | **F-3's 184 KB HTML asset is not in the committed fixture library.** The acceptance criterion names it, but only the real library has it. T-9 runs against both and must cover it there, or the criterion is untested. | **T-9** |
 | **Widening V10's suppression to V3.** A directory-kind redirect stub whose frontmatter fails to parse declares no `superseded_by` through R15's fallback, so in a library with no `library.yaml` the exemption is lost and V3 floods — the exact case charter §8 carves out, reopened by one unquoted colon. Latent today (both stubs parse). My recommendation: widen it, on R33's own logic — when the block did not parse we cannot evaluate a rule that depends on it. **User decision, not taken.** | initiative 02, or a one-line correction whenever wanted |
 | Unparseable frontmatter fires V5 (entry declares nothing) rather than a dedicated code | Acceptable; revisit if a user hits it and the message misleads |
 | `mcp` pulls `starlette`/`uvicorn`/`sse-starlette` transitively — an HTTP stack is present in the venv that T-8 must not touch | Lesson L11, bound to T-8 |
 | No `py.typed` marker in `src/harness_library/` | Not needed while nothing imports the library externally; revisit if initiative 03 or 04 consumes it as a package |
 
+## Disputed reviewer findings
+
+| Finding | My position |
+|---|---|
+| **B-6** — T-10 changed frozen contract C-3 and reversed a prior answer with no design record, so it should have taken the architectural path. | **Partly disputed, and partly conceded.** Disputed: the *substance* of the design gate was met in conversation, not skipped. The user proposed the directory-kind model themselves, was shown the rejected alternative and its cost, and chose; R32 records that provenance and DEC-9 carries its rejected alternative at design-record depth. The reversal reversed an answer that had **never been recorded or implemented** — no code, no ruling, nothing shipped on it. Conceded: `collaboration.md` §2 is explicit that *every* reversal takes the architectural path regardless of how small the change looks, and the ratchet clause forbids downgrading. The missing thing is the **artifact and the gate**, not the agreement. **Remedy offered to the user (decision 6 below): assemble a dated correction design in this folder from DEC-9/R32/R33, or rule the change bounded.** I have not chosen for them, because choosing would repeat the original defect.
+
 ## Lessons
 
-Reconciled into `docs/instructions/specialist-dispatch-lessons.md` (L1–L7) when this initiative closes.
+L1–L7 predate this initiative (they came from the backend review of the superseded plan). **This initiative produced L8–L37** — thirty lessons, including L35–L37 added by the closing commit itself.

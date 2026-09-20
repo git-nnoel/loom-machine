@@ -16,7 +16,7 @@
 ## 1. Goal
 
 Build the foundation every later initiative sits on: a filesystem-backed store that reads skills and
-agents out of the library tree, validates them against seven rules, and exposes them through a
+agents out of the library tree, validates them against ten rules, and exposes them through a
 read-only CLI and a read-only stdio MCP server. Nothing here writes to `~/.claude/` or to any other
 install target. When this closes, a user can browse, inspect, search and validate their library from a
 terminal, and any MCP client can pull a skill or a single reference file on demand.
@@ -85,9 +85,9 @@ one. Field lists and signatures only — the specialist writes the bodies.
 | **C-2** | `Artifact` | spec §3.2 as amended — including `frontmatter`, `is_dirty`, `files: tuple[ArtifactFile, ...]`, `findings` | every layer and every later initiative consumes it |
 | **C-3** | `ValidationFinding` | `code: ValidationCode` (closed enum, V1–V10 as of R33; charter §8 is the register) · `severity: ERROR \| WARNING` · `message: str` · `path: str \| None` | 04's SPA branches on the code; a string would let a rename pass silently |
 | **C-4** | `ArtifactRepository` | `list_all() -> list[Artifact]` · `get(id) -> Artifact \| None` · `read_bytes(id, path) -> bytes` · `read_text(id, path) -> str` · `list_collections() -> list[Collection]` · `library_findings() -> list[ValidationFinding]`, with documented snapshot semantics | `read_bytes` is what makes binary install and zip export possible in 02/03; `read_text` alone forecloses both |
-| **C-5** | Read use-case surface | `ArtifactFilter` (typed, not `str`) · `SortKey` · `SearchResults` with `matches`, `truncated: bool`, `skipped: tuple[SkippedFile, ...]` each carrying a `SearchSkipReason`, capped at 200; **each match carries `line_before` and `line_after` (`str | None` at file edges) alongside `line_text`** — spec §7.3, ruling R36 · `ValidationReport` · `--json` payload shape | the CLI, the MCP server and 03's API all render from these |
+| **C-5** | Read use-case surface | `ArtifactFilter` (typed, not `str`) · `SortKey` · `SearchResults` with `query`, `limit`, `matches`, `truncated: bool`, `skipped: tuple[SkippedFile, ...]` each carrying a `SearchSkipReason`, capped at 200; **each match carries `line_before` and `line_after` (`str | None` at file edges) alongside `line_text`** — spec §7.3, ruling R36 · `ValidationReport` · `--json` payload shape | the CLI, the MCP server and 03's API all render from these |
 | **C-6** | Error taxonomy | one base exception · stable string codes · mapping to CLI exit codes now, HTTP status in 03 | a code is added to the contract before it is emitted |
-| **C-7** | MCP wire payloads | Pydantic DTOs in `application/read/dtos.py`; tool names and schemas derived from one registry | `mcp/` may not import `api/`; 03 must reuse, not re-serialise |
+| **C-7** | MCP wire payloads | Pydantic DTOs in `application/read/dtos.py`, **including `SearchMatch`'s `line_before` / `line_after` (R36)**; tool names and schemas derived from one registry | `mcp/` may not import `api/`; 03 must reuse, not re-serialise |
 | **C-8** | Composition root | `--library` → `$HL_LIBRARY` → cwd; single settings object; fails loudly on a non-library directory | every adapter and every later initiative resolves the root identically |
 
 ## 7. Work breakdown & dispatch (T-N)
@@ -117,7 +117,7 @@ before anything is scoped against its outcome.
 | **T-7** | Read CLI, composition root, `--json` output, loud failure on a non-library root. | cli | T-6 |
 | **T-8** | MCP server driven over real JSON-RPC frames, plus the stdout-purity test. | mcp | T-6 |
 | **T-9** | Acceptance against **both trees**: the committed fixture library, which is the only one that proves collections, tags and supersession; **and** `~/.claude`, which is the only one that holds real authored content and the 184 KB HTML asset. Output recorded in `<date>-acceptance.md` and cited from the implementation record. | — | T-7, T-8 |
-| **T-11** | Two corrections from the `phase-reviewer` cold read: **search returns one line of context either side** (R36 — amends C-5 and C-7, which is why it is a task and not a fix), and **V10's suppression widens to V3** (R37). | domain + application | T-10 |
+| **T-11** | Two corrections from the `phase-reviewer` cold read: **search returns one line of context either side** (R36 — amends C-5 and C-7, which is why it is a task and not a fix), and **V10's suppression widens to V3** (R37). Files it must touch: `application/read/dtos.py` (`SearchMatch`, and the docstring at its `line_text` field that redefined the requirement — delete it), `application/read/search.py`, `domain/assembly.py` (the V10 suppression), `tests/application/test_dtos.py` (a **golden** field list pins `SearchMatch` as one whole assertion — extend it, never weaken it, L12), and `mcp/tools.py`, whose search-tool prose enumerates the returned fields and goes stale. The tool's `outputSchema` is generated from the payload model, so the schema half needs no edit. Also rides along: `FindingPayload`'s docstring still says `V1` to `V9`. | domain + application + mcp | T-10 |
 | **T-10** | Corrections from acceptance: V3 scoped to directory-kind artifacts (DEC-9), V10 for unparseable frontmatter, and a lazy MCP import so every non-`mcp` command stops paying 1.3 s for an SDK it never touches. | domain + cli | T-9 |
 
 **Changed from the superseded plan:** old T-1+T-2 merged into T-2 · old T-5 (validation) moved **ahead**
@@ -133,7 +133,7 @@ Per feature, so F-N ↔ acceptance stays traceable.
 | **F-1** | Every artifact in the fixture library appears in `hl list --json`, including invalid ones. Each filter returns exactly the expected id set. Each sort key returns a defined, stable order. Superseded artifacts appear by default, ranked below their successors (R8). |
 | **F-2** | `hl show <id>` returns entry text, file list and frontmatter for a valid artifact, **and for an invalid one returns its findings rather than raising**. A skill with no `SKILL.md` is shown with its V1 finding — this is the case §4 exists to serve, and the superseded plan crashed on it. |
 | **F-3** | A phrase present only in a reference file is found, with correct path and line number, **and the line before and after it, each `None` at a file edge** — asserted as values, not as the presence of a field. A single-line file yields both as `None`. Only the entry document and `.md` references are searched, per R4. The 184 KB HTML asset is not searched and is reported as skipped — it is valid UTF-8, so the reason is *not a markdown reference*, never *binary*. A genuinely non-UTF-8 file is reported the same way. A result set above the cap sets `truncated: true`. |
-| **F-4** | Each of **V1–V10** fires on a fixture built for it and does **not** fire on a clean artifact. (V8, V9 and V10 were added mid-initiative by R19, R20 and R33; V8/V9/V10 are proven under `tmp_path` rather than in the committed fixture — see `tests/fixtures/README.md` for why.) V6 findings do not make an artifact invalid. `hl validate` exits non-zero on ERROR, zero when only warnings exist. |
+| **F-4** | Each of **V1–V10** fires on a fixture built for it and does **not** fire on a clean artifact. **V10 additionally suppresses V2, V3 and V5**: an artifact whose frontmatter does not parse reports exactly one finding, and the suppression is **conditional on the parse having failed** — an artifact that parses and genuinely omits a key still reports V5, and one that parses and genuinely cites a missing reference still reports V3. (V8, V9 and V10 were added mid-initiative by R19, R20 and R33; V8/V9/V10 are proven under `tmp_path` rather than in the committed fixture — see `tests/fixtures/README.md` for why.) V6 findings do not make an artifact invalid. `hl validate` exits non-zero on ERROR, zero when only warnings exist. |
 | **F-5** | `hl list --collection <key>` returns exactly the declared members. A member id that resolves to nothing produces V7. |
 | **F-6** | A real MCP client handshake enumerates exactly four tools, **read from the server** rather than a constant. Each tool returns its documented payload. `get_reference` returns one reference without its parent's entry text. `hl mcp` emits **nothing** on stdout under any error, including an invalid flag. |
 
@@ -165,6 +165,8 @@ named failure, restore, quote green.
 | T-6 | Remove the search result cap | the truncation test fails |
 | T-7 | Return exit code 0 when ERROR findings exist | the `hl validate` exit-code test fails |
 | T-8 | Write one line to stdout in the MCP entry path | the stdout-purity test fails (L7) |
+| T-11 | Return `None` for `line_before` and `line_after` on every match | the context test fails **naming the expected neighbouring lines as values**; the control — a match on a single-line file, where both are legitimately `None` — **stays green**. Without that pair, "always None" and "correct at a file edge" are indistinguishable. |
+| T-11 | Remove V3 from V10's suppression set | the test asserting an unparseable-frontmatter artifact reports exactly one finding fails; the control — an artifact that **parses** and genuinely cites a missing reference still reports V3 — **stays green**, proving the suppression is conditional and not a blanket skip |
 
 **Positive controls.** Every assertion of absence — "no stdout output", "no file written under
 `~/.claude/`", "this rule does not fire" — carries a sibling test proving the assertion is capable of

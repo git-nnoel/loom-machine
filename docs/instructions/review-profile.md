@@ -39,8 +39,21 @@ no frontend territory**; initiative 04 opens one.
 2. *(no brand reference; no mockups)*
 3. `docs/instructions/backend-charter.md` — how this team builds. §8's rule register is the operational authority on validation rules.
 
-**Live divergence, 2026-09-20 — do not read charter §8 as settled precedence over the spec.** Charter §8 carries V1–V10 and V3 scoped to directory-kind; spec §4 still lists V1–V7 with V3 unqualified, and spec §7.3/§14 still say `skipped_binary`. The charter is ahead because the rulings landed there first. **The spec is precedence 1 and is owed six amendments** (record, Carried forward). Until they land, a charter-versus-spec difference on a validation rule is a known gap, not a new finding.
-4. The initiative plan and record — derived.
+**Charter §8 and spec §4 must agree, and a difference between them IS a finding.** An earlier version
+of this paragraph said the opposite — that a charter-versus-spec difference on a validation rule was a
+known gap rather than a new finding. That was written while the charter was ahead; the divergence has
+since reversed, and the instruction suppressed a real blocking defect (a rule the spec required and the
+charter denied, where the charter is the only one a specialist may read). **Never write a
+standing exemption for a class of finding.** Record the specific rows that are known-divergent, with the
+ruling that will close them, and delete the row when it closes.
+
+| Row | Divergence | Closes when |
+|---|---|---|
+| V10's suppression of V3 | charter §8 and spec §4 both state it; **the code does not implement it** | T-11 lands |
+
+A specialist reads the **charter**, never the spec (L14). So a rule that exists only in the spec is
+unbuildable and unreportable by them — that asymmetry is what makes charter-versus-spec drift
+load-bearing here rather than cosmetic.
 
 **This is a contract-first project.** C-1…C-8 are frozen in the initiative plan §6 and initiatives
 02–04 build against them. **A locked-but-unbuilt contract is not drift.** A contract named in a ruling

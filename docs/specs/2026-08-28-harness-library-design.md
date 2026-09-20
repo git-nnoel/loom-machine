@@ -90,7 +90,7 @@ Artifact
   findings       tuple[ValidationFinding, ...]
 
 ValidationFinding
-  code           ValidationCode  closed enum: V1..V7
+  code           ValidationCode  closed enum: V1..V10
   severity       ERROR | WARNING
   message        str
   path           str | None      the file it concerns, when applicable
@@ -193,7 +193,7 @@ Every rule below exists because the corresponding failure was observed on disk t
 
 `V1`–`V5`, `V7`, `V8`, `V9` and `V10` are `ERROR`. `V6` is `WARNING` — it reports, never deletes, and never blocks install.
 
-**V10 suppresses V2, V3 and V5.** `[OBS]` When the frontmatter block did not parse, nothing is known
+**V10 suppresses V2, V3 and V5.** `[OBS: V2/V5 shipped]` `[GAP: V3 pending T-11]` When the frontmatter block did not parse, nothing is known
 about what it declares — so reporting a missing key, a name disagreement, or a lost `superseded_by`
 exemption are all claims the tool cannot support. V3 is included because its exemption depends on
 `superseded_by`, which comes from frontmatter when no `library.yaml` declares it: without the
@@ -496,8 +496,7 @@ a real Claude Code session. Both are verified by hand once, and recorded. `[GAP]
    real library. The estimate was right about the scan and wrong about what a user waits for: importing
    the CLI cost **1811 ms**, of which 1277 ms was an MCP SDK no read command touches. Fixed in T-10 —
    now 534 ms. No cache is warranted. `[OBS]`
-   ~~Estimated imperceptible at ~750KB across eight artifacts, but **unmeasured**.~~ Time it once the store exists; if it registers, add
-   an mtime-keyed cache — not a merged process. `[INF]`
+   ~~Estimated imperceptible at ~750KB across eight artifacts, but **unmeasured**.~~ ~~Time it once the store exists; if it registers, add an mtime-keyed cache — not a merged process.~~
 
 ---
 
@@ -526,12 +525,16 @@ Corrections to this document after its first draft. Each names what changed the 
 | 2026-08-28 | §7.3 | `search_artifacts` result shape, 200-match cap, `truncated`, `skipped_binary` | Backend review S5 — "context" was undefined and an uncapped result crosses a pipe into a model's context window |
 | 2026-08-28 | §12 | Questions 5 (search depth), symlinks and file mode struck as resolved | Rulings R4, R6, R9 |
 
+
+| Date | Section | Change | Cause |
+|---|---|---|---|
 | 2026-09-20 | §4 | V8, V9 and V10 added to the register; severities stated | Rulings R19, R20, R33 — all three shipped in initiative 01 and the spec still listed V1–V7 |
 | 2026-09-20 | §4 | V3 scoped to directory-kind artifacts | DEC-9 / R32 — the rule fired 15 times on the real library with **zero** true positives; references belong to the skill that owns them |
-| 2026-09-20 | §4 | V10 suppresses V2, V3 and V5 | R33, widened to V3 on 2026-09-20 — the exemption depends on frontmatter, so one unquoted colon would otherwise flood V3 |
+| 2026-09-20 | §4 | V10's suppression extended to V3 — **a forward requirement, not a backfill: unbuilt, scheduled as T-11** | Ruling **R37**, not R33. R33 shipped V2/V5 only. Recorded here ahead of the code because the register states a rule before it is emitted |
 | 2026-09-20 | §7.3 | `skipped_binary` replaced by `skipped` with a reason that is never "binary" | R25 / R27 — the 184 KB HTML asset is valid UTF-8 and still unsearched; the reason is *not a markdown reference* |
 | 2026-09-20 | §12.6 | Scan performance struck as resolved; real numbers recorded | Measured at T-9: 17 ms scan against a 1811 ms import, now 534 ms |
-| 2026-09-20 | — | These five amendments were owed from 2026-08-28 and were found missing by a `phase-reviewer` cold read, not by the delivery lead | The instruction tree had moved ahead of the spec in six places while the spec remained precedence 1 |
+| 2026-09-20 | §3.2 | `ValidationCode` corrected from `V1..V7` to `V1..V10` | Missed by the first amendment pass, which touched §4, §7.3, §12 and §14 and left the data model behind. §3.2 is what initiatives 03 and 04 read for the entity |
+| 2026-09-20 | — | **Five of these six rows are backfills** owed from 2026-08-28, found by a `phase-reviewer` cold read rather than by the delivery lead. The V10/V3 row is **not** a backfill — it is a forward requirement pending T-11 | The instruction tree had moved ahead of the spec in six places while the spec remained precedence 1 |
 
 **Not yet applied.** Review item S8 — the import-linter contract drafted in Plan 1 does not express
 §7.3's guarantee and separately permits `infrastructure → application`. §7.3's *statement* is correct;

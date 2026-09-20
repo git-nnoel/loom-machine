@@ -15,7 +15,7 @@ script resolves only from `/project/harness-library/.venv/bin`; every session be
 |---|---|---|
 | **F-1** | Every artifact lists, invalid ones included; filters and sorts defined; superseded ranked below successors (R8) | **PASS** |
 | **F-2** | `hl show` renders an invalid artifact with its findings rather than raising | **PASS** |
-| **F-3** | Phrase in a reference found with path/line/context; 184 KB HTML reported skipped as *not a markdown reference* | **PASS** |
+| **F-3** | ~~Phrase in a reference found with path/line/context~~; 184 KB HTML reported skipped as *not a markdown reference* | **PASS** |
 | **F-4** | V1–V7 fire on purpose-built content; `hl validate` exits non-zero on ERROR | **PASS on mechanism, but see D-1** |
 | **F-5** | `hl list --collection` returns exactly the declared members | **NOT PROVABLE HERE** — `~/.claude` declares no collections (L6) |
 | **F-6** | Handshake enumerates four tools read from the server; each returns its payload; `get_reference` carries no parent entry text | **PASS** |
@@ -427,6 +427,12 @@ stderr carried exactly one line per tool call (R3):
 Server exited `0` on stdin close.
 
 ---
+
+> **STRUCK 2026-09-20 — the context half of F-3 was never built.** This report's F-3 verdict reads PASS
+> on "path/line/context", but the shipped `SearchMatch` carries four fields and no context lines; its
+> docstring redefined the requirement rather than meeting it. The *skipped-asset* half of F-3, which
+> §5 below examines, is correct and stands. Found by a `phase-reviewer` cold read; scheduled as T-11
+> under ruling R36.
 
 ## 5. F-3 settled — the 184 KB HTML asset
 

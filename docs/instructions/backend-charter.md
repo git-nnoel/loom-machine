@@ -95,7 +95,7 @@ stops and reports.
 | V7 | ERROR | A `library.yaml` entry or `collections[].members` id that resolves to nothing |
 | V8 | ERROR | Two artifacts of one type whose names differ only by case. §7 promised this rule and §8 did not define it; a specialist correctly refused to invent a code rather than emit one outside the contract. Decided at the library level, like V4 and V7 |
 | V9 | ERROR | A duplicate key in `library.yaml` — the same artifact id or collection key declared twice. Last-wins silently discards the first block's tags, which is the precise silent-data-loss failure this product exists to eliminate |
-| V10 | ERROR | The entry document's frontmatter does not parse. Reports the parser's own message with line and column, and **suppresses the V2/V5 cascade** behind it — a file whose frontmatter failed to load otherwise reports every required key as missing, which is false and unactionable (ruling R33) |
+| V10 | ERROR | The entry document's frontmatter does not parse. Reports the parser's own message with line and column, and **suppresses the V2, V3 and V5 cascade** behind it (V3 added by ruling R37 — **pending T-11**, not yet built) — a file whose frontmatter failed to load otherwise reports every required key as missing, which is false and unactionable (R33). **V3 is included** because its `superseded_by` exemption reads frontmatter when no `library.yaml` declares supersession: without the suppression one unquoted colon in a redirect stub floods V3 with exactly the findings the exemption prevents (R37) |
 
 New rules are added to this table first. `is_valid` means **no finding of severity ERROR**.
 
@@ -141,3 +141,5 @@ on a directory that is not a library, rather than silently returning an empty li
 | Date | Decision |
 |---|---|
 | 2026-08-28 | Charter opened. Mode A. Rulings R1–R9 recorded in the initiative record. |
+| 2026-09-01 | §8 gains V8 (R19), V9 (R20) and V10 (R33). V3 scoped to directory-kind artifacts (R32 / DEC-9). |
+| 2026-09-20 | §8's V10 row extends the suppression to V3 (R37). **Marked pending T-11** — the register states the rule before the code emits it, per §9. |

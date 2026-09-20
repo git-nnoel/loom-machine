@@ -82,7 +82,7 @@ one. Field lists and signatures only — the specialist writes the bodies.
 |---|---|---|---|
 | **C-1** | `ArtifactFile` | `path: str` · `sha256: str` · `size: int` · `is_text: bool` | 02 judges install per path; without this it rebuilds the scanner |
 | **C-2** | `Artifact` | spec §3.2 as amended — including `frontmatter`, `is_dirty`, `files: tuple[ArtifactFile, ...]`, `findings` | every layer and every later initiative consumes it |
-| **C-3** | `ValidationFinding` | `code: ValidationCode` (closed enum, V1–V9 as of R19/R20) · `severity: ERROR \| WARNING` · `message: str` · `path: str \| None` | 04's SPA branches on the code; a string would let a rename pass silently |
+| **C-3** | `ValidationFinding` | `code: ValidationCode` (closed enum, V1–V10 as of R33; charter §8 is the register) · `severity: ERROR \| WARNING` · `message: str` · `path: str \| None` | 04's SPA branches on the code; a string would let a rename pass silently |
 | **C-4** | `ArtifactRepository` | `list_all() -> list[Artifact]` · `get(id) -> Artifact \| None` · `read_bytes(id, path) -> bytes` · `read_text(id, path) -> str` · `list_collections() -> list[Collection]` · `library_findings() -> list[ValidationFinding]`, with documented snapshot semantics | `read_bytes` is what makes binary install and zip export possible in 02/03; `read_text` alone forecloses both |
 | **C-5** | Read use-case surface | `ArtifactFilter` (typed, not `str`) · `SortKey` · `SearchResults` with `matches`, `truncated: bool`, `skipped: tuple[SkippedFile, ...]` each carrying a `SearchSkipReason`, capped at 200 · `ValidationReport` · `--json` payload shape | the CLI, the MCP server and 03's API all render from these |
 | **C-6** | Error taxonomy | one base exception · stable string codes · mapping to CLI exit codes now, HTTP status in 03 | a code is added to the contract before it is emitted |
@@ -115,6 +115,7 @@ before anything is scoped against its outcome.
 | **T-7** | Read CLI, composition root, `--json` output, loud failure on a non-library root. | cli | T-6 |
 | **T-8** | MCP server driven over real JSON-RPC frames, plus the stdout-purity test. | mcp | T-6 |
 | **T-9** | Acceptance against the real library, output recorded in the implementation record. | — | T-7, T-8 |
+| **T-10** | Corrections from acceptance: V3 scoped to directory-kind artifacts (DEC-9), V10 for unparseable frontmatter, and a lazy MCP import so every non-`mcp` command stops paying 1.3 s for an SDK it never touches. | domain + cli | T-9 |
 
 **Changed from the superseded plan:** old T-1+T-2 merged into T-2 · old T-5 (validation) moved **ahead**
 of the repository as T-3 · import contracts moved from last to first · old T-8 split into T-1, T-8 and

@@ -1,6 +1,6 @@
 # Implementation record — Store, validation, read path, MCP
 
-**Status:** Open — T-1…T-9 accepted; T-10 (corrections) is the last task
+**Status:** CLOSED — all ten tasks accepted. Initiative 01 is complete.
 **Phase:** 1 · **Initiative:** 01-store-and-read-path · **Owner:** delivery lead
 **Last updated:** 2026-08-28
 
@@ -21,7 +21,7 @@ Backward-facing: what actually shipped. The forward-facing intent is `implementa
 | **T-7** | Read CLI, composition root, exit-code table (C-6, C-8) | **Accepted** 2026-09-01 — commit `785fb74` |
 | **T-8** | Read-only stdio MCP server, four tools, `NOT_A_LIBRARY` | **Accepted** 2026-09-01 |
 | **T-9** | Acceptance against the real library | **Accepted** 2026-09-01 — commit `c5c38e8` |
-| T-10 | Corrections: V3 scope, V10, lazy MCP import | Not dispatched |
+| **T-10** | Corrections: V3 scope, V10, lazy MCP import | **Accepted** 2026-09-20 — commit `12896e1` |
 
 ## Evidence
 
@@ -79,6 +79,12 @@ Both mutations re-run by the delivery lead on the integrated tree:
 - **read-only mutation** — importing `application.write` into `mcp/tools.py` broke the `mcp-is-read-only` contract **and** failed `tests/test_architecture.py` on two assertions. Both halves fired, so the guarantee is structural rather than a promise.
 - Restored: `405 passed`, `Contracts: 3 kept, 0 broken`.
 
+**T-10 — gate re-run by the delivery lead:** exit 0, `427 passed` (up from 410).
+- **Real library, verified directly:** `hl --library ~/.claude validate` reports **7 V3** (all two redirect stubs), **1 V10**, **1 V1**. Both agents are clean; the 8 false positives are gone. `frontend-system-pattern` reports one V10 naming line 3 — the description line — with no false V5.
+- **V3 narrowing mutation, the pair that is the point of the fix:** removing the kind gate failed exactly `test_a_file_kind_artifact_citing_another_artifacts_reference_reports_nothing` and `test_a_file_kind_artifact_citing_a_skills_reference_is_not_a_v3`, while every directory-kind V3 test **stayed green**. The rule was narrowed, not gutted.
+- **Import cost:** 1811 ms → 534 ms, 115 MCP modules → 0, asserted on the module set rather than elapsed time.
+- **Delivery-lead error, recorded:** I diagnosed the interrupted tree as "tests written, feature not implemented". It was in fact frozen **mid-mutation-check** — the mutation deletes exactly the kind gate's two lines, and `pytest` was OOM-killed (exit 137) before the restore. All three fixes were already complete. An interrupted mutation manufactures the failure signature of half-built work; see lesson L35.
+
 ## Rulings (R-N)
 
 Every boundary call, numbered. Specialists do not read this file — the delivery lead carries each
@@ -94,6 +100,7 @@ binding ruling into the dispatch prompt in their own words.
 | **R6** | 2026-08-28 | **Symlinks are skipped and reported** as a V6 warning. Never followed, never hashed, never installed. A link resolving outside the artifact root is how a copy writes outside its target, and initiative 02 writes into `~/.claude`. | T-3, T-5; **initiative 02** |
 | **R7** | 2026-08-28 | **`--json` is contract; human columnar output is not.** Tests assert the JSON payload, never substrings of the human format. Initiative 04 consumes the API or `--json`, never the columnar text. | T-7 |
 | **R8** | 2026-08-28 | **Superseded artifacts appear in the default listing**, ranked below their successors, carrying `superseded_by` in every payload. `include_superseded` defaults true. Hiding them would make a redirect stub invisible, which is the opposite of why supersession is first-class. | T-6, T-8 |
+| **R34** | 2026-09-20 | **`skill/synced` is a genuine V1, not a false positive.** `~/.claude/skills/synced/` is Claude Code's own skill-sync bucket, which appeared after T-9's acceptance: a `.bucket-<uuid>` marker beside a `<uuid>_<uuid>/` directory holding roughly 25 skills two levels down. To the scanner it is one directory-kind artifact with no `SKILL.md`, so V1 fires correctly on content nobody authored as an artifact. **Initiative 02 must decide what install does with it** — it is in the target tree and is not ours. | initiative 02 |
 | **R32** | 2026-09-20 | **V3 applies only to DIRECTORY-kind artifacts, resolving citations against the artifact's own files.** References belong to the skill that owns them, exactly as the directory structure already models. A single-file artifact cannot own a `references/` folder, so a citation in one is prose about another artifact. **Supersedes an earlier answer of library-wide resolution**, which was given but never recorded and never implemented — nothing shipped on it. The user proposed this model and it is better on both axes: it preserves precision a library-wide index would lose (a typo colliding with another skill's filename would pass), and it costs a one-line kind gate instead of a new cross-artifact pass. On the real library: 15 findings → 7, and → 0 once the two redirect stubs declare supersession in `library.yaml`. | T-10 |
 | **R33** | 2026-09-20 | **V10: unparseable frontmatter is its own ERROR, and suppresses the V2/V5 cascade behind it.** The file genuinely is malformed YAML — a plain scalar cannot contain `": "` — so flagging it is correct; the defect was reporting `required frontmatter key 'name' is missing` about a file whose second line is `name:`. **Rejected: matching Claude Code's leniency.** That parser is undocumented, so we would be guessing at it and re-guessing on every change, and a lenient reader silently accepts files that break the moment anything strict reads them. Stays ERROR rather than WARNING: it works today only by the runtime's forgiveness, and the fix is one pair of quotes. | T-10 |
 | **R30** | 2026-09-01 | **T-8 was right to read SCOPE over CONSTRAINTS on `cli/composition.py`.** My prompt required it to make `LibraryRootError` a `HarnessLibraryError`, then omitted the file that class lives in from the permitted list. It made the minimal edit, propagated the one consequence (`_run`'s now-redundant `except` branch, which would otherwise have reported `code: null` for a condition that now has a code), and flagged both plainly rather than silently. Accepted. The prompt was internally inconsistent; that is my defect. | every task |
@@ -143,6 +150,7 @@ binding ruling into the dispatch prompt in their own words.
 | Scan-cost measurement | Plan §2 Deferred; measure at T-9 |
 | **A symlinked artifact *root* is skipped silently.** Not followed (R6) and not scanned, so a symlinked skill that would load perfectly is absent from the library with no diagnostic. Silent omission is the failure this product exists to eliminate, so this is a real gap — but no rule covers it, and inventing a decorative charter row is worse. | **Decision point at T-9.** Either a new rule with an implementation in the same change, or an explicit recorded "won't fix" for initiative 02. Not left to a task. |
 | **F-3's 184 KB HTML asset is not in the committed fixture library.** The acceptance criterion names it, but only the real library has it. T-9 runs against both and must cover it there, or the criterion is untested. | **T-9** |
+| **Widening V10's suppression to V3.** A directory-kind redirect stub whose frontmatter fails to parse declares no `superseded_by` through R15's fallback, so in a library with no `library.yaml` the exemption is lost and V3 floods — the exact case charter §8 carves out, reopened by one unquoted colon. Latent today (both stubs parse). My recommendation: widen it, on R33's own logic — when the block did not parse we cannot evaluate a rule that depends on it. **User decision, not taken.** | initiative 02, or a one-line correction whenever wanted |
 | Unparseable frontmatter fires V5 (entry declares nothing) rather than a dedicated code | Acceptable; revisit if a user hits it and the message misleads |
 | `mcp` pulls `starlette`/`uvicorn`/`sse-starlette` transitively — an HTTP stack is present in the venv that T-8 must not touch | Lesson L11, bound to T-8 |
 | No `py.typed` marker in `src/harness_library/` | Not needed while nothing imports the library externally; revisit if initiative 03 or 04 consumes it as a package |

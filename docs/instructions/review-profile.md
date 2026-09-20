@@ -22,6 +22,11 @@ against it with confidence.
 | Tests | `tests/{domain,application,infrastructure,cli,mcp}/`, `tests/fixtures/` | `ls tests/` |
 | Fixture library | `tests/fixtures/library/` — the regression suite; **never deleted** | charter §10 |
 
+**Deliberate deviations from `plan-formats.md` §3 — do not report these as defects:**
+- **No phase `README.md` initiative log.** One phase, one closed initiative; the root `README.md` carries the map. Add one when phase 1 holds a second initiative.
+- **No `_template/`.** Templates are copied from the closed initiative 01 documents, which are the worked example.
+- **`docs/plans/2026-08-28-store-and-read-path.md` sits outside the tree.** The superseded original plan, kept because the backend review cites it by task number throughout. It carries a SUPERSEDED banner and is never implemented from.
+
 **Spec files this project does NOT have**, and must not be reported as missing: `domain-model.md`,
 `api-specification.md`, `architecture-handbook.md`, `verification.md`, `ui-specification.md`,
 `copy-deck.md`, `technical-specification.md`, `authority-model.md`, `integration-map.md`, `glossary.md`,
@@ -32,7 +37,9 @@ no frontend territory**; initiative 04 opens one.
 
 1. `docs/specs/2026-08-28-harness-library-design.md` — behaviour, the locked decisions D1–D8, the data model.
 2. *(no brand reference; no mockups)*
-3. `docs/instructions/backend-charter.md` — how this team builds. §8's rule register is the authority on validation rules.
+3. `docs/instructions/backend-charter.md` — how this team builds. §8's rule register is the operational authority on validation rules.
+
+**Live divergence, 2026-09-20 — do not read charter §8 as settled precedence over the spec.** Charter §8 carries V1–V10 and V3 scoped to directory-kind; spec §4 still lists V1–V7 with V3 unqualified, and spec §7.3/§14 still say `skipped_binary`. The charter is ahead because the rulings landed there first. **The spec is precedence 1 and is owed six amendments** (record, Carried forward). Until they land, a charter-versus-spec difference on a validation rule is a known gap, not a new finding.
 4. The initiative plan and record — derived.
 
 **This is a contract-first project.** C-1…C-8 are frozen in the initiative plan §6 and initiatives

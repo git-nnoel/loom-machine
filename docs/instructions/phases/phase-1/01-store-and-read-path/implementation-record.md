@@ -1,6 +1,6 @@
 # Implementation record — Store, validation, read path, MCP
 
-**Status:** Open — T-1…T-8 accepted; T-9 (acceptance) is the last task
+**Status:** Open — T-1…T-9 accepted; T-10 (corrections) is the last task
 **Phase:** 1 · **Initiative:** 01-store-and-read-path · **Owner:** delivery lead
 **Last updated:** 2026-08-28
 
@@ -20,7 +20,8 @@ Backward-facing: what actually shipped. The forward-facing intent is `implementa
 | **T-6** | Read use cases, wire DTOs (C-5, C-7), error codes | **Accepted** 2026-09-01 |
 | **T-7** | Read CLI, composition root, exit-code table (C-6, C-8) | **Accepted** 2026-09-01 — commit `785fb74` |
 | **T-8** | Read-only stdio MCP server, four tools, `NOT_A_LIBRARY` | **Accepted** 2026-09-01 |
-| T-9 | Acceptance against the real library | Not dispatched |
+| **T-9** | Acceptance against the real library | **Accepted** 2026-09-01 — commit `c5c38e8` |
+| T-10 | Corrections: V3 scope, V10, lazy MCP import | Not dispatched |
 
 ## Evidence
 
@@ -93,6 +94,8 @@ binding ruling into the dispatch prompt in their own words.
 | **R6** | 2026-08-28 | **Symlinks are skipped and reported** as a V6 warning. Never followed, never hashed, never installed. A link resolving outside the artifact root is how a copy writes outside its target, and initiative 02 writes into `~/.claude`. | T-3, T-5; **initiative 02** |
 | **R7** | 2026-08-28 | **`--json` is contract; human columnar output is not.** Tests assert the JSON payload, never substrings of the human format. Initiative 04 consumes the API or `--json`, never the columnar text. | T-7 |
 | **R8** | 2026-08-28 | **Superseded artifacts appear in the default listing**, ranked below their successors, carrying `superseded_by` in every payload. `include_superseded` defaults true. Hiding them would make a redirect stub invisible, which is the opposite of why supersession is first-class. | T-6, T-8 |
+| **R32** | 2026-09-20 | **V3 applies only to DIRECTORY-kind artifacts, resolving citations against the artifact's own files.** References belong to the skill that owns them, exactly as the directory structure already models. A single-file artifact cannot own a `references/` folder, so a citation in one is prose about another artifact. **Supersedes an earlier answer of library-wide resolution**, which was given but never recorded and never implemented — nothing shipped on it. The user proposed this model and it is better on both axes: it preserves precision a library-wide index would lose (a typo colliding with another skill's filename would pass), and it costs a one-line kind gate instead of a new cross-artifact pass. On the real library: 15 findings → 7, and → 0 once the two redirect stubs declare supersession in `library.yaml`. | T-10 |
+| **R33** | 2026-09-20 | **V10: unparseable frontmatter is its own ERROR, and suppresses the V2/V5 cascade behind it.** The file genuinely is malformed YAML — a plain scalar cannot contain `": "` — so flagging it is correct; the defect was reporting `required frontmatter key 'name' is missing` about a file whose second line is `name:`. **Rejected: matching Claude Code's leniency.** That parser is undocumented, so we would be guessing at it and re-guessing on every change, and a lenient reader silently accepts files that break the moment anything strict reads them. Stays ERROR rather than WARNING: it works today only by the runtime's forgiveness, and the fix is one pair of quotes. | T-10 |
 | **R30** | 2026-09-01 | **T-8 was right to read SCOPE over CONSTRAINTS on `cli/composition.py`.** My prompt required it to make `LibraryRootError` a `HarnessLibraryError`, then omitted the file that class lives in from the permitted list. It made the minimal edit, propagated the one consequence (`_run`'s now-redundant `except` branch, which would otherwise have reported `code: null` for a condition that now has a code), and flagged both plainly rather than silently. Accepted. The prompt was internally inconsistent; that is my defect. | every task |
 | **R31** | 2026-09-01 | **`[project.scripts] hl` is declared.** T-7 wrote it; my `git restore` of a broken TOML edit reverted it while it was still uncommitted, and my re-apply failed to match without my noticing — so the T-7 commit message claiming it was in the diff was **false**, and no `hl` binary existed. My hand-verification of the CLI had passed against a stale installed entry point, which is verification of nothing. Found and reported by T-8. Fixed and verified. | initiative 03 |
 | **R28** | 2026-09-01 | **`cli` sits ABOVE `mcp` in the layer contract**; they are no longer independent siblings. `cli/` owns the process entry point and the composition root, and hands `mcp/` a ready repository — a real hierarchy, not a fudge to get an import through. This keeps R2 (one environment reader) and C-8 (one root resolver) true across both adapters. My defect: T-7's brief told it that T-8 would register `hl mcp` into `cli/main.py`, which the contract forbade. It probed with a throwaway import before writing any code, reported, and built for this resolution rather than working around it. | T-8, initiative 03 |

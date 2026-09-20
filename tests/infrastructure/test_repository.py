@@ -23,6 +23,7 @@ from pathlib import Path
 
 import pytest
 
+from harness_library.domain.artifact import Artifact
 from harness_library.domain.assembly import cited_reference_paths
 from harness_library.domain.errors import LibraryYamlError
 from harness_library.domain.repository import ArtifactRepository
@@ -41,6 +42,13 @@ def codes(repository: FilesystemArtifactRepository, artifact_id: str) -> list[Va
     artifact = repository.get(artifact_id)
     assert artifact is not None, f"{artifact_id} is missing from the scan"
     return [finding.code for finding in artifact.findings]
+
+
+def _artifact(repository: FilesystemArtifactRepository, artifact_id: str) -> Artifact:
+    """One artifact from the scan, failing loudly rather than returning `None` into an assertion."""
+    artifact = repository.get(artifact_id)
+    assert artifact is not None, f"{artifact_id} is missing from the scan"
+    return artifact
 
 
 @pytest.fixture
@@ -567,15 +575,17 @@ though both keys are plainly present to a human reader.
 """
 
 
-def test_a_colon_in_an_unquoted_description_loses_the_whole_frontmatter(tmp_path: Path) -> None:
-    """Characterisation, not endorsement: this is what the software does today, and T-9 found it
-    doing it to real content on the first run.
+def test_a_colon_in_an_unquoted_description_is_one_v10_and_no_false_v5(tmp_path: Path) -> None:
+    """Named in advance as the assertion that MUST FAIL when the V2/V5 cascade is let through.
 
-    `_parse_entry` treats any parse failure as "this document declares nothing", so a single
-    unquoted `": "` inside a description silently discards `name` and `description` together. The
-    user then reads *required frontmatter key 'name' is missing* about a file whose second line is
-    `name:`, which is a true finding with a false diagnosis. Pinned so that a future dedicated code
-    for "unparseable frontmatter" changes this test deliberately rather than by accident.
+    T-9 pinned this same file as `..._loses_the_whole_frontmatter`, characterising the defect: two
+    V5 ERRORs saying `required frontmatter key 'name' is missing` about a document whose second line
+    is `name: frontend-system-pattern`. Both were false and neither was actionable. Ruling R33
+    replaced them with one V10 carrying the parser's own complaint and its position.
+
+    The whole path is exercised here and nowhere else: real bytes on disk, a real PyYAML failure, a
+    real position, through the scanner and the repository to an assembled finding. The domain suite
+    can only prove that a recorded `EntryParseError` becomes a V10.
     """
     write_skill(tmp_path, "frontend-system-pattern", frontmatter=UNQUOTED_COLON_FRONTMATTER)
 
@@ -583,18 +593,52 @@ def test_a_colon_in_an_unquoted_description_loses_the_whole_frontmatter(tmp_path
     artifact = repository.get("skill/frontend-system-pattern")
 
     assert artifact is not None
-    assert codes(repository, "skill/frontend-system-pattern") == [
-        ValidationCode.V5,
-        ValidationCode.V5,
-    ]
+    assert codes(repository, "skill/frontend-system-pattern") == [ValidationCode.V10]
+    assert artifact.is_valid is False
+
+    (finding,) = artifact.findings
+    assert finding.severity is Severity.ERROR
+    assert finding.path == "SKILL.md"
+    assert "mapping values are not allowed in this context" in finding.message, (
+        "the parser's own sentence, not a paraphrase: it is what the user searches for"
+    )
+    assert "line 3, column" in finding.message, (
+        "the position is the *document's*, and line 3 is the description — the line the user opens"
+    )
+
     assert artifact.description is None
     assert dict(artifact.frontmatter) == {}
 
 
-def test_quoting_the_same_description_makes_the_artifact_clean(tmp_path: Path) -> None:
-    """The positive control for the test above.
+def test_the_reported_position_is_the_line_of_the_offending_character(tmp_path: Path) -> None:
+    """The alignment between the parser's coordinates and the document's, pinned as a golden
+    literal on a block deep enough that an off-by-one cannot hide (L12).
 
-    Without it, "two V5 findings" would be indistinguishable from a helper that never writes usable
+    `python-frontmatter` hands the parser everything after the opening `---`, leaving a blank first
+    line where that delimiter stood, so the two numbering schemes coincide. That is a property of
+    the library rather than of our code, which is exactly why it is asserted against real bytes
+    instead of recomputed from an offset that would agree with itself forever.
+    """
+    header = (
+        "name: deep\n"
+        "tags: [a, b]\n"
+        "owner: someone\n"
+        "description: Covers every brand: the project's reference is the authority"
+    )
+    write_skill(tmp_path, "deep", frontmatter=header)
+
+    (finding,) = _artifact(open_library(tmp_path), "skill/deep").findings
+
+    assert finding.code is ValidationCode.V10
+    assert "line 5, column 32" in finding.message, (
+        "line 5 of the file is the description; the document and the parser must agree"
+    )
+
+
+def test_quoting_the_same_description_makes_the_artifact_clean(tmp_path: Path) -> None:
+    """The positive control T-9 wrote for the test above, kept and still load-bearing.
+
+    Without it, "one V10" would be indistinguishable from a helper that never writes usable
     frontmatter at all. One character — the quoting — is the whole difference.
     """
     quoted = (
@@ -611,3 +655,62 @@ def test_quoting_the_same_description_makes_the_artifact_clean(tmp_path: Path) -
     assert artifact.findings == ()
     assert artifact.description is not None
     assert "Covers every brand:" in artifact.description
+
+
+def test_a_document_that_parses_but_omits_a_key_still_reports_v5(tmp_path: Path) -> None:
+    """Named in advance as the assertion that MUST STAY GREEN when the cascade is let through.
+
+    V10's suppression is conditional on the parse having failed, never unconditional. A well-formed
+    block that genuinely omits a required key is the case V5 exists for, and it must survive the
+    rule that silences V5 next door.
+    """
+    write_skill(tmp_path, "keyless", frontmatter="name: keyless")
+
+    artifact = _artifact(open_library(tmp_path), "skill/keyless")
+
+    assert [f.code for f in artifact.findings] == [ValidationCode.V5]
+    assert "description" in artifact.findings[0].message
+    assert ValidationCode.V10 not in [f.code for f in artifact.findings]
+
+
+def test_a_file_kind_artifact_citing_a_skills_reference_is_not_a_v3(tmp_path: Path) -> None:
+    """Ruling R32 through the whole stack, against real bytes: the agent really is one file on disk,
+    and the skill it points at really does hold the path it cites.
+
+    The domain suite proves the kind gate from a literal. Only here is the premise itself real —
+    that the scanner cannot produce a `references/…` path for a FILE-kind artifact, because that
+    artifact *is* its entry document.
+    """
+    write(
+        tmp_path / "agents" / "backend-developer-specialist.md",
+        "---\nname: backend-developer-specialist\ndescription: backend work\n---\n\n"
+        "Read `references/persistence.md` in the backend-system-architecture skill.\n",
+    )
+    write_skill(tmp_path, "backend-system-architecture", body="The skill that owns them.")
+    write(
+        tmp_path / "skills" / "backend-system-architecture" / "references" / "persistence.md", "#"
+    )
+
+    repository = open_library(tmp_path)
+    agent = _artifact(repository, "agent/backend-developer-specialist")
+
+    assert [file.path for file in agent.files] == ["backend-developer-specialist.md"], (
+        "the premise, on a real filesystem: one file, named after the artifact"
+    )
+    assert agent.findings == ()
+    assert agent.is_valid is True
+
+
+def test_a_directory_kind_artifact_citing_a_missing_reference_is_still_a_v3(tmp_path: Path) -> None:
+    """The partner that must stay green: identical citation, directory-kind, file absent. V3 was
+    narrowed, not removed, and this is where that is visible against real files."""
+    write_skill(
+        tmp_path,
+        "backend-system-architecture",
+        body="Read `references/persistence.md` before touching a query.",
+    )
+
+    artifact = _artifact(open_library(tmp_path), "skill/backend-system-architecture")
+
+    assert [f.code for f in artifact.findings] == [ValidationCode.V3]
+    assert artifact.findings[0].path == "references/persistence.md"

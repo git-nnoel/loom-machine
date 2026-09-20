@@ -1,4 +1,4 @@
-"""Charter §8's validation register, as pure functions. Every rule V1-V9 lives here.
+"""Charter §8's validation register, as pure functions. Every rule V1-V10 lives here.
 
 This module is the reason the initiative was recut (DEC-1). The superseded plan built the repository
 first and retrofitted validation into it, so two of eight tasks existed only to reopen a third. Here
@@ -10,7 +10,7 @@ loaded, a skill documenting another skill's path, references cited into an empty
 swap files destroyed by a copy. Charter §8 is the register; this is its enforcement.
 
 **Two levels, because two rules need more than one artifact.** `assemble_artifact` decides
-everything that is a property of a single artifact root: V1, V2, V3, V5, V6. `assemble_library`
+everything that is a property of a single artifact root: V1, V2, V3, V5, V6, V10. `assemble_library`
 runs it over the whole scan and then answers the questions that need the set of ids that exist:
 V4 (`superseded_by` resolves), V7 (a `library.yaml` entry or a collection member resolves), V8 (two
 names collide case-insensitively) and V9 (`library.yaml` declares a key twice).
@@ -32,7 +32,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from typing import Any
 
-from harness_library.domain.artifact import Artifact
+from harness_library.domain.artifact import Artifact, ArtifactKind
 from harness_library.domain.hashing import content_hash_of_files
 from harness_library.domain.metadata import LibraryMetadata
 from harness_library.domain.raw import RawArtifact, RawEntry, SkipReason
@@ -100,14 +100,20 @@ def assemble_library(raws: Iterable[RawArtifact], metadata: LibraryMetadata) -> 
 def assemble_artifact(raw: RawArtifact, metadata: LibraryMetadata) -> Artifact:
     """Turn one scanned root into an `Artifact` carrying its findings.
 
-    Implements V1, V2, V3, V5 and V6 — every rule decidable without seeing the rest of the library.
-    V4 needs the set of ids that exist and is applied by `assemble_library`.
+    Implements V1, V2, V3, V5, V6 and V10 — every rule decidable without seeing the rest of the
+    library. V4 needs the set of ids that exist and is applied by `assemble_library`.
+
+    **Two rules suppress others, and both suppressions are conditional.** V1 silences V5, because a
+    document that is not there cannot be missing a key in any way worth three findings; V10 silences
+    V2 and V5, because a frontmatter block that did not parse supports no claim about its keys at
+    all (R33). Neither is a blanket skip: remove the cause and the dependent rules fire again.
     """
     declared = metadata.for_artifact(raw.id)
     superseded_by = _resolve_superseded_by(raw.entry, declared.superseded_by)
 
     findings: list[ValidationFinding] = []
     findings.extend(_check_v1(raw))
+    findings.extend(_check_v10(raw))
     findings.extend(_check_v5(raw))
     findings.extend(_check_v2(raw))
     findings.extend(_check_v3(raw, superseded_by))
@@ -162,8 +168,11 @@ def _check_v2(raw: RawArtifact) -> list[ValidationFinding]:
     missing key and a disagreement makes the report read as two faults. Compared case-sensitively,
     charter §7 — the install target's filesystem may disagree with this one about whether two names
     are the same path.
+
+    Silent too when the frontmatter did not parse, which is V10's fault (R33). This rule compares a
+    declared name against the directory; after a parse failure nothing was declared to compare.
     """
-    if raw.entry is None:
+    if raw.entry is None or raw.entry.parse_error is not None:
         return []
     declared = _text_or_none(raw.entry.frontmatter.get("name"))
     if declared is None or declared == raw.name:
@@ -180,6 +189,18 @@ def _check_v2(raw: RawArtifact) -> list[ValidationFinding]:
 def _check_v3(raw: RawArtifact, superseded_by: str | None) -> list[ValidationFinding]:
     """V3 — the entry body cites a `references/…` path that the artifact does not contain.
 
+    **DIRECTORY-kind artifacts only** (ruling R32, DEC-9). References belong to the skill that owns
+    them, exactly as `skills/<name>/references/` models on disk. A FILE-kind artifact *is* its entry
+    document — its one `ArtifactFile.path` is its own basename — so it can never own a `references/`
+    folder, and a citation inside one is prose about *another* artifact's files rather than a claim
+    about its own. Without the gate the `cited not in present` test below is unconditionally true
+    for every FILE-kind artifact, which is not a strict rule but an unreachable one: T-9 acceptance
+    measured it firing eight times on the real library with zero true positives, permanently
+    invalidating both agents for citing paths that all exist under the skills they point at.
+
+    This narrows the rule's scope and keeps its teeth. The failure that justified V3 — a skill
+    citing references into its own empty directory — is a DIRECTORY-kind artifact and still fires.
+
     **Exempt while `superseded_by` is set** (charter §8, L5). A redirect stub's whole body is prose
     about its successor, including that successor's reference paths; on the real library the two
     stubs cite seven such paths between them, and every one of them is correct prose rather than a
@@ -188,6 +209,8 @@ def _check_v3(raw: RawArtifact, superseded_by: str | None) -> list[ValidationFin
     Citations are deduplicated and reported in first-appearance order, so a body that mentions the
     same missing path twice is one fault, not two.
     """
+    if raw.kind is not ArtifactKind.DIRECTORY:
+        return []
     if raw.entry is None or superseded_by is not None:
         return []
     present = raw.file_paths
@@ -224,8 +247,16 @@ def _check_v5(raw: RawArtifact) -> list[ValidationFinding]:
 
     The key list belongs to the type registry, not here. Silent when V1 fired: a missing entry
     document means every required key is missing, and reporting one fault as three buries it.
+
+    **Silent when V10 fired** (ruling R33), for a sharper reason than tidiness. V5 asserts that a
+    key is absent from the document. When the frontmatter block failed to parse, the empty mapping
+    is not evidence of absence — it is the absence of evidence, and the real library proved the
+    difference: `frontend-system-pattern`'s second line is `name: frontend-system-pattern` and this
+    rule reported that key missing. A finding the user can verify is false with their own eyes
+    teaches them to distrust the whole report. The suppression is **conditional on the parse having
+    failed**, never unconditional: a well-formed document that genuinely lacks a key still fires.
     """
-    if raw.entry is None:
+    if raw.entry is None or raw.entry.parse_error is not None:
         return []
     frontmatter = raw.entry.frontmatter
     return [
@@ -340,6 +371,39 @@ def _with_v8(artifact: Artifact, group: list[str]) -> Artifact:
     return replace(artifact, findings=(*artifact.findings, finding))
 
 
+def _check_v10(raw: RawArtifact) -> list[ValidationFinding]:
+    """V10 — the entry document's frontmatter block did not parse (ruling R33).
+
+    The document is there and its body is readable, so V1 would be a lie; but nothing it declares
+    was understood, so every rule about its keys has nothing to stand on. This says that in one
+    finding, **carrying the parser's own message and position** rather than a paraphrase: the user
+    has to find one character in their own file, and `line 3, column 255` is the only part of the
+    report that locates it.
+
+    Observed on the real library at the first run against content nobody designed for. A single
+    unquoted `": "` inside a description made a plain YAML scalar unparseable, and the tool told
+    the user that `name` and `description` were missing from a file whose second line is
+    `name: frontend-system-pattern`. Both messages were false and neither was actionable.
+
+    Claude Code's own loader reads that same file successfully, so a leniency to match it was
+    considered and rejected (R33): that parser is undocumented, and a lenient reader silently
+    accepts files that break the moment anything strict reads them.
+    """
+    if raw.entry is None or raw.entry.parse_error is None:
+        return []
+    failure = raw.entry.parse_error
+    position = failure.position
+    return [
+        ValidationFinding.for_code(
+            ValidationCode.V10,
+            f"the frontmatter of {raw.entry_path} does not parse"
+            + (f" at {position}" if position else "")
+            + f": {failure.message}",
+            raw.entry_path,
+        )
+    ]
+
+
 def _check_v9(metadata: LibraryMetadata) -> tuple[ValidationFinding, ...]:
     """V9 — `library.yaml` declares the same key twice.
 
@@ -387,6 +451,13 @@ def _resolve_superseded_by(entry: RawEntry | None, declared: str | None) -> str 
     library with no `library.yaml` at all still has stubs — without the fallback, V3 would flood
     exactly the case charter §8 carves out. An unparseable value is ignored rather than raised on:
     it is user-authored data, and V4 reports it as unresolvable.
+
+    **The interaction V10 does not close.** A stub whose frontmatter fails to parse declares no
+    `superseded_by` here, so a library with no `library.yaml` loses the exemption and V3 floods —
+    the precise case charter §8 carves out, reopened by one unquoted colon. V10 now names the real
+    cause in the same report, which is the difference between a confusing report and a misleading
+    one, but it does not restore the exemption. Charter §8 scopes V10's suppression to V2 and V5;
+    widening it to V3 is a register change and belongs to the delivery lead.
     """
     if declared is not None:
         return declared

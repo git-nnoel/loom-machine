@@ -48,7 +48,6 @@ from harness_library.cli.logging import configure_logging
 from harness_library.domain.errors import HarnessLibraryError
 from harness_library.domain.identity import ArtifactType
 from harness_library.domain.repository import ArtifactRepository
-from harness_library.mcp import serve_stdio
 
 app = typer.Typer(
     name="hl",
@@ -231,7 +230,18 @@ def mcp_command(ctx: typer.Context) -> None:
     Composition happens here, above `mcp/`: the library is resolved by contract C-8's precedence
     like every other command and handed in ready, so the server cannot be pointed at a different
     library from the one `hl list` shows (ruling R28).
+
+    **The import is deferred into the body on purpose**, and it is the only one in this module that
+    is. The MCP SDK costs ~1.3 s to import and this is the only command that touches it; at module
+    scope every `hl list`, `hl show`, `hl search`, `hl validate` and `hl collections` paid for it
+    too. T-9 measured the whole of `hl list` at 2.2 s against a 16 ms scan, so 99 % of what a user
+    waited for was an import for a command they had not run. Deferring it is invisible to `hl mcp`,
+    which pays the same cost either way, and the layer contract is unmoved: `cli` sits above `mcp`
+    (R28) whether the import is written here or at the top of the file, and `import-linter` reads
+    both.
     """
+    from harness_library.mcp import serve_stdio
+
     with _run(as_json=False):
         serve_stdio(_open(ctx))
 

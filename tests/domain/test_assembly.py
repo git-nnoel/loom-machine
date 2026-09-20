@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from harness_library.domain.artifact import Artifact, ArtifactFile
+from harness_library.domain.artifact import Artifact, ArtifactFile, ArtifactKind
 from harness_library.domain.assembly import (
     assemble_artifact,
     assemble_library,
@@ -26,7 +26,13 @@ from harness_library.domain.metadata import (
     DuplicateKey,
     LibraryMetadata,
 )
-from harness_library.domain.raw import RawArtifact, RawEntry, SkippedPath, SkipReason
+from harness_library.domain.raw import (
+    EntryParseError,
+    RawArtifact,
+    RawEntry,
+    SkippedPath,
+    SkipReason,
+)
 from harness_library.domain.validation import Severity, ValidationCode
 
 SCANNED_AT = datetime(2026, 8, 31, 12, 0, tzinfo=UTC)
@@ -750,6 +756,7 @@ def test_every_finding_takes_its_severity_from_the_register() -> None:
                 skipped=(SkippedPath("SKILL.md.swp", SkipReason.EDITOR_SWAP),),
             ),
             raw_skill("Backend-Charter", body=LIVE_BODY),
+            raw_unparseable_skill("unreadable-header"),
         ],
         metadata,
     )
@@ -757,14 +764,14 @@ def test_every_finding_takes_its_severity_from_the_register() -> None:
     emitted = {finding.code for artifact in library.artifacts for finding in artifact.findings} | {
         finding.code for finding in library.findings
     }
-    assert emitted == set(ValidationCode), "every rule V1-V9 must be reachable from this layer"
+    assert emitted == set(ValidationCode), "every rule V1-V10 must be reachable from this layer"
 
     for finding in [f for a in library.artifacts for f in a.findings] + list(library.findings):
         assert finding.severity is finding.code.severity
 
 
 # ==============================================================================================
-# V3 against a FILE-kind artifact — observed on the real library during T-9 acceptance
+# V3's scope — DIRECTORY-kind artifacts only (ruling R32, DEC-9)
 # ==============================================================================================
 
 CROSS_ARTIFACT_BODY = """
@@ -789,32 +796,58 @@ def raw_agent(name: str, *, body: str) -> RawArtifact:
     )
 
 
-def test_a_file_kind_artifact_cannot_satisfy_v3_for_any_citation() -> None:
-    """Characterisation, not endorsement. T-9 found this firing eight times on real content, and
-    every one of the eight paths exists — under the *skill* the agent points at.
+def test_a_file_kind_artifact_citing_another_artifacts_reference_reports_nothing() -> None:
+    """Named in advance as the assertion that MUST FAIL when V3 is re-enabled for FILE-kind
+    artifacts.
 
-    The finding is structural rather than incidental: a FILE-kind artifact holds exactly one file,
-    its own basename, so `raw.file_paths` can never contain a `references/…` path and the
-    `cited not in present` test in V3 is unconditionally true. The rule therefore has no reachable
-    passing case here, which is asserted below rather than inferred.
+    Ruling R32: references belong to the skill that owns them. A FILE-kind artifact holds exactly
+    one file, its own basename, so `raw.file_paths` can never contain a `references/…` path — a
+    citation inside one is prose about another artifact's files, never a claim about its own.
+
+    T-9 pinned the opposite of this as
+    `test_a_file_kind_artifact_cannot_satisfy_v3_for_any_citation`, deliberately characterising the
+    defect rather than fixing it. That test is this one, re-aimed at the corrected behaviour: on the
+    real library the rule fired eight times against the two agents, and every one of the eight cited
+    paths exists under the skill the agent points at.
     """
     raw = raw_agent("backend-developer-specialist", body=CROSS_ARTIFACT_BODY)
 
     assert raw.file_paths == {"backend-developer-specialist.md"}, (
         "the premise: a FILE-kind artifact has one file and it is not under references/"
     )
-    assert not any(path.startswith("references/") for path in raw.file_paths)
+    assert cited_reference_paths(raw.entry.body if raw.entry else "") == (
+        "references/persistence.md",
+    ), "positive control: the body really does cite a reference path, so there is something to skip"
 
     assembled = assemble_artifact(raw, NO_METADATA)
+
+    assert findings_for(assembled, ValidationCode.V3) == []
+    assert assembled.findings == ()
+    assert assembled.is_valid is True
+
+
+def test_a_directory_kind_artifact_citing_the_same_path_still_reports_v3() -> None:
+    """Named in advance as the assertion that MUST STAY GREEN under the same mutation. **This pair
+    is the point of the whole fix**: identical prose, identical citation, neither artifact holding
+    the file, and the only difference is the kind.
+
+    If this reddens alongside its partner, V3 was gutted rather than narrowed — the failure that
+    justified the rule is a skill citing references into its own empty directory, and that is
+    exactly the artifact below.
+    """
+    assembled = assemble_artifact(
+        raw_skill("backend-system-architecture", body=CROSS_ARTIFACT_BODY), NO_METADATA
+    )
 
     assert findings_for(assembled, ValidationCode.V3) == ["references/persistence.md"]
     assert assembled.is_valid is False
 
 
 def test_a_file_kind_artifact_citing_nothing_is_clean() -> None:
-    """The positive control. Without it, the test above is satisfied by an agent that is invalid
-    for some unrelated reason, and "V3 always fires" would be unfalsifiable.
-    """
+    """The positive control T-9 wrote for the characterisation, kept and still load-bearing: it
+    proves `raw_agent` is capable of producing a clean artifact, so the empty finding list above is
+    evidence that V3 was skipped rather than an agent that happens to be invalid for some other
+    reason."""
     assembled = assemble_artifact(
         raw_agent("frontend-developer-specialist", body="Prose with no citation."), NO_METADATA
     )
@@ -824,8 +857,8 @@ def test_a_file_kind_artifact_citing_nothing_is_clean() -> None:
 
 
 def test_a_directory_kind_artifact_citing_the_same_path_can_be_clean() -> None:
-    """The contrast that makes the structural claim concrete: identical prose, identical citation,
-    and the only difference is that a DIRECTORY-kind artifact *can* hold the file."""
+    """The contrast that keeps the narrowing honest: a DIRECTORY-kind artifact *can* hold the file,
+    and when it does the rule is silent. V3 is still a rule with two outcomes here, not a skip."""
     assembled = assemble_artifact(
         raw_skill(
             "backend-system-architecture",
@@ -836,3 +869,132 @@ def test_a_directory_kind_artifact_citing_the_same_path_can_be_clean() -> None:
     )
 
     assert ValidationCode.V3 not in codes(assembled)
+
+
+def test_the_kinds_the_gate_reads_come_from_the_registry() -> None:
+    """The gate is `raw.kind`, which the registry decides. Asserted rather than assumed, so a future
+    type whose kind changes cannot quietly move in or out of V3's scope without this failing."""
+    assert raw_skill("delivery-lead").kind is ArtifactKind.DIRECTORY
+    assert raw_agent("scribe", body="prose").kind is ArtifactKind.FILE
+
+
+# ==============================================================================================
+# V10 — the entry document's frontmatter does not parse (ruling R33)
+# ==============================================================================================
+
+UNPARSEABLE = EntryParseError(
+    message="mapping values are not allowed in this context", line=3, column=255
+)
+"""The exact failure `~/.claude/skills/frontend-system-pattern/SKILL.md` produces."""
+
+
+def raw_unparseable_skill(
+    name: str = "frontend-system-pattern", *, body: str = "Prose."
+) -> RawArtifact:
+    """A skill whose frontmatter block did not parse.
+
+    `frontmatter` is empty **and** `parse_error` is set — which is the distinction V10 exists to
+    make. An empty mapping alone would be "this document declares nothing"; with the error beside it
+    the mapping says nothing at all, and no rule may read absence out of it.
+    """
+    return RawArtifact(
+        type=ArtifactType.SKILL,
+        name=name,
+        updated_at=SCANNED_AT,
+        files=(artifact_file("SKILL.md"),),
+        entry=RawEntry(frontmatter={}, body=body, parse_error=UNPARSEABLE),
+    )
+
+
+def test_unparseable_frontmatter_is_one_v10_error() -> None:
+    """Named in advance as the assertion that MUST FAIL when the V2/V5 cascade is let through."""
+    assembled = assemble_artifact(raw_unparseable_skill(), NO_METADATA)
+
+    assert codes(assembled) == [ValidationCode.V10]
+    assert assembled.is_valid is False
+
+
+def test_the_v10_message_carries_the_parsers_own_words_and_position() -> None:
+    """The whole value of the finding. A user has to find one character in their own file, so the
+    line and column are the only part of the report that locates it, and the parser's sentence is
+    reported rather than reworded."""
+    (finding,) = assemble_artifact(raw_unparseable_skill(), NO_METADATA).findings
+
+    assert finding.code is ValidationCode.V10
+    assert finding.severity is Severity.ERROR
+    assert finding.path == "SKILL.md"
+    assert "line 3, column 255" in finding.message
+    assert "mapping values are not allowed in this context" in finding.message
+
+
+def test_a_parse_failure_with_no_position_still_reports_its_message() -> None:
+    """Not every parser names a line. The finding degrades to the message alone rather than
+    inventing a position or dropping the finding."""
+    raw = RawArtifact(
+        type=ArtifactType.SKILL,
+        name="frontend-system-pattern",
+        updated_at=SCANNED_AT,
+        files=(artifact_file("SKILL.md"),),
+        entry=RawEntry(frontmatter={}, parse_error=EntryParseError(message="not a mapping")),
+    )
+
+    (finding,) = assemble_artifact(raw, NO_METADATA).findings
+
+    assert finding.code is ValidationCode.V10
+    assert "not a mapping" in finding.message
+    assert "line" not in finding.message
+
+
+def test_v10_suppresses_the_v2_and_v5_cascade() -> None:
+    """Ruling R33. Both rules are claims about the keys, and after a parse failure there are no keys
+    to make a claim about.
+
+    The artifact below would report V2 *and* two V5s if the frontmatter had merely been empty or
+    wrong — the real library reported exactly that about a file whose second line is
+    `name: frontend-system-pattern`, which is a claim the software could not support.
+    """
+    assembled = assemble_artifact(raw_unparseable_skill(), NO_METADATA)
+
+    assert ValidationCode.V2 not in codes(assembled)
+    assert ValidationCode.V5 not in codes(assembled)
+
+
+def test_the_suppression_is_conditional_on_the_parse_having_failed() -> None:
+    """The positive control for the absence assertion above, and the assertion that MUST STAY GREEN
+    when the cascade is let through.
+
+    Same artifact, same empty frontmatter, one difference: the block parsed. V5 fires for every
+    required key, so the suppression is a decision about *this* document rather than a rule that
+    stopped working.
+    """
+    parsed_but_empty = RawArtifact(
+        type=ArtifactType.SKILL,
+        name="frontend-system-pattern",
+        updated_at=SCANNED_AT,
+        files=(artifact_file("SKILL.md"),),
+        entry=RawEntry(frontmatter={}),
+    )
+
+    assembled = assemble_artifact(parsed_but_empty, NO_METADATA)
+
+    assert parsed_but_empty.entry is not None
+    assert parsed_but_empty.entry.parse_error is None, "the one difference from the test above"
+    assert codes(assembled) == [ValidationCode.V5, ValidationCode.V5]
+
+
+def test_v3_still_reads_the_body_of_an_unparseable_document() -> None:
+    """V10 suppresses the rules that read the *frontmatter*, and only those. The body parsed fine —
+    it is the whole file — so a broken citation in it is still a broken citation.
+    """
+    assembled = assemble_artifact(raw_unparseable_skill(body=LIVE_BODY), NO_METADATA)
+
+    assert findings_for(assembled, ValidationCode.V3) == ["references/persistence.md"]
+    assert ValidationCode.V10 in codes(assembled)
+
+
+def test_v1_and_v10_never_both_fire() -> None:
+    """A document that is not there cannot have failed to parse. V1's silence about V5 and V10's
+    silence about V2 and V5 therefore never compete for the same artifact."""
+    assembled = assemble_artifact(raw_skill("ghost", has_entry=False), NO_METADATA)
+
+    assert codes(assembled) == [ValidationCode.V1]

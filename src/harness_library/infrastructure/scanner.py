@@ -30,7 +30,13 @@ import frontmatter
 
 from harness_library.domain.artifact import ArtifactFile, ArtifactKind
 from harness_library.domain.hashing import hash_bytes
-from harness_library.domain.raw import RawArtifact, RawEntry, SkippedPath, SkipReason
+from harness_library.domain.raw import (
+    EntryParseError,
+    RawArtifact,
+    RawEntry,
+    SkippedPath,
+    SkipReason,
+)
 from harness_library.domain.registry import ARTIFACT_TYPE_SPECS, ENTRY_SUFFIX, TypeSpec
 from harness_library.infrastructure.timestamps import ArtifactTimestamps, GitTimestamps
 
@@ -290,11 +296,10 @@ def _read_entry(
     here", which is the fault V1 names.
 
     A frontmatter block that does not parse is **not** one of them, and is not a raise either. The
-    document exists, so V1 would be a lie; and charter §9 forbids emitting an error code that is not
-    in the contract, which "unparseable frontmatter" is not. So it is carried with an empty
-    frontmatter mapping and the whole text as its body, which fires V5 for every required key —
-    "this document declares nothing" — and leaves the body available to V3. Flagged to the delivery
-    lead: a dedicated code would say it better.
+    document exists, so V1 would be a lie. It is carried with an empty frontmatter mapping, the
+    whole text as its body, and an `EntryParseError` saying what the parser objected to and where —
+    which is V10 (ruling R33). The flag this docstring used to carry, asking for a dedicated code,
+    was answered by T-9: the fault it described happened on the first run against real content.
     """
     entry_path = spec.entry_path(name)
     if not any(file.path == entry_path for file in files):
@@ -308,13 +313,52 @@ def _read_entry(
 
 
 def _parse_entry(text: str) -> RawEntry:
-    """Split an entry document into its frontmatter and its body."""
+    """Split an entry document into its frontmatter and its body.
+
+    A failure is **recorded, not swallowed**: it comes back as `RawEntry.parse_error`, which the
+    assembler turns into V10. The body is still the whole text, so the document stays searchable and
+    V3 still has something to read — a file that will not parse is exactly the one a user needs to
+    be able to look at.
+    """
     try:
         parsed = frontmatter.loads(text)
-    # Any parse failure at all is "this document declares nothing"; see `_read_entry`.
-    except Exception:
-        return RawEntry(frontmatter={}, body=text)
+    # Every parse failure, not just YAML's: the handler is chosen by the document's own delimiters,
+    # so narrowing this to `yaml.YAMLError` would let a TOML or JSON header crash the scan.
+    except Exception as failure:
+        return RawEntry(frontmatter={}, body=text, parse_error=_parse_error_from(failure))
     return RawEntry(frontmatter=dict(parsed.metadata), body=parsed.content)
+
+
+def _parse_error_from(failure: Exception) -> EntryParseError:
+    """The parser's own complaint, as the pure value V10 reports.
+
+    **The position is the entry document's, not the frontmatter block's**, which is what makes it
+    usable: the user opens the file and goes to that line. The two coincide because the handler
+    splits on the delimiter line and hands the parser everything after it, leaving a blank first
+    line where the opening `---` stood. That alignment is a property of the library rather than of
+    this function, so it is pinned as a golden literal in the infrastructure suite instead of being
+    recomputed here — a fixed offset applied on both sides would agree with itself forever (L12).
+
+    `problem` is preferred over `str(failure)` because the latter re-states the position this value
+    already carries as fields, and a message that repeats its own coordinates renders twice.
+    """
+    problem = getattr(failure, "problem", None)
+    context = getattr(failure, "context", None)
+    if isinstance(problem, str) and problem.strip():
+        message = problem.strip()
+        if isinstance(context, str) and context.strip():
+            message = f"{context.strip()}: {message}"
+    else:
+        message = " ".join(str(failure).split()) or type(failure).__name__
+
+    mark = getattr(failure, "problem_mark", None)
+    line = getattr(mark, "line", None)
+    column = getattr(mark, "column", None)
+    return EntryParseError(
+        message=message,
+        line=line + 1 if isinstance(line, int) and line >= 0 else None,
+        column=column + 1 if isinstance(column, int) and column >= 0 else None,
+    )
 
 
 __all__ = [

@@ -21,16 +21,38 @@ CHARTER_SECTION_8 = {
     "V7": Severity.ERROR,
     "V8": Severity.ERROR,
     "V9": Severity.ERROR,
+    "V10": Severity.ERROR,
 }
+"""Charter §8's register, transcribed. V10 arrived with ruling R33 — unparseable frontmatter is its
+own finding rather than a cascade of false "key is missing" reports."""
 
 
-def test_the_code_set_is_exactly_v1_to_v9() -> None:
+def _register_in_rule_order() -> list[tuple[str, Severity]]:
+    """The register as pairs, V1 first and V10 last."""
+    return sorted(CHARTER_SECTION_8.items(), key=lambda pair: _rule_number(pair[0]))
+
+
+def _rule_number(code_value: str) -> int:
+    """`V10` sorts after `V9`, which lexicographic order does not.
+
+    Worth the three lines: comparing sorted *strings* would demand the enum be declared V1, V10, V2,
+    … to stay green, which is a declaration order no reader of charter §8 would recognise.
+    """
+    return int(code_value.removeprefix("V"))
+
+
+def test_the_code_set_is_exactly_the_charter_register() -> None:
     """Closed. Initiative 04 branches on the code, so a member added without a charter row —
-    or a row added without a member — has to fail here."""
-    assert [code.value for code in ValidationCode] == sorted(CHARTER_SECTION_8)
+    or a row added without a member — has to fail here.
+
+    Declaration order is asserted too, and separately: the enum reads V1 … V10 in rule order, so a
+    member appended in the wrong place is visible here rather than only in a report's ordering.
+    """
+    assert {code.value for code in ValidationCode} == set(CHARTER_SECTION_8)
+    assert [code.value for code in ValidationCode] == sorted(CHARTER_SECTION_8, key=_rule_number)
 
 
-@pytest.mark.parametrize(("code_value", "expected"), sorted(CHARTER_SECTION_8.items()))
+@pytest.mark.parametrize(("code_value", "expected"), _register_in_rule_order())
 def test_each_code_carries_the_severity_the_charter_assigns_it(
     code_value: str, expected: Severity
 ) -> None:

@@ -1086,3 +1086,101 @@ Recorded in `2026-09-01-acceptance.md`. Three defects: **D-1** V3 cannot be sati
 artifact (8 false positives, 0 true positives on real content); **D-2** one unquoted `:` discards a
 whole frontmatter block and the diagnosis names the wrong fault; **D-3** `hl list` pays 1.31 s
 importing the MCP SDK it never uses, against a 16 ms scan.
+
+---
+
+# T-10 backend task plan — V3's scope, V10, and the lazy MCP import
+
+Written before the first edit. Task: phase-1 / initiative 01-store-and-read-path / T-10.
+
+## Understanding
+
+Three corrections to defects T-9 acceptance found against `~/.claude`. Two are rule changes already
+ruled on (R32, R33) and written into charter §8's register; the third is a straight import fix.
+
+1. **V3 applies only to DIRECTORY-kind artifacts** (R32, DEC-9). References belong to the skill that
+   owns them, exactly as `skills/<name>/references/` models on disk. A single-file artifact cannot
+   own a `references/` folder, so a citation inside one is prose about another artifact's files.
+   This is a **narrowing of scope, not a weakening**: the failure that justified V3 — a skill citing
+   references into its own empty directory — is directory-kind and must still be caught. The
+   `superseded_by` exemption is untouched.
+2. **V10 — unparseable frontmatter is its own ERROR finding** (R33), carrying the parser's own
+   message with line and column, and **suppressing the V2/V5 cascade** behind it. When the block did
+   not parse we know nothing about its keys, so reporting them as missing is a claim we cannot
+   support. V1 already suppresses V5; this is the same shape.
+3. **`hl list` must stop importing the MCP SDK.** `cli/main.py` imports `serve_stdio` at module
+   scope. Measured before the fix: importing `cli.main` costs ~1.81 s and pulls 115 `mcp*` modules,
+   against a ~17 ms scan.
+
+## The seam question fix 2 raises, and the answer
+
+The parse fails in `infrastructure/scanner._parse_entry`, which swallows it and returns an empty
+frontmatter mapping. The assembler needs to know it failed, and `RawArtifact`/`RawEntry` are pure
+values in `domain/`.
+
+**Chosen:** a new frozen value `EntryParseError(message, line, column)` in `domain/raw.py`, carried
+as `RawEntry.parse_error: EntryParseError | None = None`. The scanner catches the YAML error, reads
+`problem_mark` for the position, and constructs the pure value; `domain/` imports no YAML and stays
+pure. No new domain module, so `tests/domain/test_purity.py::EXPECTED_MODULES` is unchanged (L13).
+
+**No frozen contract changes shape.** `RawEntry` and `RawArtifact` are internal T-3 domain values,
+not C-1…C-8. `Artifact` (C-2), `ValidationFinding` (C-3), `ArtifactRepository` (C-4) and the C-5/C-7
+payloads all keep their fields. `ValidationCode` gains the member `V10` — additive to a closed enum,
+mandated by charter §8's register and R33, and C-3's field list is unchanged. Rejected: threading a
+parse failure out of `scan_library` as a second return value (changes an infrastructure signature
+for something that belongs to the entry document), and raising (charter §9 forbids an error code
+that is not in the contract, and a raise would report itself and nothing else).
+
+## Approach — file by file
+
+- `domain/validation.py` — add `V10` to `ValidationCode` and to `SEVERITY_BY_CODE` (ERROR).
+- `domain/raw.py` — add `EntryParseError`; add `RawEntry.parse_error`.
+- `domain/assembly.py` — gate `_check_v3` on `raw.kind is ArtifactKind.DIRECTORY`; add `_check_v10`;
+  make `_check_v2` and `_check_v5` silent when the frontmatter did not parse.
+- `infrastructure/scanner.py` — `_parse_entry` records the parse failure instead of discarding it.
+- `cli/main.py` — import `serve_stdio` inside `mcp_command`.
+
+## Existing tests changed, not deleted
+
+- `tests/domain/test_assembly.py` — the three T-9 tests pinning D-1 are re-aimed at the corrected
+  behaviour; the "every rule is reachable" test gains a V10 emitter.
+- `tests/domain/test_validation.py` — the register table gains V10.
+- `tests/infrastructure/test_repository.py` — the two T-9 tests pinning D-2 are re-aimed at V10.
+
+## Mutation checks — assertions named in advance
+
+**(a) Re-enable V3 for FILE-kind artifacts.** Must fail: the test proving an agent citing a skill's
+reference path reports nothing. Must **stay green**: the test proving a directory-kind artifact
+citing its own missing reference still reports V3. This pair is the point of the whole fix.
+
+**(b) Let the V2/V5 cascade through alongside V10.** Must fail: the test asserting the colon skill
+reports exactly one finding. Must **stay green**: a test proving a well-formed artifact that
+genuinely lacks a required key still reports V5 — suppression is conditional on the parse failing.
+
+**(c) Restore the module-scope MCP import.** Must fail: the test proving `hl list`'s import path
+pulls no MCP module. Asserted on the imported module set in a fresh interpreter, never on elapsed
+time (a timing assertion is flaky and gets deleted by whoever meets it on a slow day).
+
+## Verification
+
+The gate, whole, from the repository root, never path-scoped (**L2**, **L9**):
+
+```
+export PATH="$HOME/.local/bin:$PATH"
+uv run ruff format --check . && uv run ruff check . && uv run mypy src tests && uv run lint-imports && uv run pytest
+```
+
+Plus `hl --library ~/.claude validate` before and after, and a manifest diff over `~/.claude` that
+must be empty.
+
+**Seven is the correct answer.** After fix 1 the real library still reports 7 V3 findings, from the
+two redirect stubs citing their successor's paths. Those clear only when supersession is declared,
+and `~/.claude` has no `library.yaml` because it is an install target, not a library (L5). The rule
+is not tuned to reach zero.
+
+## Out of scope
+
+No change to any frozen contract shape. No new rule beyond V10. No fix for the V3 flood a
+directory-kind stub with unparseable frontmatter would still produce (R15's fallback; reported, not
+repaired — the register scopes V10's suppression to V2/V5). No dependency change, no
+`pyproject.toml` or `uv.lock` edit. No commit.

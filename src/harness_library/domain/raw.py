@@ -74,6 +74,49 @@ class SkippedPath:
 
 
 @dataclass(frozen=True, slots=True)
+class EntryParseError:
+    """Why the entry document's frontmatter block did not parse. What V10 reports.
+
+    A **value**, not an exception: the parser lives in `infrastructure/` and `domain/` may not
+    import it (charter §2), so the failure crosses the seam the same way a skipped path does —
+    the scanner observes it, this carries it, and the assembler decides what it means.
+
+    Attributes:
+        message: the parser's own sentence, verbatim. Reported rather than reworded because the
+            user has to find one character in their own file, and a paraphrase loses the only
+            detail that locates it.
+        line: 1-based line within the entry document, or `None` when the parser gave no position.
+        column: 1-based column, or `None`. Both are `None` together in practice; kept separate
+            because a parser that reports a line without a column would otherwise be unreportable.
+    """
+
+    message: str
+    line: int | None = None
+    column: int | None = None
+
+    def __post_init__(self) -> None:
+        if not self.message.strip():
+            raise ValueError(
+                "EntryParseError.message must not be empty: it is the whole of what V10 tells a "
+                "user, and an empty one reproduces the unactionable report V10 exists to replace"
+            )
+        for field, value in (("line", self.line), ("column", self.column)):
+            if value is not None and value < 1:
+                raise ValueError(
+                    f"EntryParseError.{field} is 1-based, so {value} cannot be a {field}"
+                )
+
+    @property
+    def position(self) -> str | None:
+        """`line 3, column 255`, or `None` when the parser named no position."""
+        if self.line is None:
+            return None
+        if self.column is None:
+            return f"line {self.line}"
+        return f"line {self.line}, column {self.column}"
+
+
+@dataclass(frozen=True, slots=True)
 class RawEntry:
     """The entry document, parsed.
 
@@ -82,10 +125,16 @@ class RawEntry:
             `None`, because "no frontmatter" and "an empty frontmatter block" are the same fault
             (V5) and a null check nobody writes is how one of them escapes.
         body: everything after the frontmatter. V3 reads its citations from here.
+        parse_error: set when the frontmatter block was present but did not parse, which is V10.
+            `frontmatter` is then empty and says nothing about the document — **not** that the
+            document declares nothing. The distinction is the whole of ruling R33: V2 and V5 are
+            claims about the keys, and after a parse failure there are no keys to make a claim
+            about.
     """
 
     frontmatter: Mapping[str, Any] = _EMPTY_FRONTMATTER
     body: str = ""
+    parse_error: EntryParseError | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.frontmatter, MappingProxyType):

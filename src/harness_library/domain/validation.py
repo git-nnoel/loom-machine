@@ -38,7 +38,8 @@ class ValidationCode(StrEnum):
     """Frontmatter `name` disagreeing with the directory name."""
 
     V3 = "V3"
-    """A cited `references/…` path that does not exist. Exempt when `superseded_by` is set."""
+    """A cited `references/…` path that does not exist. DIRECTORY-kind artifacts only (R32);
+    exempt when `superseded_by` is set."""
 
     V4 = "V4"
     """`superseded_by` that does not resolve."""
@@ -58,6 +59,9 @@ class ValidationCode(StrEnum):
     V9 = "V9"
     """A duplicate key in `library.yaml` — the same id or collection key declared twice."""
 
+    V10 = "V10"
+    """The entry document's frontmatter does not parse. Suppresses V2 and V5 (ruling R33)."""
+
     @property
     def severity(self) -> Severity:
         """The severity charter §8 assigns to this rule."""
@@ -75,6 +79,7 @@ SEVERITY_BY_CODE: Mapping[ValidationCode, Severity] = MappingProxyType(
         ValidationCode.V7: Severity.ERROR,
         ValidationCode.V8: Severity.ERROR,
         ValidationCode.V9: Severity.ERROR,
+        ValidationCode.V10: Severity.ERROR,
     }
 )
 """Charter §8's severity column. The single source; `ValidationCode.severity` reads it."""

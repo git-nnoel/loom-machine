@@ -133,7 +133,17 @@ acceptance criterion, not a nicety. This is D8 turned into a mechanism instead o
 
 **Writes (initiative 02, ruling R50):** a **single-writer advisory lock** — an `O_EXCL` sentinel beside
 the manifest, held for the duration of an apply, released on exit, stale-broken by pid check. A second
-apply against a held lock exits `LOCK_HELD = 10` without writing. **Pending T-17.**
+apply against a held lock exits `LOCK_HELD = 10` without writing. **Built in T-17.**
+
+**Every write use case takes a `WriteLock` as a required keyword-only parameter** (C-16, R82) — a
+write path that simply does not take one keeps every gate green while sitting outside this section.
+
+**Reads take no lock** (R85). `hl diff` can therefore describe a target an install is midway through
+writing. Stated, not fixed: locking reads would serialise the one operation that is always safe.
+
+**The state root is local-only** (R84). The staleness check reads the local process table, so a state
+root on a shared filesystem would make it meaningless in both directions; `hostname` is recorded in
+the sentinel for a human and is deliberately not part of the decision.
 
 ## 13. Configuration
 
@@ -149,4 +159,4 @@ on a directory that is not a library, rather than silently returning an empty li
 | 2026-09-01 | §8 gains V8 (R19), V9 (R20) and V10 (R33). V3 scoped to directory-kind artifacts (R32 / DEC-9). |
 | 2026-09-20 | §8's V10 row extends the suppression to V3 (R37). Built in T-11 on 2026-09-21; the register stated the rule before the code emitted it, per §9. |
 | 2026-09-21 | §8 gains V11, a symlinked artifact root (R46). **Pending initiative 02**, which owns both halves: the scan warning and the install refusal. |
-| 2026-09-21 | §12's write posture decided: a single-writer advisory lock (R50). **Pending T-17.** The charter stated it before the code, as §9 requires. |
+| 2026-09-21 | §12's write posture decided: a single-writer advisory lock (R50), **built in T-17**. C-16, R82–R85 record the seam, the error posture, the locality assumption and the read exemption. |

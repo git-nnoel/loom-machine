@@ -4,6 +4,11 @@ Nothing here touches a disk — that is the point of T-3. What this layer is bli
 here, so no later task mistakes a green run for proof of it: these tests cannot prove that the
 scanner *records* a symlink as skipped, only that a recorded skip becomes a V6 warning. Plan §9 puts
 that mutation at the repository level (T-5) for exactly that reason.
+
+**V11 is the same shape and the trap is sharper.** A `SymlinkedRoot` handed to `assemble_library`
+proves the rule fires; it proves nothing at all about a real scan producing one, and a symlinked
+root that reached no report would leave every test below green. Plan §9 puts that mutation at the
+repository level too, over a committed link — `tests/test_symlinked_root.py`.
 """
 
 from __future__ import annotations
@@ -32,6 +37,7 @@ from harness_library.domain.raw import (
     RawEntry,
     SkippedPath,
     SkipReason,
+    SymlinkedRoot,
 )
 from harness_library.domain.validation import Severity, ValidationCode
 
@@ -736,6 +742,63 @@ def test_every_duplicate_is_reported_in_the_order_the_reader_met_it() -> None:
 # ==============================================================================================
 
 
+# ==============================================================================================
+# V11 — an artifact root that is a symlink (rulings R6, R46)
+# ==============================================================================================
+
+
+def symlinked(name: str, destination: str = "../../outside/dev") -> SymlinkedRoot:
+    """One root the scan refused to walk. The value `scan_library` hands across."""
+    return SymlinkedRoot(type=ArtifactType.SKILL, name=name, destination=destination)
+
+
+def test_a_symlinked_artifact_root_is_a_library_level_v11_warning() -> None:
+    """Library-level like V7 and V9, and for a stronger reason than either: the root was never
+    scanned, so there is no artifact to attach it to at all."""
+    library = assemble_library(
+        [raw_skill("delivery-lead")], NO_METADATA, symlinked_roots=[symlinked("linked-skill")]
+    )
+
+    assert [f.code for f in library.findings] == [ValidationCode.V11]
+    assert library.findings[0].severity is Severity.WARNING
+
+
+def test_the_v11_finding_names_the_root_the_link_and_the_artifact_that_is_missing() -> None:
+    """A golden literal (L12). All three are the diagnosis: *which* path is a link, *where* it
+    points — the user wrote that and only they can decide about it — and which artifact is
+    consequently absent from every listing this tool prints."""
+    library = assemble_library([], NO_METADATA, symlinked_roots=[symlinked("linked-skill")])
+
+    assert library.findings[0].message == (
+        "skills/linked-skill is a symlink (-> ../../outside/dev), which is never followed or "
+        "scanned (ruling R6), so skill/linked-skill is absent from this library. Install "
+        "refuses this artifact and applies the rest"
+    )
+    assert library.findings[0].path == "skills/linked-skill"
+
+
+def test_v11_attaches_to_no_artifact_even_when_one_shares_its_name() -> None:
+    """**The distinction from V8, which `AssembledLibrary` states and this pins.** V8 has two real
+    artifacts to hang on; V11 has none — and manufacturing one would fire V1 against a skill whose
+    entry document is right there behind the link, a false ERROR of exactly the kind V10 was
+    written to stop."""
+    library = assemble_library(
+        [raw_skill("delivery-lead")], NO_METADATA, symlinked_roots=[symlinked("delivery-lead")]
+    )
+
+    assert [a.findings for a in library.artifacts] == [()]
+    assert [f.code for f in library.findings] == [ValidationCode.V11]
+
+
+def test_a_library_with_no_symlinked_root_reports_no_v11() -> None:
+    """The positive control for the absence: the same library, the same call, one argument fewer,
+    and the finding is gone — so "no V11" above is a fact about the input and not about the rule
+    never firing."""
+    library = assemble_library([raw_skill("delivery-lead")], NO_METADATA)
+
+    assert library.findings == ()
+
+
 def test_every_finding_takes_its_severity_from_the_register() -> None:
     metadata = LibraryMetadata(
         artifacts={
@@ -759,12 +822,13 @@ def test_every_finding_takes_its_severity_from_the_register() -> None:
             raw_unparseable_skill("unreadable-header"),
         ],
         metadata,
+        symlinked_roots=[symlinked("linked-skill")],
     )
 
     emitted = {finding.code for artifact in library.artifacts for finding in artifact.findings} | {
         finding.code for finding in library.findings
     }
-    assert emitted == set(ValidationCode), "every rule V1-V10 must be reachable from this layer"
+    assert emitted == set(ValidationCode), "every rule V1-V11 must be reachable from this layer"
 
     for finding in [f for a in library.artifacts for f in a.findings] + list(library.findings):
         assert finding.severity is finding.code.severity

@@ -368,3 +368,149 @@ def test_a_backup_written_before_the_kept_set_existed_is_not_offered(
     with pytest.raises(KeyError, match=backup_id):
         store.restore(backup_id)
     assert (target / ENTRY).read_bytes() == INSTALLED
+
+
+# ==================================================================================================
+# Ruling R94 — a symlink is recorded as its destination and restored as a link
+# ==================================================================================================
+
+LINK = "skills/delivery-lead/references/elsewhere.md"
+LINK_DESTINATION = "../../../../outside/target-escape.md"
+
+
+@pytest.fixture
+def target_with_a_link(target: Path) -> Path:
+    """The same target, plus a symlink resolving **outside** it, pointing at a real file.
+
+    Real because `ruff` exits 2 on a broken symlink anywhere in the tree (L21) — and because a
+    dangling link would prove the easy case: the interesting claim is that the destination's
+    *content* never enters the backup and never comes back as a regular file.
+    """
+    outside = target.parent / "outside"
+    outside.mkdir(parents=True, exist_ok=True)
+    (outside / "target-escape.md").write_bytes(b"# a file outside the target entirely\n")
+    located = target / LINK
+    located.parent.mkdir(parents=True, exist_ok=True)
+    located.symlink_to(LINK_DESTINATION)
+    assert located.is_symlink()
+    return target
+
+
+def test_a_symlink_is_recorded_as_its_destination_and_not_as_bytes(
+    state_root: Path, target_with_a_link: Path
+) -> None:
+    """R6 forbids reading through a link, so nothing lands under `files/` for one. The record
+    says where it pointed instead, which is the whole of what a link is.
+
+    The `kept` assertion is the control for the `links` one: the ordinary file in the same
+    backup *is* held as bytes, so "the link is not in `kept`" is a statement about the link and
+    not about a store that keeps nothing.
+    """
+    store = a_store(state_root, target_with_a_link)
+
+    backup_id = store.create((ENTRY, LINK))
+
+    (record,) = store.list()
+    assert record.links == {LINK: LINK_DESTINATION}
+    assert record.kept == (ENTRY,)
+    assert not (default_backups_root(state_root) / backup_id / FILES_DIRECTORY_NAME / LINK).exists()
+
+
+def test_the_destination_of_a_linked_path_never_enters_the_backup(
+    state_root: Path, target_with_a_link: Path
+) -> None:
+    """**The escape R6 exists to prevent, reached through the undo mechanism.** Following the
+    link would copy a file from outside the target into a backup *of* the target, and a restore
+    would then materialise it as a regular file — a different target from the one backed up.
+
+    Asserted on the bytes, across the whole backup directory, so a copy under any name fails it.
+    """
+    destination = target_with_a_link.parent / "outside" / "target-escape.md"
+    outside_bytes = destination.read_bytes()
+
+    backup_id = a_store(state_root, target_with_a_link).create((ENTRY, LINK))
+
+    directory = default_backups_root(state_root) / backup_id
+    assert outside_bytes not in snapshot(directory).values()
+    assert destination.read_bytes() == outside_bytes
+
+
+def test_a_restored_symlink_is_a_symlink_naming_what_it_named_before(
+    state_root: Path, target_with_a_link: Path
+) -> None:
+    """**The criterion of ruling R94, asserted on `is_symlink` and on the destination.**
+
+    A regular file holding a copy of what the link pointed at would satisfy "the path is back"
+    and would silently replace the user's development link with a snapshot of somebody else's
+    directory. The link is destroyed between the two calls, so this cannot pass by never having
+    changed.
+    """
+    store = a_store(state_root, target_with_a_link)
+    backup_id = store.create((ENTRY, LINK))
+    (target_with_a_link / LINK).unlink()
+    assert not (target_with_a_link / LINK).exists()
+
+    store.restore(backup_id)
+
+    assert (target_with_a_link / LINK).is_symlink()
+    assert (target_with_a_link / LINK).readlink() == Path(LINK_DESTINATION)
+    assert (target_with_a_link / LINK).read_bytes() == b"# a file outside the target entirely\n"
+
+
+def test_a_restored_symlink_replaces_whatever_took_its_place(
+    state_root: Path, target_with_a_link: Path
+) -> None:
+    """A restore puts the target back, whatever is there now. Between the backup and the restore
+    a clean-and-reinstall can leave an ordinary file at the path, and the link still has to
+    come back as a link."""
+    store = a_store(state_root, target_with_a_link)
+    backup_id = store.create((LINK,))
+    (target_with_a_link / LINK).unlink()
+    (target_with_a_link / LINK).write_bytes(b"a regular file now\n")
+
+    store.restore(backup_id)
+
+    assert (target_with_a_link / LINK).is_symlink()
+    assert (target_with_a_link / LINK).readlink() == Path(LINK_DESTINATION)
+
+
+def test_a_dangling_symlink_is_recorded_and_restored_like_any_other(
+    state_root: Path, target: Path
+) -> None:
+    """`readlink`, never `resolve` (R6). A link whose destination is gone is still a link, and a
+    backup that refused one would refuse exactly the kind of path a user most needs putting
+    back — the one that already looks broken."""
+    (target / LINK).parent.mkdir(parents=True, exist_ok=True)
+    (target / LINK).symlink_to("nowhere-at-all.md")
+    store = a_store(state_root, target)
+    backup_id = store.create((LINK,))
+    (target / LINK).unlink()
+
+    store.restore(backup_id)
+
+    assert (target / LINK).is_symlink()
+    assert (target / LINK).readlink() == Path("nowhere-at-all.md")
+    assert not (target / LINK).exists()
+
+
+def test_a_backup_written_before_the_link_set_existed_is_not_offered(
+    state_root: Path, target: Path
+) -> None:
+    """**What reading a version-2 backup does**: nothing reads it, as with version 1.
+
+    This reader has one version. A version-2 record could be read with no links, which is a true
+    statement about it, but it would be a second code path through the one document whose job is
+    to be trustworthy — in exchange for a rollback point on a tool that has not shipped.
+    """
+    store = a_store(state_root, target)
+    backup_id = store.create((ENTRY,))
+    record = default_backups_root(state_root) / backup_id / RECORD_FILENAME
+    document = json.loads(record.read_text(encoding="utf-8"))
+    document["schema_version"] = 2
+    del document["links"]
+    record.write_text(json.dumps(document), encoding="utf-8")
+
+    assert store.list() == ()
+    with pytest.raises(KeyError, match=backup_id):
+        store.restore(backup_id)
+    assert (target / ENTRY).read_bytes() == INSTALLED

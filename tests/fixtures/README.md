@@ -16,6 +16,7 @@ Every failure charter §8 names is reproduced here against real bytes rather tha
 | `skills/incomplete/`, `agents/nameless.md` | V5 — a required key present-but-empty, and one absent |
 | `skills/messy/` | V6 — an editor swap file, a `node_modules` tree, and a symlink escaping the artifact root; plus a binary PNG that is stored and hashed but never text |
 | `skills/dangling-successor/` | V4 — `superseded_by` naming an artifact that is not here |
+| `skills/linked-skill` → `../../outside/linked-skill` | V11 — an **artifact root that is a symlink**. Never followed, never scanned, and so absent from the library entirely: no `skill/linked-skill` appears in any listing, and before V11 nothing said so. The destination is a skill with no fault of any kind, which is what makes the omission the whole fault |
 | `library.yaml` | tags, collections, supersession, and two ids that resolve to nothing (V7) |
 
 **Not here, on purpose.** V8 needs two directories differing only by case, which cannot be checked
@@ -25,6 +26,11 @@ whose frontmatter does not parse, which every other tool reading this repository
 GitHub's own preview — would report as broken, burying a deliberate fixture under noise. All three
 are proven against real files built under `tmp_path` instead — same guarantee, and the repository
 stays cloneable on macOS.
+
+**The symlinked root points at a real directory**, `outside/linked-skill/`, and must keep doing
+so: `ruff` exits 2 on a broken symlink anywhere in the tree, before any rule runs and with no rule
+code (L21). `outside/linked-skill/` belongs to the library fixture the way `outside/secret.md`
+does.
 
 **Timestamps are never asserted against this tree.** It lives inside this repository, so it is dirty
 while uncommitted and clean once committed; ruling R5 is proven in a purpose-built repository under

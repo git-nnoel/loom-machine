@@ -1244,3 +1244,239 @@ exit 0** after this task, read with `… > gate.log 2>&1; echo $?`.
 | `absent` on both | reported, not raised on and not listed. For clean the listing is what a user authorises, and nobody should be asked to authorise destroying a path that is not there |
 | **A foreign *symlink* cannot be backed up** | found by the fixture. `BackupStore.create` read through `FilesystemTargetRepository`, which refuses a link (R6), so `clean --foreign` over the committed target raised a bare `ValueError` part-way through a copy. A link is now described in `paths`, left out of `kept` and stored nowhere — so it is removed and **not put back**. No content is lost (the file it names is outside every tree the backup describes) but the removal of a link is that far un-undoable. Asserted in `tests/test_clean.py`; **flagged, it wants a ruling** |
 | `RecordStaleError` on rollback and uninstall too | yes. Both already reached that state and both said in their docstrings that a code was a plan-level decision; R90 is that decision, and leaving two spellings of one condition is the drift the taxonomy exists to prevent |
+
+---
+
+# Backend task plan — T-20, V11 and two corrections
+
+Initiative 02 · phase 1 · base commit `ed3888d` · owner `backend-developer-specialist`.
+Realises **V11** (F-9's last acceptance row) over contracts **C-3** (amended here) and **C-13**
+(amended here), and carries two corrections from T-19's §8: **R93** (`apply --prune` violates
+charter §13b) and **R94** (a backup cannot capture a symlink). Rulings **R6**, **R13**, **R22**,
+**R46**, **R53**, **R63**, **R64**, **R82**, **R86**, **R90**, **R93**, **R94** bind.
+
+## 1. Where the code goes
+
+| File | Why |
+|---|---|
+| `src/harness_library/domain/raw.py` | `SymlinkedRoot` and `LibraryScan`. **No new domain module**, so `tests/domain/test_purity.py` is untouched (L13, L18) |
+| `src/harness_library/domain/validation.py` | **C-3 amended.** `ValidationCode.V11`, its `SEVERITY_BY_CODE` row (WARNING), and the `path` attribute docstring, which V11 widens |
+| `src/harness_library/domain/assembly.py` | `_check_v11`, `assemble_library(..., symlinked_roots=())`, and the `AssembledLibrary.findings` docstring, **which enumerates its members** |
+| `src/harness_library/infrastructure/scanner.py` | detection in `_scan_type`; `scan_library` now returns `LibraryScan` |
+| `src/harness_library/infrastructure/repository.py` | hands the symlinked roots to the assembler; additive `symlinked_roots()`, **not** a C-4 member |
+| `src/harness_library/application/write/install.py` | `plan_install` takes `unscannable`, required and keyword-only; `_skip_unscannable_roots`; **R93's double record write** on the prune path |
+| `src/harness_library/application/read/dtos.py` | `FindingPayload`'s docstring enumerates the code range — inside frozen C-7, so the text and nothing else |
+| `src/harness_library/domain/backup.py` | **C-13 amended (R94).** `BackupRecord.links` — a described path's symlink destination |
+| `src/harness_library/infrastructure/backup.py` | `create` records a link's destination, `restore` recreates it as a link; `SCHEMA_VERSION` 2 → 3 |
+| `src/harness_library/infrastructure/target.py` | `read_link` / `write_link` on the **concrete class only**. C-12's protocol keeps its five members |
+| `tests/fixtures/library/skills/linked-skill` → `../../outside/linked-skill` | the committed symlinked root. **Points at a real directory** (L21) |
+| `tests/fixtures/outside/linked-skill/SKILL.md` | its destination: a skill that would load perfectly, which is what makes the omission a fault |
+| `tests/test_symlinked_root.py` | new, cross-layer by necessity — §4 |
+| `tests/domain/test_validation.py` · `test_assembly.py` · `test_backup.py` | I-7's register case, the rule, C-13's new invariants |
+| `tests/infrastructure/test_scanner.py` · `test_repository.py` · `test_backup.py` · `test_target.py` | real files: the detection, the golden findings, the link round-trip |
+| `tests/application/test_install.py` · `test_drift.py` · `tests/test_rollback.py` · `tests/test_clean.py` | `unscannable=()` at every call, plus R93's witness and R94's changed assertion |
+
+No dependency change. No new `ErrorCode` and no `cli/exit_codes.py` edit: `RECORD_STALE = 13`
+already exists (R90) and R93's second write raises it.
+
+## 2. Two halves, and why they must not share a mechanism
+
+R46 asks for a warning on scan and a refusal on install. The mutation table asks for something
+sharper: dropping the finding must leave the refusal green, and following the link must leave the
+warning green. That is only true if **neither reads the other**, so:
+
+* **detection** lives in `scanner._scan_type`, which records a `SymlinkedRoot` for every symlinked
+  child of an artifact type directory. `assemble_library` turns it into V11, exactly as a
+  `SkippedPath` becomes V6 — the scanner still judges nothing;
+* **the refusal** is `_artifact_name`'s existing `is_symlink` guard (R6, the reason the root is
+  never scanned) plus `plan_install`'s `SKIPPED` entry, fed from the same `SymlinkedRoot` values
+  and never from a finding.
+
+The two `is_symlink()` calls are deliberate and are not a second source of truth: one answers
+*should this be reported*, the other answers *may this be walked*. Fusing them would make mutation
+(b) redden its own control.
+
+**`plan_install`'s `unscannable` is required and keyword-only**, for the reason C-16's lock is
+(R82): a plan that simply does not take the symlinked roots keeps every gate green while silently
+omitting an artifact — which is the failure V11 exists to close. `assemble_library`'s equivalent
+parameter **does** default to `()`, and the difference is the caller: the assembler has one
+production call site, written and tested here, while `plan_install`'s is T-22's composition root.
+
+**`force` does not override V11.** R75's refusal is a judgement about an artifact whose bytes the
+library holds, so `--force` can install it anyway; here there are no bytes — the root was never
+scanned — and the only way to "force" it would be to follow the link, which R6 forbids. The skip
+is applied before the `force` branch and cannot be switched off.
+
+**Where the `SKIPPED` entry lands.** Its path is `TypeSpec.root_path(name)`, which is also the
+target-relative path (install mirrors the library's layout), reached through the registry and never
+concatenated. If the plan already holds an entry at that exact path — the target holding a file or
+the user's own development link at `skills/<name>` — the entry is **replaced**, keeping its
+digests, rather than doubled: one path, one entry. That also stops `clean --foreign` offering to
+delete the user's development link, which is the second half of R22's justification for V11 being
+the one warning that refuses.
+
+## 3. R93 — the union, then the drop
+
+`_apply` writes the record once today, already carrying the pruned paths *dropped*, and then
+deletes. A crash between them leaves those files on disk claimed by nobody.
+
+The fix is two records on the prune path and one everywhere else:
+
+```
+1 back up
+2 record  the union — everything this run will write AND everything it will delete
+3 files   writes, then deletes
+4 record  again, without the pruned paths      (only when there are pruned paths)
+```
+
+Step 2 is `_manifest_after(..., removed=frozenset())`, which already keeps a `PRUNE` path at the
+previous manifest's digest, so the union is what it composes with nothing removed. Step 4 is the
+same call with the pruned set. When nothing is pruned the two are identical and step 4 is not made,
+so **R64's promise is untouched**: `MANIFEST_UNWRITABLE` still means nothing happened, because
+step 2 is still the only record a non-pruning run writes. Step 4 raises `RecordStaleError`
+(R90, exit 13) — the files are already gone, and 11's guarantee would be exactly false there.
+
+## 4. R94 — a link's content is its destination
+
+`BackupRecord` gains `links: Mapping[str, str]`, the destination of every described path that was
+a symlink when the backup was taken. It is disjoint from `kept` (a path is bytes or a link, never
+both) and a subset of `paths`, which is the same one-way invariant `kept` already carries.
+
+`create` asks the scan which described paths are links — through `FilesystemTargetRepository`,
+never a second `Path.is_symlink` — and records `read_link` for each instead of copying bytes.
+`restore` recreates them with `write_link` before it considers removing anything, so a restored
+link is a link with the same raw destination and not a copy of what it pointed at.
+
+`read_link` and `write_link` are added to the **concrete** `FilesystemTargetRepository` and not to
+C-12's protocol, which is out of this task's contract scope and says "five members, and no sixth".
+The backup store already holds the concrete class, and the precedent is `library_findings()`, which
+lived on the concrete repository before R23 put it in C-4. **Flagged: C-12 wants these two.**
+
+`SCHEMA_VERSION` 2 → 3, and a version-2 backup is not offered — R92's decision, kept for R92's
+reason: the reader has one version and reading an old record would mean guessing at the field it
+lacks. The cost is a rollback point on a tool that has not shipped.
+
+## 5. Tests, and why one module is cross-layer
+
+`tests/test_symlinked_root.py` is the fourth cross-layer module in this suite and has to be. The
+criterion is *a committed symlinked root produces a warning through the repository and is refused
+by a real apply*, and neither layer alone can witness it: the domain suite is handed its findings
+by the test, and the application suite is handed its library by a fake. Only a real
+`FilesystemArtifactRepository` over the committed tree can show that the scanner really produced
+the value the rule fired on — which is the half the mutation table says went unwired last time.
+
+What the fakes still cannot see, stated once: that a real `readlink` survives a round trip through
+`backup.json`, and that a restored link is a link. `tests/infrastructure/test_backup.py` and
+`tests/infrastructure/test_target.py` prove those against real files.
+
+## 6. Mutation checks (L35 — read this if the session was interrupted)
+
+Three, each run alone with `-k` (L42). Each file is copied to `…/scratchpad/<name>.t20.orig`
+before it is mutated and restored from that copy.
+
+**Result — none is applied; all three modules match their backup by md5.**
+`domain/assembly.py` `9246dfb1b8e9a8d8c25c051b21e1d091`,
+`infrastructure/scanner.py` `5e1a8c809595fa14972bdd55cbfa17d1`,
+`application/write/install.py` `ad421396db237ab03c60444e40bfb178`. If this session was
+interrupted, those three are the files that were under mutation; compare each against its
+`.t20.orig` copy in the scratchpad.
+
+Under **(a)**, `-k "the_committed_symlinked_root_is_a_v11_warning_at_repository_level or
+the_symlinked_root_is_skipped_in_the_plan_and_the_run_is_incomplete"` gave `1 failed, 1 passed`.
+The warning test failed on the finding simply not being there — `assert 0 == 1, where 0 =
+len([])` — and the refusal test **stayed green**, which is the half that matters: it reads
+`symlinked_roots()` and never a finding, so the report can vanish without the refusal noticing.
+Both back to `2 passed` on restore.
+
+Under **(b)**, `-k "neither_the_symlinked_root_nor_its_destination_is_written or
+the_committed_symlinked_root_is_a_v11_warning_at_repository_level"` gave `1 failed, 1 passed`:
+the destination test failed on its **first** assertion, the destination's bytes found in the
+target — *"assert b'---\nname: linked-skill\n…' not in dict_values([…])"* — and the warning
+test **stayed green**, because detection sits in `_scan_type` and the mutation removes a guard
+in `_artifact_name`. Restored: `2 passed`.
+
+**Worth knowing for the next reader, and it cost a cycle.** The warning test originally also
+asserted that `skill/linked-skill` is in no listing. That assertion is true, load-bearing — it
+is the omission V11 exists to report — and it **reddens under (b)**, which makes the artifact
+appear, so the control took its own control away. It is now its own test,
+`test_the_symlinked_root_is_in_no_listing_the_library_can_produce`. L51's lesson in a second
+shape: a control must assert the fact it is a control *for* and nothing else, and "nothing else"
+includes true statements the other mutation happens to reach.
+
+Under **(c)**, `-k "a_pruning_apply_claims_the_pruned_path_until_it_is_gone or
+pruning_removes_the_path_and_drops_it_from_the_manifest"` gave `1 failed, 1 passed`: the R93
+witness failed on the record's content — *"assert set() == {'references/notes.md'}"*, the one
+record on disk having already disowned a file the run had not managed to delete — while the
+successful pruning run **stayed green**, because a run that does not fail produces the identical
+*final* record under both orders (L52, exactly). Restored: `2 passed`. The control asserts the
+record's content and says nothing about how many records were written, which is L51 applied
+before the run: it is the count that the mutation changes on a successful run.
+
+**(a)** the V11 finding dropped from `AssembledLibrary.findings` — `domain/assembly.py`,
+`_check_v11`'s result left out of `assemble_library`.
+Must fail: `tests/test_symlinked_root.py::test_the_committed_symlinked_root_is_a_v11_warning_at_repository_level`,
+**at repository level**, driven off the committed link.
+Must stay green: `tests/test_symlinked_root.py::test_the_symlinked_root_is_skipped_in_the_plan_and_the_run_is_incomplete`,
+which reads the scanner's own values and never a finding.
+
+**(b)** the symlinked root followed instead of refused — `infrastructure/scanner.py`,
+`_artifact_name`'s `is_symlink` guard removed.
+Must fail: `tests/test_symlinked_root.py::test_neither_the_symlinked_root_nor_its_destination_is_written`,
+whose **first** assertion is that the destination's bytes reach nowhere in the target.
+Must stay green: the warning test above — detection sits in `_scan_type` and does not depend on
+the guard, which is the whole reason the two are separate statements.
+
+**(c)** my own, for **R93** — the record written once, already dropping the pruned paths, as it is
+today — `application/write/install.py`, step 4 folded back into step 2.
+Must fail: `tests/application/test_install.py::test_a_pruning_apply_claims_the_pruned_path_until_it_is_gone`,
+which injects an `OSError` into the pruning delete and asserts that the one record already on disk
+**still names the pruned path** (L52 — a run that does not fail cannot tell the two orders apart).
+Must stay green: `tests/application/test_install.py::test_pruning_removes_the_path_and_drops_it_from_the_manifest`,
+a successful pruning run, whose **final** record is identical under both orders. Heeding **L51**,
+that control asserts the record's content and says nothing about how many records were written.
+
+## 7. Existing tests changed, and what each asserts now
+
+Nine, and every one of them is a golden that V11 or R94 moved by construction.
+
+| Test | What it asserts now |
+|---|---|
+| `tests/domain/test_validation.py` — `CHARTER_SECTION_8` | gains `"V11": WARNING`. The closed-set and declaration-order assertions follow from it |
+| …`test_v6_is_the_only_warning` → **`test_v6_and_v11_are_the_only_warnings`** | the warning set is `[V6, V11]`. Renamed rather than widened, so the name still says what the list is |
+| `tests/domain/test_assembly.py::test_every_finding_takes_its_severity_from_the_register` | takes a `symlinked_roots=` argument, so *"every rule is reachable from this layer"* stays total over `ValidationCode` |
+| `tests/infrastructure/test_repository.py::test_v7_fires_…` | the library-level codes are `[V7, V7, V11]`, the first two ERROR and the third WARNING. Still a golden list, so a lost V11 fails here too |
+| `tests/cli/test_validate.py::test_the_report_reaches_the_library_level_findings` | `["V7", "V7", "V11"]` through the real CLI — the only place the user is told the linked skill exists at all |
+| `tests/infrastructure/test_scanner.py::test_a_symlinked_artifact_root_is_never_followed` → **`…_and_is_reported`** | the artifact set still holds only the real skill **and** the scan reports the root, its id and its destination. The open question its docstring carried is answered and the paragraph is gone |
+| …`test_two_scans_of_one_library_produce_the_same_order`, `test_a_library_with_no_type_directories_scans_to_nothing`, and the `scan()` helpers in `test_scanner.py` / `test_timestamps.py` / `test_repository.py` | mechanical: `scan_library` returns a `LibraryScan`, so they read `.artifacts` |
+| `tests/test_clean.py::test_a_cleaned_target_is_put_back_by_restoring_the_backup` | **the file set comes back whole**, the symlink included, asserted on `is_symlink` and on `readlink`. It previously asserted `before - {SYMLINK}` and said in its docstring that the gap wanted a ruling; R94 is that ruling |
+| every `plan_install(...)` call in `test_install.py`, `test_drift.py`, `test_rollback.py`, `test_clean.py` | mechanical: `unscannable=()` |
+
+**T-16's ordering witness did not move.** `test_the_manifest_is_on_disk_before_the_first_file_is_written`
+injects a failure into the first file write on a **non-pruning** plan, and R93 changes nothing
+there: the union record is still composed and written before the first file. What changed is the
+docstring of `apply_install` and of `ApplyResult.manifest`, which now say that a pruning run's
+result carries the *second* record.
+
+## 8. Gate
+
+```
+export PATH="$HOME/.local/bin:$PATH"
+uv run ruff format --check . && uv run ruff check . && uv run mypy src tests && uv run lint-imports && uv run pytest
+```
+
+Whole, every time (L2), exit code read without a pipe (L44). Baseline 849 passed; **899 passed,
+exit 0** after this task, read with `… > gate.log 2>&1; echo $?`.
+
+## 9. What the contracts left open, and what I decided
+
+| Open point | Decision |
+|---|---|
+| **How the symlinked roots reach `plan_install`** | an explicit required keyword-only parameter. C-4 is frozen and the natural home — a seventh repository member — would amend it, so `FilesystemArtifactRepository.symlinked_roots()` is additive and not in the protocol, exactly as `library_findings()` was before R23. **Flagged: C-4 wants the member.** |
+| **Why not read the finding instead** | because the mutation table forbids it, and rightly: a refusal wired through `library_findings()` would vanish the moment the report did, and the two would be one fact with two names |
+| **What `ValidationFinding.path` means for V11** | the path **relative to the library root**, the only spelling that exists for a root that was never scanned. The field's docstring now says so; `None` would hide the one fact the finding delivers |
+| **What happens when the plan already holds an entry at the root path** | it is **replaced**, keeping its digests. One path, one entry; and the case is the user's development link mirrored into their target, where keeping `FOREIGN` would have `clean --foreign` offer to delete the very link R22's exception protects |
+| **Whether `--force` lifts V11** | **no**, and this is the one place `force` stops. R75 refuses bytes a user may accept; here there are none, and forcing could only mean following the link or destroying it |
+| Whether a symlinked child that is not artifact-shaped warns | under a `FILE`-kind type, only a `.md` child does. Under a `DIRECTORY`-kind type **every** link does, because deciding otherwise means `is_dir()`, which follows it |
+| **A symlinked root whose destination is another skill in the same library** | both answers stand and neither disturbs the other: the real skill is scanned once under its own name, the alias is reported and skipped. Different target paths, different names, so nothing is written twice and V8 has nothing to say. Pinned in `test_a_skill_symlinked_to_another_skill_in_the_same_library_is_reported_once` |
+| **Where `read_link` / `write_link` live** | on the concrete `FilesystemTargetRepository` and **not** in C-12, whose protocol says five members and no sixth. Nothing that plans or applies needs them; the backup store already holds the concrete class. **Flagged: C-12 wants them** |
+| A version-2 backup after R94 | not offered, as R92 decided for version 1. Reading one with `links = {}` would be true and would be a second code path through the document whose job is to be trustworthy |

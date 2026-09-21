@@ -47,7 +47,7 @@ class FindingPayload(Payload):
     """One validation finding. Contract C-3 on the wire.
 
     Attributes:
-        code: the rule that fired, `V1` to `V10`. **This is the branchable value.**
+        code: the rule that fired, `V1` to `V11`. **This is the branchable value.**
         severity: `error` or `warning`. Ruling R13 — it comes from the register, never from a
             caller, so it cannot disagree with `code`.
         message: a human sentence. Not contract.
@@ -336,9 +336,12 @@ class ValidationReport(Payload):
         artifacts: **only the artifacts carrying at least one finding**, in library order. A clean
             artifact is absent, which is what makes "this rule does not fire on a clean artifact"
             an assertion a test can make.
-        library_findings: V7 and V9 — faults of the `library.yaml` document itself, which have no
-            artifact to hang them on. Ruling R23: these two rules are reachable *only* here, so a
-            report that omitted them would leave two rows of charter §8 unable to fail anything.
+        library_findings: V7, V9 and **V11** — the findings with no artifact to hang them on. V7
+            and V9 are faults of the `library.yaml` document itself; V11 is an artifact root that
+            is a symlink, which R6 never followed and never scanned, so no artifact was produced
+            for it (R46). Ruling R23: these rules are reachable *only* here, so a report that
+            omitted them would leave three rows of charter §8 unable to be acted on — and V11's
+            whole purpose is to make an omission visible.
     """
 
     is_valid: bool

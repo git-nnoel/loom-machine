@@ -142,6 +142,88 @@ class RawEntry:
 
 
 @dataclass(frozen=True, slots=True)
+class SymlinkedRoot:
+    """An artifact root the scan found to be a symlink, and therefore never walked. **V11.**
+
+    The counterpart of `SkippedPath` one level up. A skipped *path* is a file inside an artifact
+    root that the scan refused; this is the artifact root itself. Ruling R6 never follows a link,
+    so such a root is not scanned, produces no `RawArtifact`, and was — until charter §8 gained
+    V11 — simply absent from the library with nothing said about it. A skill that would load
+    perfectly, invisible: the exact silent omission this product exists to eliminate.
+
+    Reported and never repaired. Manufacturing a `RawArtifact` for it would fire V1 against a
+    skill whose entry document is right there behind the link, which is a false ERROR, and
+    following the link is what R6 forbids.
+
+    Attributes:
+        type: which registry entry this root was found under.
+        name: the on-disk name the link carries — the directory's name for a `DIRECTORY`-kind
+            type, the document's stem for a `FILE`-kind one. It is the name the artifact *would*
+            have had, which is what makes the report actionable.
+        destination: the raw text the link names, unresolved. `readlink` and never `resolve`: the
+            reader has to see *where it pointed*, a relative target keeps the `..` components that
+            are the whole diagnosis, and resolving it would both follow the link and turn a
+            dangling one into an error.
+    """
+
+    type: ArtifactType
+    name: str
+    destination: str
+
+    def __post_init__(self) -> None:
+        # `make_artifact_id` owns the name rules, exactly as it does for `RawArtifact`: a root
+        # whose name cannot be an identity is rejected where the scanner can still say which
+        # directory it came from.
+        make_artifact_id(self.type, self.name)
+        if not self.destination:
+            raise ValueError(
+                "SymlinkedRoot.destination must not be empty: it is the whole of what V11 tells "
+                "a user about where their artifact went"
+            )
+
+    @property
+    def id(self) -> str:
+        """The `<type>/<name>` identity this root would have had."""
+        return make_artifact_id(self.type, self.name)
+
+    @property
+    def spec(self) -> TypeSpec:
+        """The registry entry for this root's type."""
+        return spec_for(self.type)
+
+    @property
+    def root_path(self) -> str:
+        """The root relative to the library root — and, because install mirrors the library's
+        layout into the target, the target-relative path V11's `SKIPPED` plan entry carries.
+
+        From `TypeSpec.root_path`, never concatenated here: ruling R73 keeps every answer to
+        "where does this live" in the registry, and a second one would disagree exactly where a
+        report and a plan have to agree.
+        """
+        return self.spec.root_path(self.name)
+
+
+@dataclass(frozen=True, slots=True)
+class LibraryScan:
+    """Everything one walk of a library root found. What `scan_library` returns.
+
+    A value rather than two return statements, because the two halves are produced by one walk and
+    a caller that took only the first would silently lose V11 — which is the failure V11 itself is
+    about. The assembler needs both to decide charter §8 in full.
+
+    Attributes:
+        artifacts: one per artifact root the scan walked, in type-directory then name order.
+            **Nothing is filtered** (R8).
+        symlinked_roots: one per artifact root that is a symlink, in the same order. Each becomes
+            a V11 WARNING on `AssembledLibrary.findings`, and each is what install refuses to
+            write (R46, R53).
+    """
+
+    artifacts: tuple[RawArtifact, ...] = ()
+    symlinked_roots: tuple[SymlinkedRoot, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class RawArtifact:
     """What the scanner found at one artifact root. The assembler's only input about the disk.
 

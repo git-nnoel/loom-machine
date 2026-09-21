@@ -69,6 +69,7 @@ def _plan_of(
         FakeArtifactRepository(artifacts),
         FakeTargetRepository(target_entries),
         manifest=manifest,
+        unscannable=(),
     )
 
 

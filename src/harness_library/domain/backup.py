@@ -16,6 +16,11 @@ rather than a section of `manifest.py`. A manifest says what *this tool* put som
 says what was *there*, whoever put it there. T-18's rollback restores one without reading the
 other, and the two answer different questions about the same directory.
 
+**A link is described, never dereferenced.** Ruling R94 records a symlink's destination in the
+record and recreates the link on restore. Copying what it pointed at would put content from
+outside the target into a backup of the target and then materialise it as a regular file, which
+is the same escape R6 forbids, reached through the one mechanism meant to undo damage.
+
 **Paths are `str`, target-relative, `/`-separated** (R21) — C-12's vocabulary exactly, because the
 paths handed to `create` come straight off a `PlanEntry`. Nothing here performs I/O and
 `tests/domain/test_purity.py` bars `pathlib` from this layer.
@@ -23,9 +28,13 @@ paths handed to `create` come straight off a `PlanEntry`. Nothing here performs 
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from datetime import datetime
+from types import MappingProxyType
 from typing import Protocol, runtime_checkable
+
+_NO_LINKS: Mapping[str, str] = MappingProxyType({})
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,6 +71,24 @@ class BackupRecord:
             `kept` is removed as R79 requires. The duplication is deliberate and is the point —
             the record is the claim and the tree is the evidence, and a backup is exactly as
             trustworthy as the two agreeing.
+        links: the described paths that were **symlinks** when the backup was taken, each mapped
+            to the raw destination it named. **Ruling R94, amending C-13.**
+
+            A link has no bytes to copy — ruling R6 never reads through one, and a store that
+            did would put content from outside the target into a backup of it. Before this field
+            a link was therefore described like an absent path and stored like one, so restoring
+            the backup **removed** it and never put it back: the one destructive act in
+            `clean --foreign`, the command whose entire safety model is this record, that nothing
+            could undo.
+
+            **A link's content is its destination**, which is a short string and belongs in the
+            record rather than in a file tree. `restore` recreates the link with exactly this
+            text, so a restored link is a link and not a copy of what it pointed at — the
+            difference between putting a user's development link back and silently replacing it
+            with a snapshot of somebody else's directory.
+
+            Disjoint from `kept`, because a path is bytes or a link and never both, and a subset
+            of `paths`, for the reason `kept` is.
     """
 
     backup_id: str
@@ -69,6 +96,7 @@ class BackupRecord:
     target_path: str
     paths: tuple[str, ...] = ()
     kept: tuple[str, ...] = ()
+    links: Mapping[str, str] = field(default=_NO_LINKS)
 
     def __post_init__(self) -> None:
         if not self.backup_id:
@@ -83,12 +111,33 @@ class BackupRecord:
                 "BackupRecord.target_path must not be empty: a backup whose target is unknown "
                 "cannot be offered for restore without asking the user to guess"
             )
+        object.__setattr__(self, "links", MappingProxyType(dict(self.links)))
         unclaimed = sorted(set(self.kept) - set(self.paths))
         if unclaimed:
             raise ValueError(
                 f"this backup keeps bytes for {unclaimed}, which it does not describe: restore "
                 "walks `paths`, so bytes outside it would be held forever and put back never. "
                 "`kept` is a subset of `paths` (R92), not a second list"
+            )
+        undescribed = sorted(set(self.links) - set(self.paths))
+        if undescribed:
+            raise ValueError(
+                f"this backup records links at {undescribed}, which it does not describe: "
+                "restore walks `paths`, so a link outside it would be recorded forever and "
+                "recreated never. `links` is keyed within `paths` (R94), not a second list"
+            )
+        both = sorted(set(self.links) & set(self.kept))
+        if both:
+            raise ValueError(
+                f"this backup holds both bytes and a link destination for {both}: a path was one "
+                "or the other when it was taken, and a restore that had both would have to guess "
+                "which the target really held (R94)"
+            )
+        empty = sorted(path for path, destination in self.links.items() if not destination)
+        if empty:
+            raise ValueError(
+                f"this backup records an empty link destination for {empty}: a link's "
+                "destination is its whole content, and an empty one cannot be recreated"
             )
 
 
@@ -109,6 +158,10 @@ class BackupStore(Protocol):
         of the backup's paths, left out of `kept`, and no bytes are stored for it — so a restore
         removes it again.
 
+        A path the target holds as a **symlink** is the third case (R94): no bytes are copied,
+        because R6 never reads through one, and the destination it names is recorded in `links`
+        instead, so a restore can recreate the link as a link.
+
         Raises:
             OSError: the backup could not be taken. A builtin, and deliberately so (ruling R24):
                 `application/` is where it becomes `BACKUP_FAILED`, and a store raising that code
@@ -120,10 +173,11 @@ class BackupStore(Protocol):
     def restore(self, backup_id: str) -> None:
         """Put every path this backup describes back as it was.
 
-        A path in `kept` is written back from the bytes the backup stored; a path it describes and
-        kept no bytes for was absent when the backup was taken and is removed. Nothing else in the
-        target is touched — a backup is not a snapshot of the whole directory, and restoring one
-        must not delete a file that was never in it.
+        A path in `kept` is written back from the bytes the backup stored; a path in `links` is
+        recreated as a symlink naming the destination it named before (R94); a path it describes
+        and holds neither for was absent when the backup was taken and is removed. Nothing else
+        in the target is touched — a backup is not a snapshot of the whole directory, and
+        restoring one must not delete a file that was never in it.
 
         This is the mechanism; **choosing** to run it is T-18's rollback use case.
 

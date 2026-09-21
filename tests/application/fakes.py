@@ -292,10 +292,11 @@ class FakeBackupStore:
     lose a key on its own. `tests/infrastructure/test_backup.py` proves that half against a
     real tree.
 
-    **It keeps bytes for a symlink and the real store cannot** — R6 forbids reading through one,
-    so `FilesystemBackupStore` describes a link and stores nothing for it, which is why a clean
-    that removes one is not undoable. A dictionary has no links, so this fake cannot show that
-    either; `tests/test_clean.py` does.
+    **It keeps bytes for a symlink and the real store keeps a destination** — R6 forbids reading
+    through one, so `FilesystemBackupStore` records where it pointed (`BackupRecord.links`,
+    ruling R94) and recreates it on restore. A dictionary has no links, so this fake models
+    neither the distinction nor the restore; `tests/infrastructure/test_backup.py` proves the
+    round trip against real files and `tests/test_clean.py` proves it end to end.
 
     Attributes:
         created: the path tuples `create` was called with, in call order.

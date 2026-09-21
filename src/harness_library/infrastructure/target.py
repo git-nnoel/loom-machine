@@ -12,7 +12,9 @@ assembler to turn into V6. None of that belongs here:
 * a **symlink is recorded, not skipped** (R6). It is still never followed and never hashed; what
   changes is that install has to be able to see that the path it was about to write is a link
   pointing somewhere else. That is the whole difference between reporting a library and reporting
-  a place you are about to write into.
+  a place you are about to write into. Since ruling R94 a link can also be **read as a link and
+  written back as one** — `read_link` and `write_link`, which are not C-12 members and exist
+  because a backup that could not put a link back made `clean --foreign` un-undoable for one.
 
 **What this layer is blind to.** It cannot see whether any path it reports belongs to an artifact,
 was installed by this tool, or has drifted. Those are the verdict rule's (C-9, C-10) and the
@@ -152,6 +154,72 @@ class FilesystemTargetRepository:
     def exists(self, path: str) -> bool:
         """Whether anything is at this target-relative path, a dangling symlink included."""
         return os.path.lexists(self._locate(path))
+
+    # -- Beyond contract C-12, for the backup store (ruling R94) ---------------------------------
+    #
+    # C-12's protocol has five members "and no sixth", because every member a fake implements is
+    # a member two tasks can get wrong in two places. These two are **not** in it: nothing that
+    # plans or applies an install needs them, and the only caller is `FilesystemBackupStore`,
+    # which already holds this concrete class. That is the shape `library_findings()` had on the
+    # artifact repository before ruling R23 moved it into C-4, and it is flagged the same way:
+    # **C-12 wants these two, and that is a plan-level decision.**
+
+    def read_link(self, path: str) -> str:
+        """The raw destination a symlink at this target-relative path names, unresolved.
+
+        `readlink` and never `resolve`: R6 forbids following a link, the destination is wanted as
+        text rather than as a place, and resolving would turn a dangling link — which a backup
+        must still be able to put back — into an error. A relative destination keeps its `..`
+        components, so recreating the link reproduces exactly what the user wrote.
+
+        Raises:
+            ValueError: the path is empty, absolute, climbs out with `..`, passes through a
+                symlinked directory, or **is not a symlink at all** — a caller asking a regular
+                file for its destination has confused two kinds of path, and answering would
+                invent one.
+            FileNotFoundError: the target holds nothing at that path.
+        """
+        located = self._locate(path)
+        if not located.is_symlink():
+            if not os.path.lexists(located):
+                raise FileNotFoundError(f"this target holds nothing at {path!r}")
+            raise ValueError(
+                f"{path!r} is not a symlink, so it names no destination: a regular file's "
+                "content is its bytes and is read with read_bytes"
+            )
+        return os.readlink(located)
+
+    def write_link(self, path: str, destination: str) -> None:
+        """Create a symlink at this target-relative path naming `destination`, replacing whatever
+        is there.
+
+        The destination is written **verbatim** and is never resolved, joined or checked: it is
+        the text the link carried when the backup was taken, and a restore that "corrected" it
+        would put back a different link from the one it removed. Where it points is not this
+        repository's business — nothing here follows it, and a dangling link restores as a
+        dangling link, which is what was there.
+
+        The parent directories are created, at `DIRECTORY_MODE` like `write`'s. No `chmod`
+        follows: `Path.chmod` follows a symlink, so setting a mode here would change the
+        permissions of whatever the link names — a file outside the target, quite possibly.
+
+        Raises:
+            ValueError: the path is empty, absolute, climbs out with `..`, passes through a
+                symlinked directory, or `destination` is empty.
+            OSError: the link could not be created.
+        """
+        if not destination:
+            raise ValueError(
+                f"a symlink at {path!r} cannot name an empty destination: a link's destination "
+                "is its whole content"
+            )
+        located = self._locate(path)
+        self._make_parents(located)
+        if os.path.lexists(located):
+            # `symlink` refuses an existing name outright, and a restore is by definition putting
+            # something back over whatever is there now. Unlinked as itself — never followed.
+            os.unlink(located)
+        os.symlink(destination, located)
 
     # -- The walk --------------------------------------------------------------------------------
 

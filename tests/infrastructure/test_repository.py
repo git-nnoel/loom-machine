@@ -265,13 +265,23 @@ def test_v7_fires_for_a_library_yaml_id_and_a_collection_member_that_resolve_to_
     library: FilesystemArtifactRepository,
 ) -> None:
     """V7 and V9 are faults of the *document*, so they have no artifact to hang on. Reaching them
-    is what `library_findings()` is for — additive, and not a change to contract C-4."""
+    is what `library_findings()` is for — contract C-4 since ruling R23.
+
+    The third finding is V11's, over the fixture's symlinked root, and is asserted in full in
+    `tests/test_symlinked_root.py`. It is named here so that this golden stays a golden: a list
+    that said only "the first two are V7" would go green over a report that had lost V11.
+    """
     findings = library.library_findings()
 
-    assert [f.code for f in findings] == [ValidationCode.V7, ValidationCode.V7]
+    assert [f.code for f in findings] == [
+        ValidationCode.V7,
+        ValidationCode.V7,
+        ValidationCode.V11,
+    ]
     assert "skill/never-existed" in findings[0].message
     assert "skill/also-never-existed" in findings[1].message
-    assert all(f.severity is Severity.ERROR for f in findings)
+    assert all(f.severity is Severity.ERROR for f in findings[:2])
+    assert findings[2].severity is Severity.WARNING
 
 
 # ==================================================================================================
@@ -303,7 +313,9 @@ def test_the_two_redirect_stubs_would_produce_seven_v3_findings_without_the_exem
     **golden literal** and its count is asserted separately, so seven is the sum of two pinned
     parts rather than a number that happened to come out right.
     """
-    scanned = {raw.id: raw for raw in scan_library(fixture_library, timestamps=FIXED_TIMESTAMPS)}
+    scanned = {
+        raw.id: raw for raw in scan_library(fixture_library, timestamps=FIXED_TIMESTAMPS).artifacts
+    }
 
     def missing_citations(artifact_id: str) -> list[str]:
         raw = scanned[artifact_id]

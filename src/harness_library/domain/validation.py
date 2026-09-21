@@ -62,6 +62,13 @@ class ValidationCode(StrEnum):
     V10 = "V10"
     """The entry document's frontmatter does not parse. Suppresses V2 and V5 (ruling R33)."""
 
+    V11 = "V11"
+    """An artifact root that is a symlink: never followed, never scanned, and so absent from the
+    library with no diagnostic (rulings R6, R46). A **WARNING** that nonetheless refuses the
+    install of that one artifact (R53) — the single exception charter §8 and spec §4 carve out of
+    R22, because following such a root writes content from outside the library and replacing it
+    destroys the user's development link."""
+
     @property
     def severity(self) -> Severity:
         """The severity charter §8 assigns to this rule."""
@@ -80,6 +87,7 @@ SEVERITY_BY_CODE: Mapping[ValidationCode, Severity] = MappingProxyType(
         ValidationCode.V8: Severity.ERROR,
         ValidationCode.V9: Severity.ERROR,
         ValidationCode.V10: Severity.ERROR,
+        ValidationCode.V11: Severity.WARNING,
     }
 )
 """Charter §8's severity column. The single source; `ValidationCode.severity` reads it."""
@@ -96,6 +104,13 @@ class ValidationFinding:
         message: a human sentence. Not contract — it may be reworded without notice.
         path: the file the finding is about, relative to the artifact root, or `None` when the
             finding is about the artifact as a whole. Present-and-null, never omitted.
+
+            **V11 is the one code whose path is relative to the *library* root**, and it has to
+            be: the finding is about an artifact root that was never scanned, so there is no
+            artifact root for it to be relative *to*. The value is that artifact's own
+            `Artifact.path` would-have-been — `skills/<name>` — which is what a reader needs in
+            order to go and look at it. `None` was the alternative and is worse: it would hide
+            the one fact the report exists to deliver.
     """
 
     code: ValidationCode

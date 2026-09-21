@@ -22,13 +22,16 @@ CHARTER_SECTION_8 = {
     "V8": Severity.ERROR,
     "V9": Severity.ERROR,
     "V10": Severity.ERROR,
+    "V11": Severity.WARNING,
 }
 """Charter §8's register, transcribed. V10 arrived with ruling R33 — unparseable frontmatter is its
-own finding rather than a cascade of false "key is missing" reports."""
+own finding rather than a cascade of false "key is missing" reports. V11 arrived with ruling R46:
+an artifact root that is a symlink is never followed, never scanned and so silently absent, and
+reporting the absence is the whole of the rule."""
 
 
 def _register_in_rule_order() -> list[tuple[str, Severity]]:
-    """The register as pairs, V1 first and V10 last."""
+    """The register as pairs, V1 first and V11 last."""
     return sorted(CHARTER_SECTION_8.items(), key=lambda pair: _rule_number(pair[0]))
 
 
@@ -45,7 +48,7 @@ def test_the_code_set_is_exactly_the_charter_register() -> None:
     """Closed. Initiative 04 branches on the code, so a member added without a charter row —
     or a row added without a member — has to fail here.
 
-    Declaration order is asserted too, and separately: the enum reads V1 … V10 in rule order, so a
+    Declaration order is asserted too, and separately: the enum reads V1 … V11 in rule order, so a
     member appended in the wrong place is visible here rather than only in a report's ordering.
     """
     assert {code.value for code in ValidationCode} == set(CHARTER_SECTION_8)
@@ -59,11 +62,17 @@ def test_each_code_carries_the_severity_the_charter_assigns_it(
     assert ValidationCode(code_value).severity is expected
 
 
-def test_v6_is_the_only_warning() -> None:
-    """The positive control for the WARNING half of the register: exactly one code is a warning,
-    so a table-wide flip to WARNING cannot pass as 'V6 is still a warning'."""
+def test_v6_and_v11_are_the_only_warnings() -> None:
+    """The positive control for the WARNING half of the register: exactly two codes are warnings,
+    so a table-wide flip to WARNING cannot pass as 'V6 is still a warning'.
+
+    V11 joined V6 under ruling R46. That it is a warning and nonetheless refuses one artifact's
+    install is not a severity question and is not decided here — the register says how much the
+    finding matters, and `application/write/install.py` says what install does about it. R22's
+    one exception is stated in charter §8 and spec §4, and asserted where the refusal lives.
+    """
     warnings = [code for code in ValidationCode if code.severity is Severity.WARNING]
-    assert warnings == [ValidationCode.V6]
+    assert warnings == [ValidationCode.V6, ValidationCode.V11]
     assert SEVERITY_BY_CODE[ValidationCode.V1] is Severity.ERROR
 
 

@@ -106,7 +106,7 @@ def install(
     """One real apply into `target_root`, planned from the target as it is now."""
     target = FilesystemTargetRepository(target_root)
     return apply_install(
-        plan_install(library, target, manifest=manifest),
+        plan_install(library, target, manifest=manifest, unscannable=()),
         library,
         target,
         FilesystemBackupStore(state_root, target_root, now=lambda: APPLIED_AT),

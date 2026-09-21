@@ -5,7 +5,7 @@ validation into it across two later tasks; here every part it composes was prove
 so it holds no rule, no parsing and no judgement of its own:
 
 ```
-scan_library      →  RawArtifact values, from the disk
+scan_library      →  a LibraryScan: RawArtifact values and the symlinked roots, from the disk
 read_library_metadata  →  LibraryMetadata, from library.yaml
 assemble_library  →  the finished Artifacts and their findings
 ```
@@ -32,6 +32,7 @@ from pathlib import Path, PurePosixPath
 from harness_library.domain.artifact import Artifact, ArtifactKind
 from harness_library.domain.assembly import AssembledLibrary, assemble_library
 from harness_library.domain.metadata import Collection, LibraryMetadata
+from harness_library.domain.raw import SymlinkedRoot
 from harness_library.domain.registry import spec_for
 from harness_library.domain.validation import ValidationFinding
 from harness_library.infrastructure.library_yaml import read_library_metadata
@@ -65,6 +66,7 @@ class FilesystemArtifactRepository:
         self._timestamps = timestamps
         self._assembled: AssembledLibrary | None = None
         self._metadata: LibraryMetadata | None = None
+        self._symlinked_roots: tuple[SymlinkedRoot, ...] = ()
 
     # -- Contract C-4 ----------------------------------------------------------------------------
 
@@ -118,15 +120,31 @@ class FilesystemArtifactRepository:
     # -- Additive, and not part of C-4 -----------------------------------------------------------
 
     def library_findings(self) -> list[ValidationFinding]:
-        """The findings that belong to no single artifact — V7 and V9.
+        """The findings that belong to no single artifact — V7, V9 and, since R46, **V11**.
 
-        Beyond contract C-4, which is untouched. Both rules are faults of the `library.yaml`
-        *document*, so the assembler puts them on `AssembledLibrary` rather than on an artifact;
-        without a way to reach them, feature F-4 could report neither, and two rows of charter §8's
-        register would be decorative. Flagged to the delivery lead rather than added to C-4, which
-        is a plan-level decision.
+        Part of contract C-4 since ruling R23. V7 and V9 are faults of the `library.yaml`
+        *document* and V11 is a fault about an artifact root that was never scanned, so the
+        assembler puts all three on `AssembledLibrary` rather than on an artifact; without a way
+        to reach them, feature F-4 could report none of them and three rows of charter §8's
+        register would be decorative.
         """
         return list(self._snapshot().findings)
+
+    def symlinked_roots(self) -> tuple[SymlinkedRoot, ...]:
+        """Every artifact root the scan found to be a symlink and therefore never walked. **V11.**
+
+        Beyond contract C-4, which is untouched — the shape `library_findings()` had before
+        ruling R23 put it in the contract, and flagged here for the same decision. `plan_install`
+        needs these values to refuse the artifact (R46, R53), and it must not reach them through
+        a `ValidationFinding`: the warning and the refusal are two facts, and a refusal that read
+        the report would vanish the moment the report did. **Flagged to the delivery lead: C-4
+        wants a seventh member, which is a plan-level decision.**
+
+        The snapshot is taken on first use, exactly as `list_all()` takes it, so a listing and
+        this answer always describe one walk of one library.
+        """
+        self._snapshot()
+        return self._symlinked_roots
 
     # -- The snapshot ----------------------------------------------------------------------------
 
@@ -139,9 +157,12 @@ class FilesystemArtifactRepository:
         """
         if self._assembled is None:
             self._metadata = read_library_metadata(self._library_root)
+            scanned = scan_library(self._library_root, timestamps=self._timestamps)
+            self._symlinked_roots = scanned.symlinked_roots
             self._assembled = assemble_library(
-                scan_library(self._library_root, timestamps=self._timestamps),
+                scanned.artifacts,
                 self._metadata,
+                symlinked_roots=scanned.symlinked_roots,
             )
         return self._assembled
 

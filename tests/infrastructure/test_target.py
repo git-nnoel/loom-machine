@@ -561,3 +561,119 @@ def test_the_filesystem_repository_satisfies_the_protocol(
     """Structural, never inherited — ruling R14's shape: `domain/` keeps knowing nothing about who
     implements its protocols."""
     assert isinstance(target, TargetRepository)
+
+
+# ==================================================================================================
+# Ruling R94 — reading a link as a link, and writing one back
+# ==================================================================================================
+#
+# Neither member is in contract C-12, which has five "and no sixth" because every member a fake
+# implements is a member two tasks can get wrong in two places. Nothing that plans or applies an
+# install needs these; the only caller is `FilesystemBackupStore`, which already holds this
+# concrete class. **Flagged: C-12 wants them, and that is a plan-level decision.**
+
+
+def test_a_link_is_read_as_the_raw_text_it_names(writable: Path) -> None:
+    """`readlink`, never `resolve`. The `..` components are kept, which is both the whole
+    diagnosis when a link escapes the target and what makes recreating it reproduce the link the
+    user actually wrote rather than an absolute path this tool invented."""
+    repository = FilesystemTargetRepository(writable)
+
+    assert repository.read_link(THE_LINK) == "../../../../outside/target-escape.md"
+
+
+def test_reading_a_regular_file_as_a_link_is_refused(writable: Path) -> None:
+    """A regular file names no destination, and answering with one would invent it. The link in
+    the same target is the positive control: the refusal is about this path, not about a member
+    that refuses everything."""
+    repository = FilesystemTargetRepository(writable)
+
+    with pytest.raises(ValueError, match="not a symlink"):
+        repository.read_link("settings.json")
+
+    assert repository.read_link(THE_LINK) != ""
+
+
+def test_reading_a_link_that_is_not_there_is_a_missing_file(writable: Path) -> None:
+    """Told apart from the refusal above, because the two are different mistakes: one is "that
+    path is not a link" and the other is "that path is nothing at all"."""
+    repository = FilesystemTargetRepository(writable)
+
+    with pytest.raises(FileNotFoundError):
+        repository.read_link("skills/never-existed/SKILL.md")
+
+
+def test_a_written_link_is_a_link_and_not_a_copy_of_its_destination(writable: Path) -> None:
+    """**What makes a restore a restore.** Writing the destination's *bytes* would satisfy "the
+    path is back" and would leave the user with a snapshot of somebody else's directory where
+    they had a pointer to it.
+
+    Asserted on `is_symlink`, on the raw destination, and on the content reachable through it.
+    """
+    repository = FilesystemTargetRepository(writable)
+    repository.delete(THE_LINK)
+
+    repository.write_link(THE_LINK, "../../../../outside/target-escape.md")
+
+    assert (writable / THE_LINK).is_symlink()
+    assert os.readlink(writable / THE_LINK) == "../../../../outside/target-escape.md"
+    assert (writable / THE_LINK).read_bytes() == (
+        writable.parent / "outside" / "target-escape.md"
+    ).read_bytes()
+
+
+def test_writing_a_link_replaces_whatever_is_at_the_path(writable: Path) -> None:
+    """A restore puts a target back, whatever took the path's place in the meantime — a regular
+    file a reinstall left, or another link. `os.symlink` refuses an existing name outright, so
+    the old entry is unlinked **as itself** first, never followed."""
+    repository = FilesystemTargetRepository(writable)
+    repository.write("skills/new-skill/SKILL.md", b"an ordinary file\n")
+
+    repository.write_link("skills/new-skill/SKILL.md", "../../elsewhere.md")
+
+    assert (writable / "skills/new-skill/SKILL.md").is_symlink()
+    assert os.readlink(writable / "skills/new-skill/SKILL.md") == "../../elsewhere.md"
+
+
+def test_writing_a_link_creates_the_directories_it_needs(writable: Path) -> None:
+    """The same parent handling `write` does, at `DIRECTORY_MODE`, so a restore into a target
+    whose directories a clean emptied still lands."""
+    repository = FilesystemTargetRepository(writable)
+
+    repository.write_link("skills/brand-new/references/link.md", "../../../outside/whatever.md")
+
+    created = writable / "skills/brand-new/references"
+    assert (created / "link.md").is_symlink()
+    assert stat.S_IMODE(created.stat().st_mode) == DIRECTORY_MODE
+
+
+def test_a_link_is_never_written_through_a_symlinked_directory(writable: Path) -> None:
+    """The same three-stage path safety every other member keeps (R6). Nobody writes
+    `../../etc`, but a user really does symlink `~/.claude/skills` somewhere."""
+    (writable / "linked-skills").symlink_to("skills", target_is_directory=True)
+    repository = FilesystemTargetRepository(writable)
+
+    with pytest.raises(ValueError, match="is a symlink"):
+        repository.write_link("linked-skills/new/SKILL.md", "../../outside/x.md")
+
+
+def test_a_link_with_no_destination_is_refused(writable: Path) -> None:
+    """A link's destination is its whole content, and the empty string is not one. Refused here
+    rather than at `os.symlink`, so the diagnosis names the path."""
+    repository = FilesystemTargetRepository(writable)
+
+    with pytest.raises(ValueError, match="empty destination"):
+        repository.write_link("skills/new-skill/SKILL.md", "")
+
+
+def test_a_written_link_may_dangle_and_is_reported_as_one(writable: Path) -> None:
+    """A dangling link restores as a dangling link, because that is what was there. The
+    destination is written verbatim and never checked: correcting it would put back a different
+    link from the one that was removed."""
+    repository = FilesystemTargetRepository(writable)
+
+    repository.write_link("skills/new-skill/SKILL.md", "nowhere-at-all.md")
+
+    assert (writable / "skills/new-skill/SKILL.md").is_symlink()
+    assert not (writable / "skills/new-skill/SKILL.md").exists()
+    assert repository.exists("skills/new-skill/SKILL.md")

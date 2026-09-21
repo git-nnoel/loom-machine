@@ -13,7 +13,9 @@ Three more facts only real files can carry, and they are the ones a careless cle
 * a foreign **directory** is never listed and never removed — `synced/` is leaves, not a tree —
   and the emptied directories are still there afterwards;
 * a foreign **symlink** is unlinked as itself and never followed, so a link resolving out of the
-  target does not turn this command into a delete somewhere else on the machine;
+  target does not turn this command into a delete somewhere else on the machine — and, since
+  ruling R94, the backup puts it back *as a link*, which is the one thing this command's safety
+  model could not do before;
 * the installed files and the manifest survive a clean untouched.
 
 So: a real `FilesystemTargetRepository`, a real `FilesystemBackupStore`, a real manifest store, a
@@ -161,7 +163,7 @@ def install(library: FakeArtifactRepository, target_root: Path, state_root: Path
     """One real apply into the copied fixture, so the target has something clean must not touch."""
     target = FilesystemTargetRepository(target_root)
     apply_install(
-        plan_install(library, target, manifest=None),
+        plan_install(library, target, manifest=None, unscannable=()),
         library,
         target,
         FilesystemBackupStore(state_root, target_root, now=lambda: CLEANED_AT),
@@ -399,27 +401,34 @@ def test_a_cleaned_target_is_put_back_by_restoring_the_backup(
     and the bucket that will ever exist. Restoring it has to reproduce the whole set, and it is
     asserted per path against the set the target held before the clean ran.
 
-    **The symlink is the one path that does not come back, and it is asserted rather than
-    glossed.** R6 forbids reading through a link, so `FilesystemBackupStore.create` describes it
-    and stores no bytes for it — and a backup that kept none cannot put one back. The clean
-    unlinks it, the restore leaves it gone, and no *content* is lost with it: a link is a
-    pointer, and the file it named is outside every tree this backup describes and is untouched.
-    The gap is the removal of a link being un-undoable, and it wants a ruling.
+    **The symlink comes back as a symlink, and that is ruling R94.** R6 forbids reading through
+    a link, so no bytes are stored for one; until T-20 that meant the link was described and
+    never restored, so the single most destructive thing this command does — removing a path
+    this tool never wrote — was the one thing its backup could not undo. A link's content is its
+    destination, the record now carries it, and `restore` recreates the link.
+
+    Asserted on `is_symlink` and on the destination, not on the path merely existing: a regular
+    file holding a copy of `target-escape.md` would satisfy "the path is back" and would be a
+    different target from the one that was backed up — the user's development link silently
+    replaced by a snapshot of somebody else's directory.
     """
     library = a_library()
     manifest = install(library, target_root, state_root)
     before = files_under(target_root)
+    link_destination = (target_root / SYMLINK).readlink()
 
     result = clean(library, target_root, state_root, manifest=manifest, remove=True)
     assert result.backup_id is not None
+    assert not (target_root / SYMLINK).exists(), "the clean really did remove it"
 
     FilesystemBackupStore(state_root, target_root, now=lambda: CLEANED_AT).restore(result.backup_id)
 
-    assert files_under(target_root) == before - {SYMLINK}
+    assert files_under(target_root) == before
     assert (target_root / SETTINGS).read_bytes() == (FIXTURE_TARGET / SETTINGS).read_bytes()
     assert (target_root / SWAP).read_bytes() == (FIXTURE_TARGET / SWAP).read_bytes()
     assert (target_root / SYNCED_SKILL).read_bytes() == (FIXTURE_TARGET / SYNCED_SKILL).read_bytes()
-    assert not (target_root / SYMLINK).exists()
+    assert (target_root / SYMLINK).is_symlink()
+    assert (target_root / SYMLINK).readlink() == link_destination
     assert (target_root.parent / "outside" / "target-escape.md").is_file()
 
 

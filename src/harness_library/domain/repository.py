@@ -53,12 +53,14 @@ class ArtifactRepository(Protocol):
         ...
 
     def library_findings(self) -> list[ValidationFinding]:
-        """The findings that belong to no single artifact — V7 and V9.
+        """The findings that belong to no single artifact — V7, V9 and, since R46, **V11**.
 
-        Both are faults of the `library.yaml` *document*, so the assembler puts them on the library
-        rather than on an artifact and there is by definition no artifact to hang them on. Declared
-        here because ruling R23 made this method part of contract C-4: without it the validate use
-        case cannot reach V7 or V9, and two rows of charter §8's register are decorative — a rule
-        that cannot reach a report can never make a library invalid.
+        V7 and V9 are faults of the `library.yaml` *document*, so the assembler puts them on the
+        library rather than on an artifact and there is by definition no artifact to hang them
+        on. V11 arrives at the same place from the other direction: its subject is an artifact
+        root that R6 never followed, so no artifact was produced for it at all. Declared here
+        because ruling R23 made this method part of contract C-4: without it the validate use
+        case cannot reach any of the three, and three rows of charter §8's register are
+        decorative — a rule that cannot reach a report can never be acted on.
         """
         ...

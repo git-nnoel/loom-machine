@@ -14,8 +14,32 @@ because `read/` may not import `write/` (see `read/drift.py`). What differs is w
 *for*: a drift report **describes**, and this is the value apply **executes**. Every narrowing
 that belongs to acting rather than to describing lands here and must not reach the report.
 Ruling R75 is the first of them: an artifact that does not validate is refused, as `SKIPPED` with
-a reason naming the rule, and `force=True` is that narrowing simply not applied. T-20's V11
-refusal and T-21's `--resolve` land in the same place. An alias would have nowhere to put them.
+a reason naming the rule, and `force=True` is that narrowing simply not applied. **V11's refusal
+is the second** (R46, R53) and T-21's `--resolve` will be the third. An alias would have nowhere
+to put them.
+
+## Ruling R46 — a symlinked artifact root is refused, and `--force` cannot override it
+
+R6 never follows a symlink, so an artifact whose root is one is never scanned: the library holds
+no bytes for it and there is nothing for a plan to write. Until this task it was simply absent,
+with no diagnostic anywhere — the last silent omission in the product.
+
+`plan_install` is handed the roots the scan refused and turns each into one `SKIPPED` entry at
+that root's target-relative path, carrying a reason. The run therefore names the artifact, leaves
+it alone, applies everything else (R53), and comes back incomplete — `INCOMPLETE = 6`.
+
+**Unlike R75's refusal, `force=True` does not lift it**, and that is not a severity judgement.
+R75 refuses an artifact whose bytes are right there and whose faults the user may decide to
+accept. Here there are no bytes at all: the only two things "forcing" could mean are following
+the link — writing content from outside the library into the user's target, the escape R6 exists
+to prevent — or writing over the root in the target and destroying a development link the user
+made deliberately. Neither is a thing a flag should be able to ask for, so the skip is applied
+**before** the `force` branch.
+
+**The warning and the refusal never read each other.** The warning is a `ValidationFinding` the
+assembler produces; the refusal is built from `SymlinkedRoot` values the scanner produced. Wiring
+the refusal through the finding would collapse two facts into one, and each would then be
+untestable without the other.
 
 ## Ruling R63 — back up, write the manifest, write the files
 
@@ -35,6 +59,31 @@ escapes. Under this ordering `MANIFEST_UNWRITABLE` therefore always means **noth
 **There is no rollback here.** A failure part-way through leaves every file before it written
 and the manifest already on disk — the accepted over-claim above. Undoing that is T-18's
 rollback, from the backup this module refuses to run without.
+
+## Ruling R93 — when pruning, the record is written twice
+
+`--prune` makes files **disappear**, and charter §13b sends a run that removes files the other
+way round: *the manifest must never disown a file that is still on disk*. Writing one record that
+already drops the pruned paths and only then deleting them left, for the width of the delete
+loop, files on disk claimed by nobody — `FOREIGN`, which install will not touch and uninstall
+cannot remove. That is precisely what R63 exists to prevent, reached through a flag.
+
+Moving the deletes above the record is the naive repair and it is wrong: it would make
+`MANIFEST_UNWRITABLE` stop meaning *nothing happened*, which is the guarantee R64 rests on.
+
+So a pruning run records twice:
+
+1. the **union** — everything it will write *and* everything it will delete — before it touches
+   a file. Composed by `_manifest_after` with nothing removed, because a `PRUNE` path keeps the
+   previous manifest's digest there;
+2. the same record **without** the pruned paths, after the last delete.
+
+At no instant is a file on disk unclaimed. A failure anywhere between the two leaves an
+over-claim, which returns as `LOCAL_EDIT` or `CREATE` on the next diff and is repaired by running
+the command again. A failure on the *second* write is `RecordStaleError` (R90, exit 13), whose
+whole reason for existing is this: the work is done and only the record is behind.
+
+**A run that prunes nothing writes once**, exactly as before, so R64's promise is untouched.
 
 ## What is written, per verdict
 
@@ -84,6 +133,7 @@ from harness_library.domain.backup import BackupStore
 from harness_library.domain.errors import (
     BackupFailedError,
     ManifestWriteError,
+    RecordStaleError,
     TargetUnwritableError,
 )
 from harness_library.domain.hashing import content_hash_of_files
@@ -96,6 +146,7 @@ from harness_library.domain.install_plan import (
 )
 from harness_library.domain.lock import WriteLock
 from harness_library.domain.manifest import Manifest, ManifestArtifact, ManifestStore
+from harness_library.domain.raw import SymlinkedRoot
 from harness_library.domain.registry import target_path_of
 from harness_library.domain.repository import ArtifactRepository
 from harness_library.domain.target import TargetRepository
@@ -132,6 +183,11 @@ class ApplyResult:
     Attributes:
         manifest: the record now on disk. Written **before** the first file (R63), so this is a
             claim about the run's intent; the three path tuples below say what came of it.
+
+            On a **pruning** run this is the *second* record (R93): the first claimed the union
+            of everything written and everything deleted, and this one — written after the last
+            delete — is the same record with the pruned paths dropped. A run that prunes nothing
+            writes one record and this is it.
         backup_id: the backup taken before anything was written, or `None` when the run had
             nothing to write or delete and so had nothing to protect.
         written: the target-relative paths written, in plan order.
@@ -163,9 +219,10 @@ def plan_install(
     target: TargetRepository,
     *,
     manifest: Manifest | None,
+    unscannable: Iterable[SymlinkedRoot],
     force: bool = False,
 ) -> InstallPlan:
-    """The plan an apply would execute. Contract C-10, plus ruling R75's refusal.
+    """The plan an apply would execute. Contract C-10, plus rulings R75 and R46's refusals.
 
     Args:
         library: contract C-4, the library being installed from.
@@ -175,16 +232,31 @@ def plan_install(
             was. **Required, with no default.** A caller that omitted it would judge every path
             `CREATE` and overwrite the whole target, which is the failure the manifest exists to
             prevent, and a default would let that be a typo rather than a decision.
+        unscannable: the artifact roots the scan found to be symlinks and never walked — V11,
+            rulings R46 and R53. One `SKIPPED` entry each, so the run names them, leaves them
+            alone and exits `INCOMPLETE = 6` while applying everything else.
+
+            **Required, with no default**, for the reason C-16's lock is (R82): a plan that
+            simply does not take them keeps `mypy`, `ruff`, `lint-imports` and the whole suite
+            green while silently omitting an artifact — which is the exact failure V11 exists to
+            close, reproduced by a forgotten parameter. `()` is a value it accepts and means a
+            library with no symlinked root, which is the ordinary case.
+
+            Values and not findings: the refusal must survive the warning being dropped, and the
+            warning must survive the refusal being dropped. See the module docstring.
         force: install an artifact that does not validate anyway. **Ruling R75**: by default an
             artifact carrying an ERROR finding comes back `SKIPPED`, with a reason naming the
             codes that fired, and is not written. A WARNING never refuses anything (R22) — charter
             §8 made V6 a warning precisely so that reporting an editor swap file cannot stop an
             install. This is the parameter behind `hl install --force`; the flag is T-22's.
 
+            **It does not lift V11's refusal** (R46): there are no bytes to force, and the only
+            two things it could mean are following the link or destroying it.
+
     Returns:
-        One `PlanEntry` per path the library, the manifest or the target holds, in path order.
-        `InstallPlan.is_complete` is false when any of them awaits a human decision, and
-        `counts` is dense over every verdict.
+        One `PlanEntry` per path the library, the manifest or the target holds, in path order,
+        plus one per symlinked artifact root. `InstallPlan.is_complete` is false when any of them
+        awaits a human decision, and `counts` is dense over every verdict.
 
     Raises:
         ValueError: the manifest records an `artifact_id` that is not a `<type>/<name>` identity,
@@ -192,7 +264,9 @@ def plan_install(
             no longer come from a `Manifest` the store read — the entity rejects it first, and the
             store renders that as a located `ManifestError`.
     """
-    plan = diff_against_target(library, target, manifest=manifest)
+    plan = _skip_unscannable_roots(
+        diff_against_target(library, target, manifest=manifest), unscannable
+    )
     if force:
         return plan
     return _refuse_artifacts_that_do_not_validate(plan, library.list_all())
@@ -246,7 +320,8 @@ def apply_install(
         library_git_sha: the library's commit, or `None` when it is not a clean work tree.
         prune: remove the paths the manifest records and the library no longer holds. Off by
             default — install removing a file nobody asked it to remove is the behaviour this
-            product exists to replace.
+            product exists to replace. **When it is on, the record is written twice** (R93): see
+            the module docstring for why one write cannot serve both orderings.
 
     Returns:
         `ApplyResult`, whose `is_complete` is what a caller exits `INCOMPLETE = 6` from.
@@ -256,7 +331,12 @@ def apply_install(
             was backed up** — the lock is taken before the first of the three steps.
         BackupFailedError: the backup could not be taken. **Nothing was written.**
         ManifestWriteError: the manifest could not be written. **Nothing was written** — under
-            R63 this failure always precedes the first file.
+            R63 this failure always precedes the first file. On a pruning run this is still true:
+            the first of R93's two records is composed before anything is touched.
+        RecordStaleError: **only on a pruning run** (R93, R90). The files are written, the pruned
+            paths are gone, and the second record — the one that drops them — could not be
+            written. Nothing is disowned and nothing is lost; the pruned paths report `CREATE`
+            until the record catches up, and running the command again is safe.
         TargetUnwritableError: a path could not be written or removed. The manifest is already on
             disk and the files before this one are already written; see the module docstring.
         ArtifactFileNotFoundError: a file the plan names is no longer in the library — a torn read
@@ -295,7 +375,7 @@ def _apply(
     library_git_sha: str | None,
     prune: bool,
 ) -> ApplyResult:
-    """R63's five steps, with the lock already held. Split out so the lock wraps every one of them.
+    """R63's steps, with the lock already held. Split out so the lock wraps every one of them.
 
     A separate function rather than an indented block, because the boundary is what is being
     guaranteed: nothing this function does can be reached without going through `apply_install`'s
@@ -309,21 +389,30 @@ def _apply(
     left_alone = tuple(entry for entry in plan.entries if entry.verdict in BLOCKING_VERDICTS)
     sources = _library_sources(library.list_all())
 
+    pruned = frozenset(entry.path for entry in deleted_entries)
+
     # 1. Back up every path this run will write or delete — including the ones the target does
     #    not hold yet, so that undoing a first install means removing what it created.
     backup_id = _take_backup(backups, written_entries + deleted_entries)
 
+    def compose(removed: frozenset[str]) -> Manifest:
+        return _manifest_after(
+            plan,
+            sources=sources,
+            previous=manifest,
+            removed=removed,
+            target_path=target_path,
+            installed_at=installed_at,
+            library_git_sha=library_git_sha,
+            backup_id=backup_id,
+        )
+
     # 2. Then the manifest, and only then a file. Ruling R63; see the module docstring.
-    record = _manifest_after(
-        plan,
-        sources=sources,
-        previous=manifest,
-        removed=frozenset(entry.path for entry in deleted_entries),
-        target_path=target_path,
-        installed_at=installed_at,
-        library_git_sha=library_git_sha,
-        backup_id=backup_id,
-    )
+    #    It claims the **union** — everything about to be written and everything about to be
+    #    deleted — so that no pruned file is ever on disk unclaimed (charter §13b, ruling R93).
+    #    With nothing to prune this is already the final record and nothing below rewrites it,
+    #    which is what keeps `MANIFEST_UNWRITABLE` meaning *nothing happened* (R64).
+    record = compose(frozenset())
     _write_manifest(manifests, record)
 
     # 3. The files. A failure here leaves the manifest over-claiming, which is the accepted cost.
@@ -332,12 +421,79 @@ def _apply(
     for entry in deleted_entries:
         _delete_file(target, entry)
 
+    # 4. Only now may the pruned paths be disowned: they are gone. Ruling R93.
+    if pruned:
+        record = compose(pruned)
+        _rewrite_manifest(manifests, record)
+
     return ApplyResult(
         manifest=record,
         backup_id=backup_id,
         written=tuple(entry.path for entry in written_entries),
         deleted=tuple(entry.path for entry in deleted_entries),
         left_alone=left_alone,
+    )
+
+
+# ------------------------------------------------------------------------------------------------
+# Ruling R46 — a symlinked artifact root is named in the plan and never written
+# ------------------------------------------------------------------------------------------------
+
+
+def _skip_unscannable_roots(plan: InstallPlan, unscannable: Iterable[SymlinkedRoot]) -> InstallPlan:
+    """Put one `SKIPPED` entry in the plan for every artifact root the scan refused to walk.
+
+    The entry's path is the root's own `root_path`, from the type registry (R73) — the library
+    mirrors its layout into the target, so a library-root-relative root path *is* the
+    target-relative one, and this is the same join every other path in the plan went through.
+
+    **An entry already at that path is replaced rather than doubled.** One path, one entry, is
+    what every consumer of C-10 assumes, and the collision is real rather than theoretical: the
+    case is a user who symlinks `skills/<name>` in their library *and* has the same development
+    link in their target, where the scan reports it `FOREIGN`. The digests it carries are kept,
+    because they are facts about that path; only the verdict and the reason change.
+
+    Replacing a `FOREIGN` there is a **narrowing of what install offers to destroy**, not a loss:
+    `clean --foreign` acts on `FOREIGN` entries, so a plan that kept the verdict would offer to
+    delete the very development link R22's exception exists to protect. An ordinary foreign file
+    that happens to sit at exactly an artifact root path stops being offered too, and the reason
+    on the entry says why.
+
+    Nothing is written for a `SKIPPED` entry and nothing is recorded at the library's digest, so
+    this narrowing cannot itself put a byte anywhere; what it changes is what the run *says*, and
+    that it comes back incomplete.
+    """
+    roots = tuple(unscannable)
+    if not roots:
+        return plan
+
+    entries = {entry.path: entry for entry in plan.entries}
+    for root in roots:
+        previous = entries.get(root.root_path)
+        entries[root.root_path] = PlanEntry(
+            artifact_id=root.id,
+            path=root.root_path,
+            verdict=Verdict.SKIPPED,
+            manifest_sha=previous.manifest_sha if previous is not None else None,
+            target_sha=previous.target_sha if previous is not None else None,
+            reason=_unscannable_reason(root),
+        )
+    return InstallPlan(entries=tuple(sorted(entries.values(), key=lambda one: one.path)))
+
+
+def _unscannable_reason(root: SymlinkedRoot) -> str:
+    """Why this artifact was not installed, naming the rule and the link.
+
+    Names V11 the way `_refusal_reason` names the codes that fired: the register is the contract,
+    a consumer branches on the code, and a user told "V11" can look the one rule up. The
+    destination is in the sentence because it is the whole diagnosis — the user made that link
+    and is the only one who can decide what should happen to it.
+    """
+    return (
+        f"{root.id} was not installed: its artifact root {root.root_path} is a symlink "
+        f"(-> {root.destination}), which is never followed or scanned (V11, ruling R6). "
+        "Following it would install content from outside the library, and writing over it would "
+        "destroy the link, so --force does not override this"
     )
 
 
@@ -429,6 +585,25 @@ def _write_manifest(manifests: ManifestStore, manifest: Manifest) -> None:
         manifests.write(manifest)
     except OSError as error:
         raise ManifestWriteError(str(error)) from error
+
+
+def _rewrite_manifest(manifests: ManifestStore, manifest: Manifest) -> None:
+    """Record again, **after the last delete**, dropping the pruned paths. Rulings R93 and R90.
+
+    The same syscall as `_write_manifest` and deliberately not the same function, because the
+    two carry opposite guarantees and the code is the guarantee. Before the first file,
+    `MANIFEST_UNWRITABLE` means *nothing happened*; here the files are already gone and saying
+    that would be exactly false, so it is `RECORD_STALE` — the record is behind, nothing is
+    disowned, and running the command again is safe.
+
+    Raises:
+        RecordStaleError: the second record could not be written. The pruned paths are gone and
+            the manifest still names them, so they report `CREATE` until it catches up.
+    """
+    try:
+        manifests.write(manifest)
+    except OSError as error:
+        raise RecordStaleError("install --prune", str(error)) from error
 
 
 def _write_file(

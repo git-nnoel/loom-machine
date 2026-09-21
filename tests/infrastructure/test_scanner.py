@@ -23,14 +23,20 @@ import pytest
 
 from harness_library.domain.artifact import ArtifactKind
 from harness_library.domain.identity import ArtifactType
-from harness_library.domain.raw import RawArtifact, SkipReason
+from harness_library.domain.raw import LibraryScan, RawArtifact, SkipReason
 from harness_library.infrastructure.scanner import is_text, scan_library
 from tests.infrastructure.conftest import FIXED_TIMESTAMPS, SCANNED_AT, write, write_skill
 
 
 def scan(library_root: Path) -> dict[str, RawArtifact]:
     """Scan with R5 held still, keyed by artifact id."""
-    return {raw.id: raw for raw in scan_library(library_root, timestamps=FIXED_TIMESTAMPS)}
+    return {
+        raw.id: raw for raw in scan_library(library_root, timestamps=FIXED_TIMESTAMPS).artifacts
+    }
+
+
+AGENT_DOCUMENT = "---\nname: scribe\ndescription: writes things down\n---\n"
+"""A well-formed `FILE`-kind artifact, for the tests that link to one from outside."""
 
 
 def paths(raw: RawArtifact) -> list[str]:
@@ -299,16 +305,115 @@ def test_a_file_in_the_agents_directory_that_is_not_a_document_is_not_an_artifac
 # ==================================================================================================
 
 
-def test_a_symlinked_artifact_root_is_never_followed(tmp_path: Path) -> None:
-    """Ruling R6 at the artifact-root position. Pinned so the behaviour is visible rather than
-    accidental, and **flagged to the delivery lead as an open question**: emitting an artifact for
-    it would fire V1 against a symlinked skill that loads perfectly, which is a false ERROR, and
-    inventing that semantics is not a task-level call.
+def test_a_symlinked_artifact_root_is_never_followed_and_is_reported(tmp_path: Path) -> None:
+    """Ruling R6 at the artifact-root position, **and ruling R46's other half**.
+
+    The open question this test carried until T-20 was what to do about the omission. It is
+    answered: the root is still never followed and still produces no `RawArtifact` — emitting one
+    would fire V1 against a skill that loads perfectly — but it is now *reported*, as a
+    `SymlinkedRoot` the assembler turns into V11.
+
+    Both halves are asserted, and they are two facts rather than one: the artifact set still
+    holds only the real skill, and the scan says why the other one is not in it.
     """
     real = write_skill(tmp_path, "real")
     (tmp_path / "skills" / "aliased").symlink_to(real, target_is_directory=True)
 
-    assert sorted(scan(tmp_path)) == ["skill/real"]
+    scanned = scan_library(tmp_path, timestamps=FIXED_TIMESTAMPS)
+
+    assert sorted(raw.id for raw in scanned.artifacts) == ["skill/real"]
+    assert [(root.id, root.root_path) for root in scanned.symlinked_roots] == [
+        ("skill/aliased", "skills/aliased")
+    ]
+    assert scanned.symlinked_roots[0].destination == str(real)
+
+
+def test_a_symlinked_root_is_reported_even_when_it_dangles(tmp_path: Path) -> None:
+    """`readlink`, never `resolve` (R6). A link whose destination is gone is still a link, still
+    unscannable, and still the reason an artifact is missing — resolving it to decide would both
+    follow it and turn the diagnosis into an error.
+
+    The positive control is the destination assertion: the raw text really came back, so this is
+    not passing by reporting an empty value for everything."""
+    write_skill(tmp_path, "real")
+    (tmp_path / "skills" / "ghost").symlink_to("../../nowhere/at/all", target_is_directory=True)
+
+    scanned = scan_library(tmp_path, timestamps=FIXED_TIMESTAMPS)
+
+    assert [root.id for root in scanned.symlinked_roots] == ["skill/ghost"]
+    assert scanned.symlinked_roots[0].destination == "../../nowhere/at/all"
+
+
+def test_a_symlinked_agent_document_is_reported_as_a_root(tmp_path: Path) -> None:
+    """A `FILE`-kind artifact root is a document, so a linked `agents/<name>.md` is a symlinked
+    root exactly as a linked `skills/<name>/` is. Its name is the stem, which is the name the
+    artifact would have had."""
+    real = write(tmp_path / "elsewhere" / "scribe.md", AGENT_DOCUMENT)
+    (tmp_path / "agents").mkdir()
+    (tmp_path / "agents" / "scribe.md").symlink_to(real)
+
+    scanned = scan_library(tmp_path, timestamps=FIXED_TIMESTAMPS)
+
+    assert scanned.artifacts == ()
+    assert [(root.id, root.root_path) for root in scanned.symlinked_roots] == [
+        ("agent/scribe", "agents/scribe.md")
+    ]
+
+
+def test_a_symlinked_non_document_in_the_agents_directory_is_not_a_root(tmp_path: Path) -> None:
+    """**The control for the pair above.** Under a `FILE`-kind type only a `.md` child could ever
+    have been an artifact, so a linked `agents/notes.txt` is passed over exactly as an unlinked
+    one is — V11 must report a *missing artifact*, not every link in the tree.
+
+    The second assertion is the positive control: a linked `.md` beside it *is* reported, so this
+    is not passing by reporting nothing at all.
+    """
+    real = write(tmp_path / "elsewhere" / "notes.txt", "notes\n")
+    document = write(tmp_path / "elsewhere" / "scribe.md", AGENT_DOCUMENT)
+    (tmp_path / "agents").mkdir()
+    (tmp_path / "agents" / "notes.txt").symlink_to(real)
+    (tmp_path / "agents" / "scribe.md").symlink_to(document)
+
+    scanned = scan_library(tmp_path, timestamps=FIXED_TIMESTAMPS)
+
+    assert [root.id for root in scanned.symlinked_roots] == ["agent/scribe"]
+
+
+def test_a_skill_symlinked_to_another_skill_in_the_same_library_is_reported_once(
+    tmp_path: Path,
+) -> None:
+    """**The alias case**, which nothing else in the register covers and which a reader will ask
+    about: `skills/alias -> real`, where the destination is a skill this same library already
+    holds.
+
+    The two are separate answers to separate questions and neither interferes with the other.
+    The real skill is scanned exactly once, under its own name, because it is reached through
+    its own directory and never through the link. The alias is reported as a symlinked root like
+    any other, because R6 has no special case for a destination that happens to be nearby — and
+    it should not: the rule is about a root that was not read, not about where it pointed.
+
+    Nothing is duplicated. The two artifact roots are different target paths, so no install
+    writes one file twice, and the names differ so V8 has nothing to say either. What the user
+    gets is the real skill installed and the alias named and skipped, which is the honest report
+    of what their library actually holds.
+    """
+    write_skill(tmp_path, "real")
+    (tmp_path / "skills" / "alias").symlink_to("real", target_is_directory=True)
+
+    scanned = scan_library(tmp_path, timestamps=FIXED_TIMESTAMPS)
+
+    assert [raw.id for raw in scanned.artifacts] == ["skill/real"]
+    assert [(root.id, root.destination) for root in scanned.symlinked_roots] == [
+        ("skill/alias", "real")
+    ]
+
+
+def test_a_library_with_no_symlinked_root_reports_none(tmp_path: Path) -> None:
+    """The floor, and the control for every assertion above: an ordinary library reports an empty
+    tuple rather than something that merely looks empty."""
+    write_skill(tmp_path, "real")
+
+    assert scan_library(tmp_path, timestamps=FIXED_TIMESTAMPS).symlinked_roots == ()
 
 
 def test_a_library_with_no_type_directories_scans_to_nothing(tmp_path: Path) -> None:
@@ -317,7 +422,7 @@ def test_a_library_with_no_type_directories_scans_to_nothing(tmp_path: Path) -> 
     here could not scan a library holding only agents."""
     (tmp_path / "unrelated").mkdir()
 
-    assert scan_library(tmp_path, timestamps=FIXED_TIMESTAMPS) == ()
+    assert scan_library(tmp_path, timestamps=FIXED_TIMESTAMPS) == LibraryScan()
 
 
 def test_a_library_holding_only_agents_scans_normally(tmp_path: Path) -> None:
@@ -360,13 +465,13 @@ def test_two_scans_of_one_library_produce_the_same_order(tmp_path: Path) -> None
     second = scan_library(tmp_path, timestamps=FIXED_TIMESTAMPS)
 
     assert first == second
-    assert paths(first[0]) == [
+    assert paths(first.artifacts[0]) == [
         "SKILL.md",
         "references/alpha.md",
         "references/mike.md",
         "references/zulu.md",
     ]
-    assert skips(first[0]) == [
+    assert skips(first.artifacts[0]) == [
         ("SKILL.md.swp", SkipReason.EDITOR_SWAP),
         ("node_modules", SkipReason.VENDOR_TREE),
     ]
@@ -395,6 +500,21 @@ def test_the_fixture_library_scans_into_the_expected_artifact_set(fixture_librar
     ]
 
 
+def test_the_fixture_library_reports_its_symlinked_root(fixture_library: Path) -> None:
+    """A golden literal over the committed tree, the way the artifact set above is one.
+
+    `skills/linked-skill` is a symlink to a skill kept in `tests/fixtures/outside/`. It is
+    **absent from the artifact set above** — which is the fault — and present here, which is V11
+    making the absence visible.
+    """
+    scanned = scan_library(fixture_library, timestamps=FIXED_TIMESTAMPS)
+
+    assert [(root.id, root.root_path, root.destination) for root in scanned.symlinked_roots] == [
+        ("skill/linked-skill", "skills/linked-skill", "../../outside/linked-skill")
+    ]
+    assert "skill/linked-skill" not in {raw.id for raw in scanned.artifacts}
+
+
 def test_the_fixture_messy_skill_records_every_skip_the_charter_names(
     fixture_library: Path,
 ) -> None:
@@ -420,5 +540,5 @@ def test_the_fixture_library_derives_a_timezone_aware_timestamp_for_every_artifa
     at the commit boundary and fail for whoever came next. R5 itself is proven in
     `test_timestamps.py`, in a repository whose commit dates the test owns.
     """
-    for raw in scan_library(fixture_library):
+    for raw in scan_library(fixture_library).artifacts:
         assert raw.updated_at.tzinfo is not None, raw.id

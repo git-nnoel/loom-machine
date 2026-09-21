@@ -8,7 +8,9 @@ directory that really has no `SKILL.md`. Everything here is tested against real 
 
 **It decides, it never judges.** The scanner reads the tree, hashes what it takes, and records what
 it refused and why. It emits no `ValidationFinding` and knows no rule. That division is the seam
-DEC-1 bought: `SkippedPath` in, V6 out, exactly as `DuplicateKey` in, V9 out.
+DEC-1 bought: `SkippedPath` in, V6 out, exactly as `DuplicateKey` in, V9 out — and, since ruling
+R46, `SymlinkedRoot` in, V11 out. The third one is the seam's sharpest case: the value describes an
+artifact that does not exist, which only a scanner can know and only a rule can call a fault.
 
 **Derived, never composed.** `kind`, the artifact root path and the entry document's path are
 properties of the type registry, reached through `TypeSpec.root_path` / `TypeSpec.entry_path` and
@@ -23,7 +25,7 @@ precondition for any golden-literal test over a real tree.
 from __future__ import annotations
 
 import os
-from collections.abc import Iterator, Sequence
+from collections.abc import Sequence
 from pathlib import Path
 
 import frontmatter
@@ -32,10 +34,12 @@ from harness_library.domain.artifact import ArtifactFile, ArtifactKind
 from harness_library.domain.hashing import hash_bytes
 from harness_library.domain.raw import (
     EntryParseError,
+    LibraryScan,
     RawArtifact,
     RawEntry,
     SkippedPath,
     SkipReason,
+    SymlinkedRoot,
 )
 from harness_library.domain.registry import ARTIFACT_TYPE_SPECS, ENTRY_SUFFIX, TypeSpec
 from harness_library.infrastructure.timestamps import ArtifactTimestamps, GitTimestamps
@@ -55,7 +59,7 @@ EDITOR_SWAP_SUFFIXES = (".swp", ".swo", ".swn")
 
 def scan_library(
     library_root: Path, *, timestamps: ArtifactTimestamps | None = None
-) -> tuple[RawArtifact, ...]:
+) -> LibraryScan:
     """Walk a library root and produce one `RawArtifact` per artifact, for the assembler.
 
     Args:
@@ -65,10 +69,15 @@ def scan_library(
             subprocess and does not depend on the repository it happens to be running inside.
 
     Returns:
-        Every artifact found, ordered by type directory and then by name. **Nothing is filtered** —
-        a skill directory with no entry document comes back as a `RawArtifact` with `entry=None`,
-        which is what makes V1 fire. An artifact that is invisible because it is broken is the
-        failure this product exists to close.
+        A `LibraryScan`: every artifact found, ordered by type directory and then by name, **plus
+        every artifact root that is a symlink** and was therefore not walked (V11, R46).
+        **Nothing is filtered** — a skill directory with no entry document comes back as a
+        `RawArtifact` with `entry=None`, which is what makes V1 fire. An artifact that is
+        invisible because it is broken is the failure this product exists to close, and a
+        symlinked root is the last shape of it: invisible because it was never read.
+
+        One value rather than two returns, so a caller cannot take the artifacts and lose the
+        roots — which would be the very omission V11 reports.
 
     A directory the registry does not own is passed over in silence, and a missing `skills/` or
     `agents/` is simply no artifacts of that type. Deciding that a directory is not a library at all
@@ -76,35 +85,82 @@ def scan_library(
     could not scan a library that holds only agents.
     """
     resolved = timestamps if timestamps is not None else GitTimestamps(library_root)
-    return tuple(
-        raw
-        for spec in ARTIFACT_TYPE_SPECS.values()
-        for raw in _scan_type(library_root, spec, resolved)
-    )
+    artifacts: list[RawArtifact] = []
+    symlinked: list[SymlinkedRoot] = []
+    for spec in ARTIFACT_TYPE_SPECS.values():
+        _scan_type(library_root, spec, resolved, artifacts, symlinked)
+    return LibraryScan(artifacts=tuple(artifacts), symlinked_roots=tuple(symlinked))
 
 
 def _scan_type(
-    library_root: Path, spec: TypeSpec, timestamps: ArtifactTimestamps
-) -> Iterator[RawArtifact]:
-    """Every artifact of one type, in name order."""
+    library_root: Path,
+    spec: TypeSpec,
+    timestamps: ArtifactTimestamps,
+    artifacts: list[RawArtifact],
+    symlinked: list[SymlinkedRoot],
+) -> None:
+    """Every artifact of one type, in name order, and every symlinked root beside them.
+
+    **The two `is_symlink()` questions below are deliberately separate statements**, and fusing
+    them would be a mistake that hides itself. `_symlinked_root` answers *should this be
+    reported* (V11); `_artifact_name` answers *may this be walked* (R6). They happen to test the
+    same predicate today and they are not one decision: the whole point of V11 is that the
+    refusal and the report are two facts, so that removing the refusal leaves the warning
+    standing and removing the warning leaves the refusal standing. One `if` doing both would make
+    each mutation take its own control away.
+    """
     directory = library_root / spec.directory
     if not directory.is_dir():
         return
     for child in _sorted_children(directory):
+        root = _symlinked_root(child, spec)
+        if root is not None:
+            symlinked.append(root)
         name = _artifact_name(child, spec)
         if name is None:
             continue
-        yield _scan_artifact(library_root, spec, name, timestamps)
+        artifacts.append(_scan_artifact(library_root, spec, name, timestamps))
+
+
+def _symlinked_root(child: Path, spec: TypeSpec) -> SymlinkedRoot | None:
+    """This child as a V11 subject, or `None` when it is not a symlinked artifact root.
+
+    Two narrowings, and both are about false positives rather than about R6:
+
+    * a child that is not a link at all is not this rule's business;
+    * under a `FILE`-kind type only a `.md` child could ever have been an artifact, so a linked
+      `agents/notes.txt` is passed over exactly as an unlinked one is. Under a `DIRECTORY`-kind
+      type **every** link is reported, because deciding whether one points at a directory means
+      `is_dir()`, which follows it — the thing R6 forbids. A linked `skills/README.md` therefore
+      warns, and the message says what it says: this path is a link, and if it was meant to be an
+      artifact it is not in the library.
+
+    A link whose name cannot be an identity — `agents/.md`, whose stem is empty — is passed over
+    rather than raised on: the scan of a whole library must not die on one unnameable link.
+    """
+    if not child.is_symlink():
+        return None
+    if spec.kind is ArtifactKind.DIRECTORY:
+        name = child.name
+    elif child.suffix != ENTRY_SUFFIX:
+        return None
+    else:
+        name = child.stem
+    if not name:
+        return None
+    return SymlinkedRoot(type=spec.type, name=name, destination=_link_destination(child))
 
 
 def _artifact_name(child: Path, spec: TypeSpec) -> str | None:
     """The artifact name this child announces, or `None` when it is not an artifact root.
 
     `is_symlink` is tested **before** `is_dir` and `is_file`, which both follow links (ruling R6).
-    A symlinked artifact root is therefore not followed and not scanned. It is also not reported:
-    there is no artifact to hang a V6 on, and manufacturing one would fire V1 against a symlinked
-    skill that loads perfectly — a false ERROR is worse than the omission. Flagged to the delivery
-    lead as an open question rather than decided here.
+    A symlinked artifact root is therefore not followed and not scanned — **and, since ruling
+    R46, it is reported**: `_scan_type` records it as a `SymlinkedRoot` and the assembler turns
+    that into V11, so the omission this line creates is now visible instead of silent.
+
+    It is still not turned into a `RawArtifact`. Doing that would fire V1 against a symlinked
+    skill that loads perfectly, and a false ERROR is worse than a reported absence.
     """
     if child.is_symlink():
         return None
@@ -221,7 +277,7 @@ def _is_editor_swap(name: str) -> bool:
     return len(name) > 2 and name.startswith("#") and name.endswith("#")
 
 
-def _link_target(link: Path) -> str:
+def _link_destination(link: Path) -> str:
     """The raw target a symlink names, unresolved.
 
     Deliberately `readlink` and not `resolve`: the target is reported so a reader can see *where the
@@ -230,9 +286,14 @@ def _link_target(link: Path) -> str:
     diagnosis when the link escapes the artifact root.
     """
     try:
-        return f"-> {os.readlink(link)}"
+        return os.readlink(link)
     except OSError:  # pragma: no cover - it was a symlink a moment ago
-        return "-> (unreadable)"
+        return "(unreadable)"
+
+
+def _link_target(link: Path) -> str:
+    """A symlink's destination as `SkippedPath.detail` renders it — the arrow included."""
+    return f"-> {_link_destination(link)}"
 
 
 # ------------------------------------------------------------------------------------------------

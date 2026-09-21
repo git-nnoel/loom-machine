@@ -1,4 +1,4 @@
-"""Charter §8's validation register, as pure functions. Every rule V1-V10 lives here.
+"""Charter §8's validation register, as pure functions. Every rule V1-V11 lives here.
 
 This module is the reason the initiative was recut (DEC-1). The superseded plan built the repository
 first and retrofitted validation into it, so two of eight tasks existed only to reopen a third. Here
@@ -13,7 +13,10 @@ swap files destroyed by a copy. Charter §8 is the register; this is its enforce
 everything that is a property of a single artifact root: V1, V2, V3, V5, V6, V10. `assemble_library`
 runs it over the whole scan and then answers the questions that need the set of ids that exist:
 V4 (`superseded_by` resolves), V7 (a `library.yaml` entry or a collection member resolves), V8 (two
-names collide case-insensitively) and V9 (`library.yaml` declares a key twice).
+names collide case-insensitively) and V9 (`library.yaml` declares a key twice). **V11 is a third
+kind**: it is decided about something that never became an artifact at all, so the scan hands it
+across as a value and `assemble_library` turns that into a finding — the same seam `SkippedPath`
+crosses to become V6.
 The brief singles out V7;
 V4 has the identical information need, so it lives at the same level rather than in a per-artifact
 function that would have to be handed the answer it is supposed to compute.
@@ -35,7 +38,7 @@ from typing import Any
 from harness_library.domain.artifact import Artifact, ArtifactKind
 from harness_library.domain.hashing import content_hash_of_files
 from harness_library.domain.metadata import LibraryMetadata
-from harness_library.domain.raw import RawArtifact, RawEntry, SkipReason
+from harness_library.domain.raw import RawArtifact, RawEntry, SkipReason, SymlinkedRoot
 from harness_library.domain.validation import ValidationCode, ValidationFinding
 
 REFERENCE_DIRECTORY = "references"
@@ -65,11 +68,17 @@ class AssembledLibrary:
     Attributes:
         artifacts: one per input `RawArtifact`, in input order, each carrying its own findings.
             Never filtered — not by validity, not by supersession (R8).
-        findings: the library-level findings — V7 and V9. Both are faults of the `library.yaml`
-            *document* rather than of any artifact, and there is by definition no artifact to hang
-            them on. V8 is decided at this level too but is **not** here: a case collision has two
-            real artifacts to attach itself to, and attaching it only to the library would leave
-            `hl show skill/Foo` silent about it.
+        findings: the library-level findings — **V7, V9 and V11**. V7 and V9 are faults of the
+            `library.yaml` *document* rather than of any artifact, and there is by definition no
+            artifact to hang them on. V11 is here for a different reason and reaches the same
+            place: its subject is an artifact root that is a symlink, which R6 never follows and
+            never scans, so no `Artifact` was ever produced for it — there is nothing to attach
+            it to, and manufacturing one would fire V1 against a skill that loads perfectly.
+
+            V8 is decided at this level too but is **not** here: a case collision has two real
+            artifacts to attach itself to, and attaching it only to the library would leave
+            `hl show skill/Foo` silent about it. That is the distinction — V8 has two artifacts
+            and V11 has none.
     """
 
     artifacts: tuple[Artifact, ...] = ()
@@ -81,19 +90,34 @@ class AssembledLibrary:
         return {artifact.id: artifact for artifact in self.artifacts}
 
 
-def assemble_library(raws: Iterable[RawArtifact], metadata: LibraryMetadata) -> AssembledLibrary:
+def assemble_library(
+    raws: Iterable[RawArtifact],
+    metadata: LibraryMetadata,
+    *,
+    symlinked_roots: Iterable[SymlinkedRoot] = (),
+) -> AssembledLibrary:
     """Turn a whole scan into finished artifacts. The entry point T-5 calls.
 
     Runs `assemble_artifact` over every raw value, then makes the passes that need the whole library
     in view: V4 against each artifact's own `superseded_by`, V8 across the set of names, and V7 and
     V9 against `library.yaml`.
+
+    Args:
+        raws: what the scan walked.
+        metadata: `library.yaml`, already read.
+        symlinked_roots: what the scan found and refused to walk — one V11 WARNING each (R46).
+            **Defaults to none**, unlike `plan_install`'s equivalent parameter, and the difference
+            is the caller: this function has exactly one production call site, in
+            `infrastructure/repository.py`, whose wiring is asserted at repository level against
+            the committed fixture; `plan_install`'s caller is a composition root, where a
+            parameter with a default is a parameter somebody forgets.
     """
     assembled = [assemble_artifact(raw, metadata) for raw in raws]
     known_ids = frozenset(artifact.id for artifact in assembled)
     resolved = tuple(_apply_v4(artifact, known_ids) for artifact in assembled)
     return AssembledLibrary(
         artifacts=_apply_v8(resolved),
-        findings=_check_v7(metadata, known_ids) + _check_v9(metadata),
+        findings=_check_v7(metadata, known_ids) + _check_v9(metadata) + _check_v11(symlinked_roots),
     )
 
 
@@ -438,6 +462,43 @@ def _check_v9(metadata: LibraryMetadata) -> tuple[ValidationFinding, ...]:
             "the earlier declaration is discarded",
         )
         for duplicate in metadata.duplicate_keys
+    )
+
+
+def _check_v11(symlinked_roots: Iterable[SymlinkedRoot]) -> tuple[ValidationFinding, ...]:
+    """V11 — an artifact root that is a symlink. WARNING, and the one warning that refuses.
+
+    **The rule closes a silence, not a misbehaviour.** R6 never follows a link, so such a root is
+    never walked: the artifact produces no files, no entry document and no `Artifact` at all, and
+    before this rule it was simply missing from every listing, every search and every install
+    with nothing anywhere saying so. A skill that would load perfectly, invisible. That is the
+    failure this product exists to eliminate, and it was the last instance of it left.
+
+    **Library-level, like V7 and V9, and for a stronger reason than either.** Those two have no
+    artifact to hang on because their subject is the `library.yaml` document. This one has no
+    artifact to hang on because there *is* no artifact — the root was never scanned. Attaching it
+    to a manufactured one would fire V1 against a skill whose `SKILL.md` is right there behind
+    the link, which is a false ERROR, and false ERRORs teach a user to distrust the whole report
+    (the lesson V10 was written from).
+
+    **A WARNING that nevertheless refuses an install**, which is the one exception R22 has.
+    Charter §8 and spec §4 both state it. The justification is not that the artifact is broken —
+    it may be perfect — but that neither thing install could do with it is safe: following the
+    root would copy content from outside the library into the user's target, and writing over the
+    root would destroy a development link the user made on purpose. So the artifact is reported
+    here and refused in `application/write/install.py`, and the two do not read each other.
+
+    Reported in scan order, so two scans of one library produce the same report.
+    """
+    return tuple(
+        ValidationFinding.for_code(
+            ValidationCode.V11,
+            f"{root.root_path} is a symlink (-> {root.destination}), which is never followed or "
+            f"scanned (ruling R6), so {root.id} is absent from this library. Install refuses this "
+            "artifact and applies the rest",
+            root.root_path,
+        )
+        for root in symlinked_roots
     )
 
 

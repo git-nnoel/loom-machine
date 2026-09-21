@@ -69,12 +69,18 @@ def test_a_clean_library_exits_zero_with_nothing_to_report(
 
 
 def test_the_report_reaches_the_library_level_findings(hl: Invoke) -> None:
-    """Ruling R23. V7 belongs to `library.yaml` and has no artifact to hang on; a CLI that rendered
-    only the artifact loop would print a report missing two rows of charter §8's register."""
+    """Ruling R23. V7 belongs to `library.yaml` and V11 to an artifact root that was never
+    scanned; neither has an artifact to hang on, so a CLI that rendered only the artifact loop
+    would print a report missing three rows of charter §8's register.
+
+    V11 is the sharpest of the three: the fixture's `skills/linked-skill` is a symlink, so that
+    skill is in no listing this CLI can print, and this line is the only place the user is ever
+    told it exists.
+    """
     result = hl("validate", "--json")
     payload = json.loads(result.stdout)
 
-    assert [finding["code"] for finding in payload["library_findings"]] == ["V7", "V7"]
+    assert [finding["code"] for finding in payload["library_findings"]] == ["V7", "V7", "V11"]
 
 
 def test_the_exit_status_is_the_reports_verdict_and_not_a_recount(hl: Invoke) -> None:

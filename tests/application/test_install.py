@@ -31,10 +31,13 @@ from harness_library.domain.errors import (
     ErrorCode,
     LockHeldError,
     ManifestWriteError,
+    RecordStaleError,
     TargetUnwritableError,
 )
+from harness_library.domain.identity import ArtifactType
 from harness_library.domain.install_plan import InstallPlan, PlanEntry, Verdict
 from harness_library.domain.manifest import Manifest
+from harness_library.domain.raw import SymlinkedRoot
 from harness_library.domain.validation import ValidationCode
 from tests.application.fakes import (
     TARGET_PATH,
@@ -187,7 +190,7 @@ def test_planning_an_install_writes_nothing_to_the_target() -> None:
         [make_artifact(SKILL_NAME, files=(make_file(ENTRY, LIBRARY_BYTES),))]
     )
 
-    plan = plan_install(library, target, manifest=None)
+    plan = plan_install(library, target, manifest=None, unscannable=())
 
     assert plan.entries != ()
     assert target.writes == []
@@ -210,11 +213,142 @@ def test_a_plan_over_three_agreeing_sources_proposes_nothing_and_is_complete() -
             )
         ),
         manifest=manifest_of(manifest_artifact(SKILL_ID, files)),
+        unscannable=(),
     )
 
     assert [entry.verdict for entry in plan.entries] == [Verdict.UNCHANGED, Verdict.UNCHANGED]
     assert plan.is_complete
     assert plan.counts[Verdict.UNCHANGED] == 2
+
+
+# -------------------------------------------------------------------------------------------
+# Ruling R46 — V11's symlinked artifact root, refused
+# -------------------------------------------------------------------------------------------
+#
+# What this layer decides is the *narrowing*: which entry the plan grows, what it says, and that
+# `force` cannot switch it off. That a real scan of a real link produces the value at all is
+# proven in `tests/test_symlinked_root.py` against a committed one — a fake has no filesystem
+# and so cannot hold a link, which is exactly the half plan §9 says went unwired last time.
+
+LINKED_NAME = "linked-skill"
+LINKED_ID = "skill/linked-skill"
+LINKED_ROOT = "skills/linked-skill"
+
+
+def a_symlinked_root(name: str = LINKED_NAME) -> SymlinkedRoot:
+    """One root the scan refused to walk, as `scan_library` hands it across."""
+    return SymlinkedRoot(
+        type=ArtifactType.SKILL, name=name, destination="../../outside/linked-skill"
+    )
+
+
+def test_plan_install_requires_the_symlinked_roots_and_gives_them_no_default() -> None:
+    """The argument C-16's lock carries (R82), applied to a value rather than to a seam.
+
+    A plan that simply does not take the symlinked roots keeps `mypy`, `ruff`, `lint-imports`
+    and the whole suite green while silently omitting an artifact — which is the exact failure
+    V11 exists to close, reproduced by a forgotten parameter. T-22 writes the composition root,
+    and a default is how it would forget.
+    """
+    parameter = inspect.signature(plan_install).parameters["unscannable"]
+
+    assert parameter.kind is inspect.Parameter.KEYWORD_ONLY
+    assert parameter.default is inspect.Parameter.empty
+
+
+def test_a_symlinked_root_is_one_skipped_entry_that_makes_the_run_incomplete() -> None:
+    """The artifact is named in the plan, carries a reason naming the rule, and blocks
+    completion so the caller exits `INCOMPLETE = 6` rather than reporting a clean install of a
+    library one of whose skills it never read.
+
+    The plan's other entry is the control: a valid artifact beside it still comes back `CREATE`.
+    """
+    library = a_library(SKILL_NAME)
+    plan = plan_install(
+        library, FakeTargetRepository(), manifest=None, unscannable=(a_symlinked_root(),)
+    )
+
+    verdicts = {entry.path: entry.verdict for entry in plan.entries}
+    assert verdicts[LINKED_ROOT] is Verdict.SKIPPED
+    assert verdicts[INSTALLED_ENTRY] is Verdict.CREATE
+    assert not plan.is_complete
+    assert plan.counts[Verdict.SKIPPED] == 1
+
+    entry = next(one for one in plan.entries if one.path == LINKED_ROOT)
+    assert entry.artifact_id == LINKED_ID
+    assert entry.reason is not None
+    assert "V11" in entry.reason
+
+
+def test_a_skipped_root_is_not_written_and_makes_the_result_incomplete() -> None:
+    """Asserted on the target's content, never on the report. The valid skill beside it is
+    written in the same run, so this cannot pass by writing nothing (R53)."""
+    library = a_library(SKILL_NAME)
+    target = FakeTargetRepository()
+    plan = plan_install(library, target, manifest=None, unscannable=(a_symlinked_root(),))
+
+    result = apply(plan, library, target)
+
+    assert LINKED_ROOT not in target.snapshot()
+    assert target.snapshot()[INSTALLED_ENTRY] == LIBRARY_BYTES
+    assert result.written == (INSTALLED_ENTRY,)
+    assert not result.is_complete
+    assert [refused.path for refused in result.left_alone] == [LINKED_ROOT]
+
+
+def test_force_does_not_lift_the_symlinked_root_refusal() -> None:
+    """**The one place `force` stops.** R75 refuses an artifact whose bytes are there and whose
+    faults a user may accept; here there are no bytes, and forcing could only mean following the
+    link or destroying it.
+
+    The control is in the same test: `force=True` is really in effect, because the V1-carrying
+    artifact R75 would otherwise refuse comes back `CREATE`.
+    """
+    library = _library_with_finding(ValidationCode.V1)
+    plan = plan_install(
+        library,
+        FakeTargetRepository(),
+        manifest=None,
+        unscannable=(a_symlinked_root(),),
+        force=True,
+    )
+
+    verdicts = {entry.path: entry.verdict for entry in plan.entries}
+    assert verdicts[LINKED_ROOT] is Verdict.SKIPPED
+    assert verdicts[INSTALLED_ENTRY] is Verdict.CREATE
+
+
+def test_a_symlinked_root_replaces_a_foreign_entry_at_the_same_path() -> None:
+    """One path, one entry. The collision is the realistic case, not a theoretical one: a
+    developer who links `skills/<name>` in their library usually has the same link in their
+    harness, where the target scan reports it `FOREIGN`.
+
+    The skip wins, which also stops `clean --foreign` offering to delete the development link
+    R22's exception exists to protect. The digests the entry carried are kept, because they are
+    facts about that path.
+    """
+    library = a_library(SKILL_NAME)
+    target = target_holding((LINKED_ROOT, b"someone else's file\n"))
+
+    plan = plan_install(library, target, manifest=None, unscannable=(a_symlinked_root(),))
+
+    at_root = [entry for entry in plan.entries if entry.path == LINKED_ROOT]
+    assert len(at_root) == 1
+    assert at_root[0].verdict is Verdict.SKIPPED
+    assert at_root[0].target_sha is not None
+    assert Verdict.FOREIGN not in plan.counts or plan.counts[Verdict.FOREIGN] == 0
+
+
+def test_a_library_with_no_symlinked_root_grows_no_entry() -> None:
+    """The positive control for every absence above: the same call with `()` and the plan is
+    exactly the one the join produced."""
+    library = a_library(SKILL_NAME)
+    target = FakeTargetRepository()
+
+    plan = plan_install(library, target, manifest=None, unscannable=())
+
+    assert [entry.path for entry in plan.entries] == [INSTALLED_ENTRY]
+    assert plan.is_complete
 
 
 # -------------------------------------------------------------------------------------------
@@ -237,7 +371,10 @@ def test_an_artifact_with_an_error_finding_is_skipped_with_a_reason_naming_the_r
     reason names the code that fired, and the plan is incomplete — so the run exits
     `INCOMPLETE = 6` rather than reporting a clean install of something that does not validate."""
     plan = plan_install(
-        _library_with_finding(ValidationCode.V1), FakeTargetRepository(), manifest=None
+        _library_with_finding(ValidationCode.V1),
+        FakeTargetRepository(),
+        manifest=None,
+        unscannable=(),
     )
     refused = plan.entries[0]
 
@@ -252,7 +389,9 @@ def test_an_artifact_with_an_error_finding_is_skipped_with_a_reason_naming_the_r
 def test_a_skipped_artifact_is_not_written_and_its_bytes_never_reach_the_target() -> None:
     """The refusal is about the file, not about the report. Asserted on the target's content."""
     target = FakeTargetRepository()
-    plan = plan_install(_library_with_finding(ValidationCode.V1), target, manifest=None)
+    plan = plan_install(
+        _library_with_finding(ValidationCode.V1), target, manifest=None, unscannable=()
+    )
 
     result = apply(plan, _library_with_finding(ValidationCode.V1), target)
 
@@ -268,7 +407,7 @@ def test_force_installs_an_artifact_that_does_not_validate() -> None:
     library = _library_with_finding(ValidationCode.V1)
     target = FakeTargetRepository()
 
-    plan = plan_install(library, target, manifest=None, force=True)
+    plan = plan_install(library, target, manifest=None, unscannable=(), force=True)
     result = apply(plan, library, target)
 
     assert plan.entries[0].verdict is Verdict.CREATE
@@ -283,7 +422,7 @@ def test_a_warning_only_artifact_installs_normally() -> None:
     library = _library_with_finding(ValidationCode.V6)
     target = FakeTargetRepository()
 
-    plan = plan_install(library, target, manifest=None)
+    plan = plan_install(library, target, manifest=None, unscannable=())
     result = apply(plan, library, target)
 
     assert plan.entries[0].verdict is Verdict.CREATE
@@ -300,6 +439,7 @@ def test_a_foreign_path_under_an_invalid_artifacts_root_is_still_foreign() -> No
         _library_with_finding(ValidationCode.V1),
         target_holding((swap, b"vim was here\n")),
         manifest=None,
+        unscannable=(),
     )
 
     verdicts = {plan_entry.path: plan_entry.verdict for plan_entry in plan.entries}
@@ -321,7 +461,7 @@ def test_one_invalid_artifact_does_not_refuse_the_other_one() -> None:
     )
     target = FakeTargetRepository()
 
-    result = apply(plan_install(library, target, manifest=None), library, target)
+    result = apply(plan_install(library, target, manifest=None, unscannable=()), library, target)
 
     assert target.snapshot() == {INSTALLED_OTHER: LIBRARY_BYTES}
     assert result.written == (INSTALLED_OTHER,)
@@ -528,6 +668,7 @@ def test_a_mixed_plan_writes_the_safe_entries_and_leaves_the_conflict_byte_ident
         library,
         target,
         manifest=manifest_of(manifest_artifact(SKILL_ID, (make_file(ENTRY, INSTALLED_BYTES),))),
+        unscannable=(),
     )
 
     result = apply(
@@ -557,7 +698,7 @@ def test_a_conflicted_path_keeps_the_digest_the_previous_manifest_recorded() -> 
     previous = manifest_of(manifest_artifact(SKILL_ID, (installed,)))
 
     apply(
-        plan_install(library, target, manifest=previous),
+        plan_install(library, target, manifest=previous, unscannable=()),
         library,
         target,
         manifests=manifests,
@@ -612,6 +753,7 @@ def test_a_symlink_planted_over_an_installed_path_is_never_written_through() -> 
         library,
         target,
         manifest=manifest_of(manifest_artifact(SKILL_ID, (installed,))),
+        unscannable=(),
     )
 
     result = apply(
@@ -691,6 +833,150 @@ def test_pruning_removes_the_path_and_drops_it_from_the_manifest() -> None:
     assert result.deleted == (INSTALLED_REFERENCE,)
     assert manifests.latest is not None
     assert manifests.latest.artifacts == ()
+
+
+# -------------------------------------------------------------------------------------------
+# Ruling R93 — a pruning run records twice, and the pruned path stays claimed until it is gone
+# -------------------------------------------------------------------------------------------
+
+
+class _TargetRefusingToDelete(FakeTargetRepository):
+    """A target whose `delete` raises, so a run fails **between** R93's two records.
+
+    A builtin `OSError`, because that is what the real repository raises (R24) and a fake
+    raising the project's own error would make the translation untestable by pre-supplying its
+    result. It collects evidence and renders no verdict (L29).
+    """
+
+    def delete(self, path: str) -> None:
+        raise OSError(f"the injected failure refuses to remove {path!r}")
+
+
+class _ManifestStoreRefusingTheSecondWrite(FakeManifestStore):
+    """A store that takes the union record and refuses the one that drops the pruned paths."""
+
+    def write(self, manifest: Manifest) -> None:
+        if self.written:
+            raise OSError("the injected failure refuses to rewrite the manifest")
+        super().write(manifest)
+
+
+def _recorded_paths(manifest: Manifest) -> set[str]:
+    """Every file path the manifest records, artifact-root-relative."""
+    return {file.path for record in manifest.artifacts for file in record.files}
+
+
+def _pruning_manifest() -> Manifest:
+    """What was installed before the library dropped `references/notes.md`."""
+    return manifest_of(manifest_artifact(SKILL_ID, (make_file(REFERENCE, INSTALLED_BYTES),)))
+
+
+def test_a_pruning_apply_claims_the_pruned_path_until_it_is_gone() -> None:
+    """**The must-fail assertion of mutation (c) — charter §13b, ruling R93, and L52.**
+
+    A failure is injected into the delete, so the run stops between R93's two records. The one
+    record already on disk must **still name the pruned path**: the file is still there, and a
+    manifest that had already disowned it would leave it `FOREIGN` — untouchable by install,
+    unremovable by uninstall, reachable only by `clean --foreign`. That is exactly what R63
+    exists to prevent, and before this ruling `--prune` reached it.
+
+    Fold the second record back into the first — the single write this module made until T-20,
+    already dropping the pruned paths — and the second assertion fails. Nothing else notices:
+    a run that does not fail produces the identical final record under both orders, which is
+    why the failure has to be injected (L52).
+    """
+    target = _TargetRefusingToDelete(
+        (target_file(INSTALLED_REFERENCE, INSTALLED_BYTES),),
+        contents={INSTALLED_REFERENCE: INSTALLED_BYTES},
+    )
+    manifests = FakeManifestStore()
+
+    with pytest.raises(TargetUnwritableError) as raised:
+        apply(
+            _prune_plan(),
+            a_library(SKILL_NAME),
+            target,
+            manifests=manifests,
+            manifest=_pruning_manifest(),
+            prune=True,
+        )
+
+    assert len(manifests.written) == 1
+    assert _recorded_paths(manifests.written[0]) == {REFERENCE}, (
+        "the record on disk must still claim a path the run has not managed to delete "
+        "(charter §13b, R93): a file nothing claims is FOREIGN, and nothing in this initiative "
+        "can install it, remove it or repair it"
+    )
+    assert target.snapshot()[INSTALLED_REFERENCE] == INSTALLED_BYTES
+    assert raised.value.code is ErrorCode.TARGET_UNWRITABLE
+
+
+def test_a_pruning_apply_writes_the_union_first_and_the_drop_afterwards() -> None:
+    """R93 as the pair of records it is, on a run that succeeds.
+
+    The first claims everything the run will write **and** everything it will delete, so no
+    pruned file is ever on disk unclaimed; the second drops them, because by then they are
+    gone. The result carries the second, which is what is on disk.
+    """
+    target = target_holding((INSTALLED_REFERENCE, INSTALLED_BYTES))
+    manifests = FakeManifestStore()
+
+    result = apply(
+        _prune_plan(),
+        a_library(SKILL_NAME),
+        target,
+        manifests=manifests,
+        manifest=_pruning_manifest(),
+        prune=True,
+    )
+
+    assert [_recorded_paths(written) for written in manifests.written] == [{REFERENCE}, set()]
+    assert result.manifest is manifests.written[-1]
+
+
+def test_a_run_that_prunes_nothing_writes_the_record_exactly_once() -> None:
+    """**What keeps ruling R64's promise.** `MANIFEST_UNWRITABLE` means *nothing happened* only
+    because the record an ordinary apply writes is written before the first file and never
+    rewritten. R93 adds a second write on the prune path alone, and this is the assertion that
+    says "alone"."""
+    target = FakeTargetRepository()
+    manifests = FakeManifestStore()
+
+    apply(
+        InstallPlan(entries=(entry(INSTALLED_ENTRY, Verdict.CREATE, library_sha="a" * 64),)),
+        a_library(SKILL_NAME),
+        target,
+        manifests=manifests,
+    )
+
+    assert len(manifests.written) == 1
+
+
+def test_a_second_record_that_cannot_be_written_is_record_stale_and_not_unwritable() -> None:
+    """**Ruling R90 on the prune path.** The pruned file is gone, so `MANIFEST_UNWRITABLE`'s
+    promise that nothing happened would be exactly false — a script that believed it would
+    retry, report success, or do nothing.
+
+    Asserted on the code and on the target together, and on the record that *is* on disk: it
+    still names the pruned path, so nothing is disowned and running the command again is safe.
+    """
+    target = target_holding((INSTALLED_REFERENCE, INSTALLED_BYTES))
+    manifests = _ManifestStoreRefusingTheSecondWrite()
+
+    with pytest.raises(RecordStaleError) as raised:
+        apply(
+            _prune_plan(),
+            a_library(SKILL_NAME),
+            target,
+            manifests=manifests,
+            manifest=_pruning_manifest(),
+            prune=True,
+        )
+
+    assert raised.value.code is ErrorCode.RECORD_STALE
+    assert raised.value.operation == "install --prune"
+    assert INSTALLED_REFERENCE not in target.snapshot()
+    assert _recorded_paths(manifests.written[-1]) == {REFERENCE}
 
 
 # -------------------------------------------------------------------------------------------

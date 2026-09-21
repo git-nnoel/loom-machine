@@ -130,3 +130,52 @@ def test_a_record_keeping_nothing_is_a_value_and_not_an_error() -> None:
     """A first install into an empty target holds bytes for none of the paths it describes, and
     restoring it removes every one of them. That is the case R79 exists for, not a fault."""
     assert a_record(paths=("skills/new/SKILL.md",)).kept == ()
+
+
+# ==============================================================================================
+# C-13's second amendment — `links`, ruling R94
+# ==============================================================================================
+#
+# Added, never altered: every test above keeps the fields and invariants it already asserted, and
+# `links` defaults to empty so a record built without it is still a record.
+
+LINK = "skills/delivery-lead/references/elsewhere.md"
+DESTINATION = "../../../../outside/target-escape.md"
+
+
+def test_a_record_says_where_each_of_its_symlinks_pointed() -> None:
+    """The amendment itself. A link has no bytes to copy — R6 never reads through one — so
+    before this field it was described like an absent path, and restoring the backup **removed**
+    it and never put it back. A link's content is its destination, and this is where it lives."""
+    record = a_record(paths=("skills/delivery-lead/SKILL.md", LINK), links={LINK: DESTINATION})
+
+    assert record.links[LINK] == DESTINATION
+    assert LINK not in record.kept
+
+
+def test_a_record_recording_a_link_it_does_not_describe_is_refused() -> None:
+    """`links` is keyed within `paths`, for the reason `kept` is a subset of it: `restore` walks
+    `paths`, so a link recorded outside would be held forever and recreated never."""
+    with pytest.raises(ValueError, match="does not describe"):
+        a_record(paths=("skills/a/SKILL.md",), links={LINK: DESTINATION})
+
+
+def test_a_path_cannot_be_both_bytes_and_a_link() -> None:
+    """A path was one or the other when the backup was taken. A record holding both would make
+    `restore` guess which the target really held — and guessing wrong means writing a regular
+    file where the user had a link, or a link where they had a file."""
+    with pytest.raises(ValueError, match="both bytes and a link"):
+        a_record(paths=(LINK,), kept=(LINK,), links={LINK: DESTINATION})
+
+
+def test_a_link_with_no_destination_is_refused() -> None:
+    """The destination is the link's whole content. An empty one cannot be recreated, and a
+    record carrying it would fail at restore time — over a target that has already changed."""
+    with pytest.raises(ValueError, match="empty link destination"):
+        a_record(paths=(LINK,), links={LINK: ""})
+
+
+def test_a_record_with_no_links_is_a_value_and_not_an_error() -> None:
+    """The positive control for the three refusals above: an ordinary backup of an ordinary
+    target records no link at all, and that is the common case rather than a fault."""
+    assert a_record().links == {}

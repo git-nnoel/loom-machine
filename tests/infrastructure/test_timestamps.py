@@ -47,7 +47,7 @@ def _git_is_installed() -> None:
 
 def scan(library_root: Path) -> dict[str, RawArtifact]:
     """A real scan, with the real `GitTimestamps` — the whole point of this module."""
-    return {raw.id: raw for raw in scan_library(library_root)}
+    return {raw.id: raw for raw in scan_library(library_root).artifacts}
 
 
 # ==================================================================================================

@@ -192,7 +192,7 @@ Every rule below exists because the corresponding failure was observed on disk t
 | `V11` An artifact root that is a symlink: not followed, not scanned, and therefore silently absent | A symlinked skill that loads perfectly being invisible to the library, with no diagnostic. **WARNING**; install additionally refuses that artifact (R46, R53) |
 | `V10` The entry document's frontmatter does not parse | A single unquoted colon making a working skill report every required key as missing |
 
-`V1`–`V5`, `V7`, `V8`, `V9` and `V10` are `ERROR`. `V6` and `V11` are `WARNING` — it reports, never deletes, and never blocks install.
+`V1`–`V5`, `V7`, `V8`, `V9` and `V10` are `ERROR`. `V6` and `V11` are `WARNING`. **V6 never blocks install. V11 does** — install refuses that one artifact, names it in the plan, and applies the rest (R46, R53). A warning that blocks is unusual; it is justified because following a symlinked root writes outside the target and replacing one destroys the user's development link.
 
 **V10 suppresses V2, V3 and V5.** `[OBS: V2/V5 shipped]` `[GAP: V3 pending T-11]` When the frontmatter block did not parse, nothing is known
 about what it declares — so reporting a missing key, a name disagreement, or a lost `superseded_by`
@@ -356,7 +356,22 @@ another path — a `git pull` on a second machine that already had the files, or
 the one performed by hand this session. Treating it as `CONFLICT` would demand a decision where
 there is no actual disagreement. `[INF]`
 
-Presence and absence are judged separately from content:
+**Presence is resolved before equality** (R55). The table above applies only when the library, the
+manifest and the target all hold the path. Otherwise:
+
+| Held by | Verdict |
+|---|---|
+| target only | `FOREIGN` |
+| library only | `CREATE` |
+| manifest + target, not library | `PRUNE` when target equals manifest; `CONFLICT` when it does not — the user edited a file we are about to delete |
+| library + manifest, not target | `CREATE` when manifest equals library; `CONFLICT` when it does not — the user deleted a file that has since changed |
+| library + target, not manifest | the equality table's `MANIFEST_REPAIR` or `CONFLICT` row |
+| none | not an entry |
+
+Encoding absence as "not equal" was the first draft's error: it made a library artifact dropped while
+manifest and target agreed come out `UPDATE` rather than `PRUNE`. `[OBS: ruling R55]`
+
+Summarised, the three presence-only verdicts:
 
 | Verdict | Condition | Behaviour |
 |---|---|---|
@@ -415,7 +430,7 @@ files a half-good merge tool produces plausible-looking damage; handing you both
 | `library.yaml` unparseable | Hard failure with line number. Metadata is not guessable. `[INF]` |
 | `library.yaml` references a missing artifact | Validation error, not a silent skip. |
 | Target path unwritable | Plan computed and shown; apply refuses before writing anything. |
-| Apply fails partway | Restore from the backup taken in the same operation, then report. Installs are all-or-nothing per invocation. `[INF]` |
+| Apply fails partway | Restore from the backup taken in the same operation, then report. ~~Installs are all-or-nothing per invocation.~~ **Struck 2026-09-21 — R58.** R48 has a mixed plan write every safe entry and leave the conflicted ones untouched, which is deliberately partial. What survives: **no single artifact is left half-written**, and an injected mid-write failure restores the target. `[INF]` |
 | Backup cannot be written | Apply refuses. No unbacked write, ever. `[INF]` |
 | MCP: unknown artifact id | MCP error result, not an exception across the pipe. |
 | Web: artifact edited on disk while open in editor | Save is rejected on hash mismatch; the UI offers reload or overwrite. `[INF]` |
@@ -543,6 +558,11 @@ Corrections to this document after its first draft. Each names what changed the 
 | 2026-09-21 | §8.1 | `LOCAL-EDIT` changed from *Prompt* to *refused and named in the plan* | Ruling R48. Prompting hangs unattended and needs a second code path for CI; refusing is scriptable and cannot destroy an edit the user forgot |
 | 2026-09-21 | §8.1 | `UNCHANGED + manifest repair` becomes the distinct verdict `MANIFEST_REPAIR` | Ruling R52. A consumer must be able to count it, and initiative 03 renders verdicts as a drift view |
 | 2026-09-21 | — | Six rulings cited across §12 and the charter — R43 through R48 — **did not exist** when cited. Written into initiative 01's record on the same date | Found by a `phase-reviewer` cold read. The spec had closed three open questions on the authority of text nobody could read |
+
+| 2026-09-21 | §8.1 | Presence resolved before equality; five presence cases given verdicts | Ruling R55. The two tables had no rule for their interaction, so a dropped library artifact read as `UPDATE` |
+| 2026-09-21 | §4 | V11's severity sentence corrected — V6 never blocks install, V11 does | Found by a cold read: §4 said "never blocks install" six lines below a V11 row saying install refuses |
+| 2026-09-21 | §5 | `PlanAction` renamed `PlanEntry` | Contract C-10. The plan renamed it and named no mirror target, which is R26's shape |
+| 2026-09-21 | §9 | "Installs are all-or-nothing per invocation" struck | Ruling R58, reversed by R48's mixed-plan behaviour |
 
 **Not yet applied.** Review item S8 — the import-linter contract drafted in Plan 1 does not express
 §7.3's guarantee and separately permits `infrastructure → application`. §7.3's *statement* is correct;

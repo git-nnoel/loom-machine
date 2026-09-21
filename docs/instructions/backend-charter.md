@@ -129,8 +129,11 @@ acceptance criterion, not a nicety. This is D8 turned into a mechanism instead o
 
 ## 12. Concurrency posture
 
-Read-only. No locking. Multiple concurrent `hl mcp` processes are safe — each holds its own snapshot.
-**Initiative 02 revisits this**, because it writes.
+**Reads:** no locking. Multiple concurrent `hl mcp` processes are safe — each holds its own snapshot.
+
+**Writes (initiative 02, ruling R50):** a **single-writer advisory lock** — an `O_EXCL` sentinel beside
+the manifest, held for the duration of an apply, released on exit, stale-broken by pid check. A second
+apply against a held lock exits `LOCK_HELD = 10` without writing. **Pending T-17.**
 
 ## 13. Configuration
 
@@ -146,3 +149,4 @@ on a directory that is not a library, rather than silently returning an empty li
 | 2026-09-01 | §8 gains V8 (R19), V9 (R20) and V10 (R33). V3 scoped to directory-kind artifacts (R32 / DEC-9). |
 | 2026-09-20 | §8's V10 row extends the suppression to V3 (R37). Built in T-11 on 2026-09-21; the register stated the rule before the code emitted it, per §9. |
 | 2026-09-21 | §8 gains V11, a symlinked artifact root (R46). **Pending initiative 02**, which owns both halves: the scan warning and the install refusal. |
+| 2026-09-21 | §12's write posture decided: a single-writer advisory lock (R50). **Pending T-17.** The charter stated it before the code, as §9 requires. |

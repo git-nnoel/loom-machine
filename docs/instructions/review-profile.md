@@ -23,7 +23,7 @@ against it with confidence.
 | Fixture library | `tests/fixtures/library/` — the regression suite; **never deleted** | charter §10 |
 
 **Deliberate deviations from `plan-formats.md` §3 — do not report these as defects:**
-- **No phase `README.md` initiative log.** One phase, one closed initiative; the root `README.md` carries the map. Add one when phase 1 holds a second initiative.
+- ~~No phase `README.md`.~~ **Created 2026-09-21** at `phases/phase-1/README.md` when the second initiative opened. No longer a deviation.
 - **No `_template/`.** Templates are copied from the closed initiative 01 documents, which are the worked example.
 - **`docs/plans/2026-08-28-store-and-read-path.md` sits outside the tree.** The superseded original plan, kept because the backend review cites it by task number throughout. It carries a SUPERSEDED banner and is never implemented from.
 
@@ -80,13 +80,13 @@ log first: the spec is amended at the source, never patched from the instruction
 Computed, never recorded as a counter. As of 2026-09-20:
 
 ```
-R-N    rulings, implementation-record.md          high-water 54
+R-N    rulings, implementation-record.md          high-water 59
 DEC-N  decisions, implementation-plan.md §5        high-water 14
 C-N    contracts, implementation-plan.md §6        high-water 14
 T-N    tasks, implementation-plan.md §7            high-water 23  (project-wide, R51)
 F-N    features, implementation-plan.md §4         high-water 16  (project-wide, R51)
 V-N    validation rules, backend-charter.md §8     high-water 11
-L-N    lessons, specialist-dispatch-lessons.md     high-water 39
+L-N    lessons, specialist-dispatch-lessons.md     high-water 40
 ```
 
 Recompute, do not trust the numbers above:

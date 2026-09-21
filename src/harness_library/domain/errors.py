@@ -259,6 +259,26 @@ class ErrorCode(StrEnum):
     is asked about — rather than `FOREIGN`, which nothing in this initiative can reach.
     """
 
+    EDITOR_FAILED = "EDITOR_FAILED"
+    """`$EDITOR` is not configured, or could not be run. **Ruling R102**, exit 14.
+
+    The one code in this taxonomy that is about the user's *machine* rather than about their
+    library, their target or this tool's own record — which is exactly why it is its own code.
+    Nothing was read, nothing was written and nothing was recorded: `compare_versions` shows two
+    versions and decides nothing (R54), so a failure to show them leaves the refused path refused
+    and the remedy is to set `$EDITOR` to something that runs.
+
+    **T-21 left the gap deliberately and said so.** `ConflictEditor.compare` documents an `OSError`
+    as its failure, `compare_versions` lets it out, and both docstrings flag that C-6 had no code
+    for "the editor would not start" — charter §9 forbids inventing one at a raise site. Without a
+    code the user is handed a traceback for a mistyped environment variable, which is the least
+    diagnosable failure this product can produce.
+
+    Deliberately **not** folded into `BAD_REQUEST`: the request was fine and so was everything
+    this tool owns. Deliberately not `USAGE = 2` either, which is Click's convention for a flag
+    this program rejected — `$EDITOR` is not a flag and the shell did not reject it.
+    """
+
 
 class HarnessLibraryError(Exception):
     """Base of every error this project raises deliberately at a user-facing boundary.
@@ -762,6 +782,45 @@ class NothingToResolveError(HarnessLibraryError):
         super().__init__(
             f"there is nothing to resolve for {artifact_id}: {reason}. Run hl diff to see which "
             "paths this target refuses and why"
+        )
+
+
+# -- The editor that would not start (initiative 02, T-22, ruling R102) --------------------------
+
+
+class EditorFailedError(HarnessLibraryError):
+    """`$EDITOR` is not set, cannot be parsed, or could not be run.
+
+    **The gap T-21 refused to paper over.** `ConflictEditor.compare` documents an `OSError` and
+    `compare_versions` lets it out, both saying in their docstrings that C-6 had no code for this
+    and that charter §9 forbids inventing one at a raise site. Ruling R102 is that decision:
+    `EDITOR_FAILED`, exit 14.
+
+    **One class over three raise sites**, not three. An unset `$EDITOR`, an unparseable one and
+    one that will not start carry the same two fields and call for the same action — set the
+    variable to a command that runs — so a caller branching on the code would branch three ways to
+    do one thing. The distinction that *does* matter is in `command`: `None` means nothing was
+    configured, and a value means what was tried.
+
+    **Nothing happened when this is raised.** `compare_versions` writes no file and records
+    nothing, so the refused path is refused exactly as it was and the run is repeatable.
+
+    Attributes:
+        code: always `ErrorCode.EDITOR_FAILED`.
+        command: what was run, as text, or `None` when nothing was configured. Not contract; a
+            diagnosis.
+        reason: the human sentence, usually the underlying `OSError`'s. Not contract.
+    """
+
+    code = ErrorCode.EDITOR_FAILED
+
+    def __init__(self, command: str | None, reason: str) -> None:
+        self.command = command
+        self.reason = reason
+        subject = "no editor is configured" if command is None else f"the editor {command!r}"
+        super().__init__(
+            f"{subject}: {reason}. Set $EDITOR to a command that runs and waits — `code --wait`, "
+            "`vim -d` — and run this again; nothing was written and the path is still refused"
         )
 
 

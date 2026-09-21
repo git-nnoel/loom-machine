@@ -1737,3 +1737,206 @@ uv run ruff format --check . && uv run ruff check . && uv run mypy src tests && 
 ```
 
 Whole, every time (L2), exit code read without a pipe (L44). Baseline 899 passed.
+
+---
+
+# Backend task plan — T-22, the CLI that reaches the write path
+
+Initiative 02 · phase 1 · base commit `4a2cbf6` · owner `backend-developer-specialist`.
+Six commands — `install`, `diff`, `uninstall`, `rollback`, `clean`, `export` — over the ten use
+cases initiative 02 built and initiative 01's composition root. Realises **C-14**'s exit statuses
+at the process boundary and amends C-14 with **`EDITOR_FAILED = 14`** (R102). Rulings **R3**,
+**R7**, **R43**, **R57**, **R71**, **R82**, **R85**, **R96**, **R99**, **R100**, **R102**,
+**R104** bind.
+
+## 1. Where the code goes
+
+| File | Why |
+|---|---|
+| `src/harness_library/domain/errors.py` | **one code, one class.** `ErrorCode.EDITOR_FAILED` and `EditorFailedError`. R102: T-21 correctly let the editor's `OSError` out rather than mislabel it, and without a code the user gets a traceback |
+| `src/harness_library/cli/exit_codes.py` | `EDITOR_FAILED = 14` and its `EXIT_STATUS` row. I-8 makes the table total over `ErrorCode`, so the row and the member land in one edit |
+| `src/harness_library/cli/settings.py` | **`$EDITOR`, R104.** Charter §13 keeps every environment read here. A `validation_alias` so the `HL_` prefix does not apply, and `editor_command()` splits it with `shlex` — a real `$EDITOR` is routinely `code --wait`, and splitting it in `infrastructure/editor.py` would be a second, worse shell |
+| `src/harness_library/cli/composition.py` | the **write-side** composition root beside C-8's: `default_target_root`, `require_target` (R71), `TargetSession`, `open_target`, `open_editor`, `ReportingConflictEditor`. One module, because two composition roots in two files is how a command comes to open a different target from the one it locked |
+| `src/harness_library/cli/payloads.py` | new. The `--json` contract for the six commands (R7). Pydantic, subclassing `application.read.Payload`, so `emit_json` stays one function. **In `cli/` and not in `application/read/dtos.py`** — T-22's territory is `cli/**`; flagged in §8 |
+| `src/harness_library/cli/rendering.py` | the six human renderers, beside the five that exist. Presentation, never contract (R7) |
+| `src/harness_library/cli/main.py` | the six commands. `_run` is unchanged and is still the whole convention |
+| `tests/cli/test_install.py` · `test_diff.py` · `test_uninstall_rollback.py` · `test_clean_export.py` · `test_resolve.py` · `test_settings.py` | new. Typer's runner, real files under `tmp_path`, copies of the committed target fixture |
+| `tests/cli/test_exit_codes.py` | added to, never altered — `EDITOR_FAILED`'s three tests beside the eight that exist |
+
+No dependency change: `shlex` and `tempfile` are stdlib. No use-case signature changes.
+
+## 2. The composition, and the one place I departed from the dispatch
+
+`hl install --resolve <side> <artifact>` needs two write use cases, and the lock is not
+re-entrant (C-16, R82), so they run **in sequence** and the second is handed the manifest the
+first wrote — `ManifestStore` has only `write` (C-15), so nothing inside `application/` can
+refresh it.
+
+**The dispatch names the order `resolve → re-plan → apply`. I ran it the other way —
+`apply → re-plan → resolve` — and this is the decision the lead has to rule on.**
+
+Under `resolve → apply`, `--resolve target` **destroys the file the user just asked to keep**,
+in the same command. The reason is arithmetic, not taste: `resolve target` records the target's
+current digest, so the path becomes (library `L`, manifest `T`, target `T`) — which
+`VERDICT_BY_EQUALITY` judges `UPDATE`, and `WRITTEN_VERDICTS` contains `UPDATE`. The re-plan the
+dispatch asks for is exactly what converts "keep mine" into "overwrite mine", and the apply that
+follows it writes `L`. The three other conflict shapes fail the same way: a path the target lost
+comes back `CREATE` and is re-created, and a path the library dropped comes back `PRUNE` and is
+deleted by `--prune` in the same run.
+
+Three things decided it:
+
+* **F-15 is a frozen acceptance criterion** — *"`--resolve target` leaves the target
+  byte-identical and repairs the manifest; both exit 0"*. T-23 tests it through the CLI, which is
+  the only human surface there is;
+* **R100's own sentence** is *"the **next** install writes the library's version over the copy the
+  user kept"*. Under `resolve → apply` the next install is this one, a millisecond later, and the
+  ruling's help-text requirement would be describing a flag that does nothing;
+* **the dispatch's own hazard sentence describes the order I ran.** *"a **resolve** given a stale
+  manifest silently drops everything **the apply before it** recorded"* — that failure only
+  exists when the apply is first. It is quoted verbatim from
+  `the-lock-is-not-re-entrant-so-two-use-cases-cannot-nest`, whose prescription line says
+  resolve-first and whose worked example says apply-first. The memory is corrected.
+
+Under `apply → re-plan → resolve` the end state of `--resolve library` is identical to what the
+dispatch's order would have produced, so nothing is lost by the change.
+
+**The cost, stated.** `resolve_conflict` raises `NothingToResolveError` when the plan refuses
+nothing about the named artifact, and under this order the install has already run when it does —
+the command exits 3 with files written. Restating `_refused_entries`' predicate in the adapter to
+fail earlier is worse (charter §2, and R54's rule would then live in two places), so it stands and
+is documented on the command.
+
+**The stale manifest.** `apply_install` returns the record it wrote; that value — never
+`session.manifest`, which was read before the command started — is what the re-plan and
+`resolve_conflict` are given. Handing the resolve the pre-apply manifest drops every artifact the
+apply newly recorded, because `_manifest_after_resolve` carries the previous record's artifacts
+over verbatim. That is mutation (c).
+
+## 3. `$EDITOR`, and the third spelling
+
+`Resolution` has two members and C-9 is frozen, so the flag's three spellings are this layer's
+(the domain module says so). `--resolve library|target|edit`: the first two are
+`resolve_conflict`, `edit` is `compare_versions`. A `StrEnum` in `cli/`, so Typer renders the
+choices and a typo is exit 2 rather than a token nothing handles.
+
+`$EDITOR` is read in `cli/settings.py` and split with `shlex.split`, and the argument vector is
+handed to `SubprocessConflictEditor` with a `tempfile.TemporaryDirectory` workspace that is
+removed however the run ends. An unset or blank `$EDITOR` and an unparseable one are both
+`EditorFailedError` — one class with a nullable `command`, because the two raise sites carry the
+same fields and a second class would be a distinction no caller acts on.
+
+The editor's own `OSError` is translated by **`ReportingConflictEditor`**, a two-line decorator
+around the real seam, rather than by an `except OSError` around `compare_versions`: that call also
+reaches the library repository, whose `read_bytes` can raise `OSError` for a reason that has
+nothing to do with an editor, and a translation wide enough to catch it would mislabel a
+permission fault as `EDITOR_FAILED`.
+
+## 4. Flag spellings
+
+| Command | Shape |
+|---|---|
+| `install` | `[ARTIFACT_ID] --target --dry-run --prune --force --resolve library\|target\|edit --json` |
+| `diff` | `--target --json`. `diff_against_target`, the **read** use case: no lock (R85), exit 0 always |
+| `uninstall` | `ARTIFACT_ID --target --json` |
+| `rollback` | `[BACKUP_ID] --target --json`; omitted means this target's most recent |
+| `clean` | `--target [--foreign \| --prune] --remove --json`. Lists by default (R96) |
+| `export` | `KEY --output PATH --json` |
+
+`ARTIFACT_ID` on `install` is meaningful only with `--resolve`, and either without the other is a
+usage error (exit 2). `--dry-run` with `--resolve` is a usage error too: a dry run that resolved
+something would have written the record it claims not to write.
+
+`--prune` appears on both `install` and `clean`, which is what makes all ten use cases reachable:
+`install --prune` is `apply_install(prune=True)` and `clean --prune` is `prune_target`. Without
+the second, `prune_target` is dead code — `prune.py`'s docstring already assumes two entry points.
+
+The default target is `~/.claude`. No test uses it: each new test module points `$HOME` at
+`tmp_path` as well as passing `--target`, so a forgotten flag lands in the sandbox rather than in
+the developer's harness.
+
+## 5. Exit statuses
+
+`INCOMPLETE = 6` is **not** an error and is not raised: the payload goes to stdout naming every
+entry left alone with its reason, and the command then exits 6 — `hl validate`'s shape exactly.
+`is_complete` is composed, never recomputed from a rendering:
+
+* no `--resolve`: `ApplyResult.is_complete`;
+* `--resolve library|target`: no entry left alone outside the resolved artifact, **and**
+  `ResolveResult.is_complete`;
+* `--resolve edit`: `ApplyResult.is_complete`. Nothing was decided, so nothing is settled — the
+  editor changes no state and the run is still incomplete.
+
+A missing `--target` directory is `TargetUnwritableError`, exit 7, naming the path (R71). Nothing
+creates it: `FilesystemTargetRepository` refuses to be built over a non-directory and
+`require_target` refuses before that, so the refusal is stated twice and created never.
+
+## 6. Tests
+
+`tests/cli/` is Typer's runner over real files. Assertions are against the **JSON payload** (R7)
+and, for everything that writes, against the **files' digests** — never against the command's own
+report (R31). Six new modules, each copying the committed target fixture to `tmp_path` with
+`symlinks=True` and recreating `outside/` beside it, as `tests/test_clean.py` does.
+
+What this layer is blind to: every rule, every ordering and every record shape below it. Those
+were decided and proven in T-12…T-21, and re-asserting them here would produce a second suite
+failing for reasons that have nothing to do with the CLI.
+
+## 7. Mutation checks (L35 — read this if the session was interrupted)
+
+Three, each run alone with `-k` naming the mutation (L42). `cli/main.py` is copied to
+`…/scratchpad/main.py.t22.orig` before the first mutation and restored from that copy rather than
+from memory of the edit.
+
+**(a)** Return exit 0 when the plan is incomplete — `_install_status` always `OK`.
+Must fail: `tests/cli/test_install.py::test_an_install_that_hits_a_conflict_exits_incomplete`,
+**on the integer**, through Typer's runner.
+Must stay green: `tests/cli/test_install.py::test_a_complete_install_exits_zero_and_writes_the_library`.
+
+**(b)** `--dry-run` applies the plan — the dry-run branch removed.
+Must fail: `tests/cli/test_install.py::test_a_dry_run_writes_nothing`, **on the files' digests**,
+not on the report.
+Must stay green: `test_a_complete_install_exits_zero_and_writes_the_library`, which must still
+write.
+
+**(c)** `hl install --resolve` hands the second run a stale manifest — `manifest=result.manifest`
+replaced by `manifest=session.manifest` at the re-plan and the resolve.
+Must fail: `tests/cli/test_resolve.py::test_a_resolving_install_keeps_the_record_the_apply_wrote`,
+on **the artifact the apply installed being absent from the manifest read back off disk** — the
+stale record carries no entry for it, so `_manifest_after_resolve` copies none, and every file the
+apply just wrote becomes `FOREIGN`.
+Must stay green: `tests/cli/test_resolve.py::test_resolve_target_leaves_the_conflicted_file_byte_identical`,
+whose assertions are the conflicted file's bytes and the exit status — both facts about the
+resolve's own artifact, which the stale manifest still describes correctly.
+
+**L57, walked before any run.** (a) changes only the status function: the dry-run test asserts
+digests and a non-empty stdout and never an exit code, so it cannot redden; the complete-run test
+exits 0 either way. (b) changes only the dry-run branch: neither the conflict test nor the
+complete-run test passes `--dry-run`. (c) changes only the two manifest arguments on the
+`--resolve` path: neither (a)'s nor (b)'s tests pass `--resolve`, and (c)'s own control asserts
+nothing about any artifact but the resolved one.
+
+## 8. What the contracts left open, and what I decided
+
+* **the composition order** — §2. The one that needs a ruling;
+* **`library_git_sha` is written as `None`** by every command. Nothing in the project computes a
+  library's HEAD: `infrastructure/timestamps.py` has `_run` and `_last_commit_date`, both private
+  and both per artifact. C-11's field therefore answers "which version is on this machine" with
+  `None` on every install. Adding a `head_sha()` to that module is one function and is outside
+  `cli/**`;
+* **`hl diff` exits 0 whatever it finds.** It is a report, like `hl list`; `install --dry-run` is
+  the command whose exit status says whether the plan is complete. No criterion fixes it;
+* **the install payloads live in `cli/payloads.py`.** Initiative 03 renders C-9 and C-10 too; if
+  the two are to be one wire format they belong in `application/read/dtos.py`, which is outside
+  this task's territory;
+* **`clean` takes `--foreign` and `--prune` as selectors** and `--remove` as the act. The plan
+  writes `clean --foreign` throughout, so the flag exists and is the default.
+
+## 9. Gate
+
+```
+export PATH="$HOME/.local/bin:$PATH"
+uv run ruff format --check . && uv run ruff check . && uv run mypy src tests && uv run lint-imports && uv run pytest
+```
+
+Whole, every time (L2), exit code read without a pipe (L44). Baseline 984 passed.

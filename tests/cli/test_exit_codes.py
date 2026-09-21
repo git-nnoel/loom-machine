@@ -10,6 +10,7 @@ from __future__ import annotations
 from harness_library.cli.exit_codes import (
     BACKUP_FAILED,
     BAD_REQUEST,
+    EDITOR_FAILED,
     EXIT_STATUS,
     INCOMPLETE,
     LIBRARY_UNUSABLE,
@@ -298,3 +299,64 @@ def test_record_stale_has_a_class_that_carries_it() -> None:
 
     assert ErrorCode.INCOMPLETE not in carried
     assert ErrorCode.RECORD_STALE in carried
+
+
+# -- Contract C-14's ninth install status (T-22, ruling R102) ------------------------------------
+#
+# Added, not altered, as in T-13, T-16, T-17 and T-19. Every test above keeps the sets and the
+# numbers it already asserted. Like `RECORD_STALE` and unlike `TARGET_UNREADABLE`, this one
+# arrives **with** its emitters: `cli/settings.py` refuses an unset or unparseable `$EDITOR` and
+# `cli/composition.py`'s `ReportingConflictEditor` gives the editor's own `OSError` this code.
+
+
+def test_the_editor_failed_status_is_the_number_r102_fixed() -> None:
+    """The integer itself, because a script branches on it. R102 fixes 14."""
+    assert EDITOR_FAILED == 14
+    assert exit_status_for(ErrorCode.EDITOR_FAILED) == EDITOR_FAILED
+
+
+def test_a_failed_editor_is_told_apart_from_a_bad_request_and_from_a_usage_error() -> None:
+    """**The distinction the code exists for, and it is about whose fault it is.**
+
+    `BAD_REQUEST` says the request itself is not answerable whatever the library holds, and
+    `USAGE` says this program rejected a flag. `EDITOR_FAILED` says the request was fine, the
+    library was fine, the target was fine, and a program on the user's machine would not start.
+    It is the only status in the table whose remedy is a shell variable rather than a directory.
+    """
+    assert EDITOR_FAILED not in {BAD_REQUEST, USAGE, OK}
+
+
+def test_the_nine_install_statuses_are_nine_distinct_numbers() -> None:
+    """The nine together, as one set. A ninth code reusing an eighth's number would make a
+    script that already branches on 6..13 read this one as something it is not."""
+    install = {
+        ErrorCode.INCOMPLETE,
+        ErrorCode.TARGET_UNWRITABLE,
+        ErrorCode.MANIFEST_UNREADABLE,
+        ErrorCode.BACKUP_FAILED,
+        ErrorCode.LOCK_HELD,
+        ErrorCode.MANIFEST_UNWRITABLE,
+        ErrorCode.TARGET_UNREADABLE,
+        ErrorCode.RECORD_STALE,
+        ErrorCode.EDITOR_FAILED,
+    }
+
+    assert len({exit_status_for(code) for code in install}) == len(install) == 9
+
+
+def test_editor_failed_has_a_class_that_carries_it() -> None:
+    """Charter §9 allows a code before its class and forbids the reverse; R102 named both.
+
+    The positive control is the sibling assertion, unchanged from the two tests above: the walk
+    really does find a code with no class, so "carried" cannot mean "everything looks carried".
+    `INCOMPLETE` is that code and `errors.py` argues it may never get one — it is not a failure
+    and is never raised.
+    """
+    carried = {
+        subclass.code
+        for subclass in HarnessLibraryError.__subclasses__()
+        if getattr(subclass, "code", None) is not None
+    }
+
+    assert ErrorCode.INCOMPLETE not in carried
+    assert ErrorCode.EDITOR_FAILED in carried

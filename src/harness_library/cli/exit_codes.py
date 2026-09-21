@@ -130,6 +130,20 @@ apart. **Not a failure of the work** — nothing is lost and nothing is unreacha
 and run the same command again, which is safe because all four are idempotent.
 """
 
+EDITOR_FAILED = 14
+"""`$EDITOR` is not configured, or could not be run. Contract C-14, ruling R102.
+
+**The only status in this table that is about the user's machine** rather than about their
+library, their target or this tool's record — which is why it is not folded into any of the
+thirteen above it. Every other remedy points at a directory; this one points at a shell variable.
+
+`compare_versions` shows two versions of a refused path and decides nothing (R54), so a failure
+to show them changes no state at all: the path is refused exactly as it was, and running the
+command again after setting `$EDITOR` is the whole recovery. T-21 let the editor's `OSError` out
+rather than mislabel it as one of the codes that already existed, and said so in two docstrings;
+without a status a mistyped environment variable reaches the user as a traceback.
+"""
+
 EXIT_STATUS: dict[ErrorCode, int] = {
     ErrorCode.LIBRARY_YAML_INVALID: LIBRARY_UNUSABLE,
     ErrorCode.ARTIFACT_NOT_FOUND: NOT_FOUND,
@@ -139,11 +153,12 @@ EXIT_STATUS: dict[ErrorCode, int] = {
     ErrorCode.FILE_NOT_TEXT: BAD_REQUEST,
     ErrorCode.INVALID_QUERY: BAD_REQUEST,
     ErrorCode.NOT_A_LIBRARY: LIBRARY_UNUSABLE,
-    # The install path. One status each, unlike the read path's groups: these eight call for
-    # eight different actions — decide, fix the target, delete the manifest, fix the backup
-    # directory, wait, fix the state directory, fix the unreadable path, run the command again —
-    # so grouping them would throw away the only thing a script wants from them. The seventh has
-    # no emitter yet (R81); the eighth is T-19's (R90).
+    # The install path. One status each, unlike the read path's groups: these nine call for
+    # nine different actions — decide, fix the target, delete the manifest, fix the backup
+    # directory, wait, fix the state directory, fix the unreadable path, run the command again,
+    # set $EDITOR — so grouping them would throw away the only thing a script wants from them.
+    # The eighth is T-19's (R90) and the ninth is T-22's (R102); every one of the nine now has
+    # an emitter.
     ErrorCode.INCOMPLETE: INCOMPLETE,
     ErrorCode.TARGET_UNWRITABLE: TARGET_UNWRITABLE,
     ErrorCode.MANIFEST_UNREADABLE: MANIFEST_UNREADABLE,
@@ -152,6 +167,7 @@ EXIT_STATUS: dict[ErrorCode, int] = {
     ErrorCode.MANIFEST_UNWRITABLE: MANIFEST_UNWRITABLE,
     ErrorCode.TARGET_UNREADABLE: TARGET_UNREADABLE,
     ErrorCode.RECORD_STALE: RECORD_STALE,
+    ErrorCode.EDITOR_FAILED: EDITOR_FAILED,
 }
 """One entry per `ErrorCode`. A member without one fails `tests/cli/test_exit_codes.py`."""
 
@@ -164,6 +180,7 @@ def exit_status_for(code: ErrorCode) -> int:
 __all__ = [
     "BACKUP_FAILED",
     "BAD_REQUEST",
+    "EDITOR_FAILED",
     "EXIT_STATUS",
     "INCOMPLETE",
     "LIBRARY_UNUSABLE",

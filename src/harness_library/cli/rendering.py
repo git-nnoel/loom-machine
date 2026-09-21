@@ -31,6 +31,16 @@ from harness_library.application.read import (
     SearchResults,
     ValidationReport,
 )
+from harness_library.cli.payloads import (
+    CleanPayload,
+    ExportPayload,
+    InstallPayload,
+    PlanEntryPayload,
+    PlanPayload,
+    ResolutionPayload,
+    RollbackPayload,
+    UninstallPayload,
+)
 
 NOT_SET = "-"
 """What an absent optional value looks like in a table.
@@ -204,6 +214,191 @@ def render_collection_detail(payload: CollectionDetail, stream: TextIO) -> None:
         stream.write(f"\nunresolved members ({len(payload.unresolved_member_ids)})\n")
         for member_id in payload.unresolved_member_ids:
             stream.write(f"  {member_id}  [MISSING]\n")
+
+
+# ------------------------------------------------------------------------------------------------
+# The write path (T-22). Same rule as everything above: presentation, never contract (R7)
+# ------------------------------------------------------------------------------------------------
+
+
+def render_plan(payload: PlanPayload, stream: TextIO) -> None:
+    """What install would do about every path. Contract C-10, as a table. `hl diff`'s whole view.
+
+    **The verdict leads every row**, because it is the branchable value and the one thing a user
+    scans for. The counts line is written from `counts`, which arrived dense over all nine
+    verdicts (R62); the zero rows are dropped here rather than in the payload, which is the
+    whole difference between a rendering and a contract.
+    """
+    if _plan_table(payload, stream):
+        _refused(
+            [entry for entry in payload.entries if entry.reason is not None],
+            stream,
+            heading="reasons",
+        )
+
+
+def _plan_table(payload: PlanPayload, stream: TextIO) -> bool:
+    """The table and the counts line, with no reasons. False when there was nothing to show.
+
+    Split out because `render_install` prints the same table and then its **own** list of what
+    was left alone — which is the one a user acts on, is a different set from "every entry that
+    carries a reason", and includes a `local_edit`, which carries none. Printing both would say
+    the same sentences twice and leave the reader working out which of the two lists is the one
+    they are being asked about.
+    """
+    if not payload.entries:
+        stream.write("Nothing here: the library, the manifest and the target are all empty.\n")
+        return False
+    rows = [
+        (entry.verdict.value, entry.path, entry.artifact_id or NOT_SET) for entry in payload.entries
+    ]
+    _table(("VERDICT", "PATH", "ARTIFACT"), rows, stream)
+    stream.write(f"\n{payload.total} path(s) in {payload.target_path}: {_counts(payload)}.\n")
+    return True
+
+
+def render_install(payload: InstallPayload, stream: TextIO) -> None:
+    """What one install did, or — with `--dry-run` — what it would have done. Features F-9, F-15.
+
+    The refusals are printed **last and in full**, with the reason each entry carries, because
+    they are the part the user has to act on and `INCOMPLETE = 6` is the status that sends them
+    here. Everything above them is a receipt.
+    """
+    if payload.dry_run:
+        stream.write("DRY RUN — nothing was written.\n\n")
+    _plan_table(payload.plan, stream)
+
+    if not payload.dry_run:
+        stream.write("\n")
+        _paths("written", payload.written, stream)
+        if payload.prune:
+            _paths("removed (--prune)", payload.deleted, stream)
+        _field("backup", payload.backup_id or NOT_SET, stream)
+
+    if payload.resolution is not None:
+        render_resolution(payload.resolution, stream)
+
+    _refused(payload.left_alone, stream, heading="left alone")
+    stream.write(
+        "\nComplete: everything was applied.\n"
+        if payload.is_complete
+        else "\nINCOMPLETE: the entries above were left alone. Nothing was destroyed — decide "
+        "each one with hl install --resolve library|target|edit <artifact>.\n"
+    )
+
+
+def render_resolution(payload: ResolutionPayload, stream: TextIO) -> None:
+    """What `--resolve` did to one artifact. Feature F-15, ruling R54."""
+    stream.write(f"\nresolve {payload.side}: {payload.artifact_id}\n")
+    _paths("written", payload.written, stream)
+    _paths("record repaired", payload.repaired, stream)
+    _paths("dropped from the record", payload.dropped, stream)
+    _paths("shown in $EDITOR", payload.compared, stream)
+    if payload.backup_id is not None:
+        _field("backup", payload.backup_id, stream)
+    if payload.side == "target" and payload.repaired:
+        # Ruling R100, said out loud where the user is looking. The record now agrees with the
+        # disk, which is what clears the refusal — and which also makes the library's next
+        # version an ordinary `update`.
+        stream.write(
+            "  note           the refusal is settled, the file is NOT pinned: the next\n"
+            "                 hl install writes the library's version over the copy you kept.\n"
+        )
+    _refused(payload.left_alone, stream, heading="still refused")
+
+
+def render_uninstall(payload: UninstallPayload, stream: TextIO) -> None:
+    """What one uninstall removed. Feature F-12."""
+    stream.write(f"{payload.artifact_id}\n")
+    _field("target", payload.target_path, stream)
+    _field("backup", payload.backup_id or NOT_SET, stream)
+    _paths("removed", payload.removed, stream)
+    _paths("already gone", payload.absent, stream)
+    stream.write(
+        f"\n{len(payload.removed)} file(s) removed. Anything this tool did not install is "
+        "untouched.\n"
+    )
+
+
+def render_rollback(payload: RollbackPayload, stream: TextIO) -> None:
+    """What one rollback put back. Feature F-11."""
+    stream.write(f"backup {payload.backup_id}\n")
+    _field("target", payload.target_path, stream)
+    _paths("restored", payload.restored, stream)
+    _paths("removed again", payload.removed, stream)
+    stream.write(f"\n{len(payload.restored)} file(s) restored, {len(payload.removed)} removed.\n")
+
+
+def render_clean(payload: CleanPayload, stream: TextIO) -> None:
+    """The listing, then what came of it. Features F-10 and F-12, ruling R96.
+
+    **The listing is printed first and in full, always** — before the removals and whether or not
+    anything was removed. That is not a layout choice: with `--remove` it is the statement the
+    user is being shown of what went, and without it, it is the statement they authorise.
+    """
+    subject = "foreign paths" if payload.mode == "foreign" else "paths the library has dropped"
+    stream.write(f"{subject} in {payload.target_path}\n")
+    _paths("listed", payload.listed, stream)
+    _paths("already gone", payload.absent, stream)
+    if not payload.removed_requested:
+        stream.write(
+            f"\n{len(payload.listed)} path(s) listed. Nothing was removed — pass --remove to "
+            "delete them.\n"
+        )
+        return
+    _paths("removed", payload.removed, stream)
+    _field("backup", payload.backup_id or NOT_SET, stream)
+    stream.write(f"\n{len(payload.removed)} path(s) removed. Roll back with hl rollback.\n")
+
+
+def render_export(payload: ExportPayload, stream: TextIO) -> None:
+    """One collection as an archive. Feature F-16."""
+    stream.write(f"{payload.key} -> {payload.output}\n")
+    _field("entries", str(len(payload.entries)), stream)
+    _field("size", f"{payload.size} bytes", stream)
+    for entry in payload.entries:
+        stream.write(f"  {entry}\n")
+    if payload.unresolved_member_ids:
+        # Also a V7 ERROR in `hl validate`. Repeated here so a user does not have to validate the
+        # whole library to discover that part of their archive is missing (ruling R27's posture).
+        stream.write(f"\nunresolved members ({len(payload.unresolved_member_ids)})\n")
+        for member_id in payload.unresolved_member_ids:
+            stream.write(f"  {member_id}  [MISSING]\n")
+
+
+def _counts(payload: PlanPayload) -> str:
+    """The non-zero verdict counts, in C-9's declaration order. Presentation only."""
+    present = [f"{verdict.value} {count}" for verdict, count in payload.counts.items() if count > 0]
+    return ", ".join(present) if present else "nothing"
+
+
+def _paths(label: str, paths: Sequence[str], stream: TextIO) -> None:
+    """One labelled path list, omitted entirely when it is empty."""
+    if not paths:
+        return
+    stream.write(f"  {label} ({len(paths)})\n")
+    for path in paths:
+        stream.write(f"    {path}\n")
+
+
+def _refused(entries: Sequence[PlanEntryPayload], stream: TextIO, *, heading: str) -> None:
+    """Every entry given, with its reason when it carries one.
+
+    **Every entry, not only the explained ones.** C-10 requires a reason on `conflict` and
+    `skipped` and leaves it optional elsewhere, so a `local_edit` left alone arrives here with
+    `reason` null — and dropping it would hide from the user one of the two things they have to
+    decide about. The verdict is the explanation in that case, which is why it leads the line.
+
+    Reasons are printed in full and never truncated: the user is being asked to decide
+    something, and a reason cut short is a decision they cannot make.
+    """
+    if not entries:
+        return
+    stream.write(f"\n{heading} ({len(entries)})\n")
+    for entry in entries:
+        stream.write(f"  {entry.verdict.value}  {entry.path}\n")
+        if entry.reason is not None:
+            stream.write(f"    {entry.reason}\n")
 
 
 def _findings(findings: Sequence[FindingPayload], stream: TextIO, *, heading: str | None) -> None:

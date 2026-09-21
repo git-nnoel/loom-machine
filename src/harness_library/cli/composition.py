@@ -11,17 +11,59 @@ reason is the failure this product exists to eliminate: a read path that answers
 when the truth is "you are not where you think you are" is confidently wrong, and it is wrong in
 the direction a user cannot detect. An empty listing is a fact about a library; it must never also
 be the way a missing library looks.
+
+---
+
+**The write side lives here too, and in one place on purpose (T-22).** A target needs five
+collaborators that have to agree about which directory they are for — the target repository, the
+backup store, the manifest store, the write lock and the manifest already on disk — and four of
+the five are keyed by a *canonical* spelling of the target path (R43). Composed at five call
+sites, a command could hold a lock on one spelling of a directory and write the manifest of
+another; composed once, in `open_target`, it cannot. `TargetSession` is that bundle and every
+write command takes one.
+
+**A missing target is refused and never created — ruling R71.** `hl install --target ~/.clade`
+on a typo must say so and stop, rather than build a harness in a directory nobody asked for and
+report success. The refusal is stated twice by construction: `require_target` here, and
+`FilesystemTargetRepository`'s own constructor, which declines to be built over a non-directory
+precisely so that this decision stays in the composition root.
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
-from harness_library.cli.settings import Settings
-from harness_library.domain.errors import ErrorCode, HarnessLibraryError
+from harness_library.cli.settings import Settings, editor_command
+from harness_library.domain.backup import BackupStore
+from harness_library.domain.errors import EditorFailedError, ErrorCode, HarnessLibraryError
+from harness_library.domain.lock import WriteLock
+from harness_library.domain.manifest import Manifest, ManifestStore
 from harness_library.domain.registry import ARTIFACT_DIRECTORIES
+from harness_library.domain.resolution import ConflictEditor, ConflictVersions
+from harness_library.domain.target import TargetRepository
+from harness_library.infrastructure.backup import FilesystemBackupStore
+from harness_library.infrastructure.editor import SubprocessConflictEditor
 from harness_library.infrastructure.library_yaml import LIBRARY_YAML_FILENAME
+from harness_library.infrastructure.lock import FilesystemWriteLock
+from harness_library.infrastructure.manifest_store import (
+    FilesystemManifestStore,
+    canonical_target_path,
+    default_state_root,
+    read_manifest,
+)
 from harness_library.infrastructure.repository import FilesystemArtifactRepository
+from harness_library.infrastructure.target import FilesystemTargetRepository
+
+DEFAULT_TARGET_DIRECTORY = ".claude"
+"""Where a harness lives under a user's home. The default for `--target`.
+
+A constant rather than a literal in a Typer default, because two spellings of "the user's harness"
+is exactly the drift ruling R43 made the target an explicit parameter to avoid. **No test ever
+reaches it** — every test names its own target under `tmp_path`, and charter §10 forbids writing
+into a real `~/.claude/` outright.
+"""
 
 
 class LibraryRootError(HarnessLibraryError):
@@ -124,10 +166,241 @@ def open_library(
     return FilesystemArtifactRepository(resolve_library_root(explicit, settings=settings))
 
 
+# ------------------------------------------------------------------------------------------------
+# The write side — one target, its five collaborators, and the refusal that comes before them
+# ------------------------------------------------------------------------------------------------
+
+
+class TargetRootError(HarnessLibraryError):
+    """The install target could not be used, and **nothing was created**. Ruling R71.
+
+    `TARGET_UNWRITABLE` rather than a code of its own: to a caller "the directory is not there"
+    and "the directory will not take a write" are one situation with one remedy — look at the
+    path you passed — and C-14 already says that status exists to send a user with a typo in
+    `--target` to the right one of the two directories. `LibraryRootError` is this class's mirror
+    on the read side, over `NOT_A_LIBRARY`, and the pairing is the point: a run that cannot start
+    says which of the two directories it could not use.
+
+    Attributes:
+        code: always `ErrorCode.TARGET_UNWRITABLE`.
+        path: the directory that was rejected, as text.
+        reason: the human sentence. Not contract.
+    """
+
+    code = ErrorCode.TARGET_UNWRITABLE
+
+    def __init__(self, path: Path, reason: str) -> None:
+        self.path = str(path)
+        self.reason = reason
+        super().__init__(f"{path}: {reason}")
+
+
+class TargetNotInstalledError(HarnessLibraryError):
+    """Nothing has been installed into this target, so there is nothing to act on.
+
+    **The answer `clean_foreign` refused to make expressible**, in the place it said the answer
+    belongs. That use case requires a manifest and argues why: `clean --foreign` against a target
+    no manifest describes means *"every path here is foreign, remove them all"* — `rm -rf`
+    reached through a plan. Uninstall, rollback and prune each require one for the same reason,
+    and an absent record is never an empty one (C-11).
+
+    `ARTIFACT_NOT_FOUND` and therefore exit 3, reusing the code rather than inventing one — the
+    shape `NothingToResolveError` already uses, and for its reading of that code: *the thing you
+    asked to act on is not here, so go and look at what is*. The commonest cause is a mistyped
+    `--target`, and NOT_FOUND sends a user to look at what they asked for rather than at a
+    directory that is perfectly fine.
+
+    Attributes:
+        code: always `ErrorCode.ARTIFACT_NOT_FOUND`.
+        path: the target that holds nothing this tool installed, as text.
+        operation: what was being attempted. Not contract; a diagnosis.
+    """
+
+    code = ErrorCode.ARTIFACT_NOT_FOUND
+
+    def __init__(self, path: Path, operation: str) -> None:
+        self.path = str(path)
+        self.operation = operation
+        super().__init__(
+            f"nothing is installed in {path}: no manifest records an install here, so there is "
+            f"nothing to {operation}. Check --target, or run hl install first"
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class TargetSession:
+    """Everything a write command needs about one target, resolved once.
+
+    Five collaborators and a value, and the reason they are one object is that four of them are
+    keyed by the *canonical* spelling of the target path (R43, `canonical_target_path`). Composed
+    separately, a command could take the lock on `~/.claude` and write the manifest of
+    `~/.claude/` — two files, one directory, no protection at all. Composed here, the spelling is
+    computed once and every collaborator is built from the same `Path`.
+
+    Attributes:
+        root: the resolved target directory. Absolute, because every diagnosis below this point
+            quotes it.
+        target_path: the canonical spelling the manifest records and the store keys by. What
+            every write use case's `target_path` argument is given.
+        target: contract C-12, the directory being read and written.
+        backups: contract C-13.
+        manifests: contract C-15, the seam apply writes its record through.
+        lock: contract C-16, charter §12. One per session, and every write use case takes it —
+            **sequentially**. The lock is not re-entrant, so a command that runs two use cases
+            runs them one after the other and never nests them.
+        manifest: contract C-11, what was last installed here, or `None` when nothing was. **Read
+            once**, here, and handed to every use case as a value, so a command judges one
+            snapshot. A command that runs two write use cases takes the second one's `manifest`
+            from the **first one's result**, never from this field: `ManifestStore` has one
+            member and nothing in `application/` can refresh a record it did not write.
+    """
+
+    root: Path
+    target_path: str
+    target: TargetRepository
+    backups: BackupStore
+    manifests: ManifestStore
+    lock: WriteLock
+    manifest: Manifest | None
+
+
+def default_target_root() -> Path:
+    """`~/.claude`, the harness a user actually runs. Computes; never creates."""
+    return Path.home() / DEFAULT_TARGET_DIRECTORY
+
+
+def require_target(root: Path) -> Path:
+    """`root`, absolute, once it is known to be a usable install target. Otherwise a refusal.
+
+    **Ruling R71: a missing directory is not created.** The temptation is real — `mkdir -p` is one
+    line and the next line would install successfully — and it is the failure this whole
+    initiative exists to prevent, one directory up: `hl install --target ~/.clade` would build a
+    complete harness in a typo, report success, and leave the user's real one untouched and their
+    disk holding a tree nothing will ever look at again. A directory that does not exist is a
+    question, and this tool asks it rather than answering it.
+
+    Raises:
+        TargetRootError: the path does not exist or is not a directory.
+    """
+    absolute = root.expanduser().resolve()
+    if not absolute.exists():
+        raise TargetRootError(
+            absolute,
+            "no such directory. An install target is never created: pass --target with a "
+            "directory that exists, or create it yourself first",
+        )
+    if not absolute.is_dir():
+        raise TargetRootError(absolute, "not a directory, so it is not an install target")
+    return absolute
+
+
+def open_target(explicit: Path | None = None, *, state_root: Path | None = None) -> TargetSession:
+    """Resolve the target and open everything a write command needs over it, in one call.
+
+    Args:
+        explicit: the `--target` flag, or `None` for `~/.claude`. Any directory (R43).
+        state_root: where the manifests, the backups and the sentinel live.
+            `default_state_root()` when omitted; a test passes `tmp_path` and therefore never
+            touches the developer's own state directory.
+
+    Returns:
+        A `TargetSession`. The manifest is read here and nowhere else in the command.
+
+    Raises:
+        TargetRootError: the target does not exist or is not a directory (R71).
+        ManifestError: this target has a manifest and it cannot be used. An **absent** manifest
+            is not an error and comes back as `None` — a first install must work.
+    """
+    root = require_target(explicit if explicit is not None else default_target_root())
+    state = state_root if state_root is not None else default_state_root()
+    return TargetSession(
+        root=root,
+        target_path=canonical_target_path(root),
+        target=FilesystemTargetRepository(root),
+        backups=FilesystemBackupStore(state, root),
+        manifests=FilesystemManifestStore(state),
+        lock=FilesystemWriteLock(root, state_root=state),
+        manifest=read_manifest(root, state_root=state),
+    )
+
+
+class ReportingConflictEditor:
+    """A `ConflictEditor` that gives the editor's `OSError` ruling R102's code.
+
+    Satisfies `domain.resolution.ConflictEditor` **structurally**, like every other implementation
+    of a protocol in this project (R14).
+
+    **Two lines, and a class rather than a `try` around `compare_versions`.** That call also
+    reaches the library repository, whose `read_bytes` raises a bare `OSError` for a permission
+    fault that has nothing whatever to do with an editor; a translation wide enough to catch the
+    editor's failure would relabel that one `EDITOR_FAILED` and send the user to their shell
+    configuration for a file they cannot read. Wrapping the seam instead makes the translation
+    exactly as wide as the thing it is about.
+
+    Ruling R24's posture, one layer further out than usual: `application/` is normally where a
+    builtin becomes a code, and C-6 was frozen while T-21 built the seam, so `compare_versions`
+    documents the `OSError` and lets it out. R102 closes that and this is where it lands.
+    """
+
+    def __init__(self, inner: ConflictEditor, *, command: Sequence[str]) -> None:
+        """Wrap a real editor seam.
+
+        Args:
+            inner: the editor that actually materialises the versions and spawns the process.
+            command: what it will run, kept only so the diagnosis can name it. A user told "the
+                editor could not be run" and not *which* editor has been told nothing.
+        """
+        self._inner = inner
+        self._command = tuple(command)
+
+    def compare(self, versions: tuple[ConflictVersions, ...]) -> None:
+        """Show both versions, or fail with a code.
+
+        Raises:
+            EditorFailedError: the versions could not be materialised, or the command could not
+                be run or exited non-zero. **Nothing was written and nothing was recorded** —
+                `compare_versions` decides nothing, so the refused path is refused exactly as it
+                was.
+        """
+        try:
+            self._inner.compare(versions)
+        except OSError as error:
+            raise EditorFailedError(" ".join(self._command), str(error)) from error
+
+
+def open_editor(workspace: Path, *, settings: Settings | None = None) -> ConflictEditor:
+    """The `$EDITOR` seam, resolved and wrapped. Ruling R104.
+
+    Args:
+        workspace: the directory both versions are materialised under. Supplied by the caller —
+            `hl` uses a `TemporaryDirectory` that is removed however the run ends — so that a
+            user's content is never written somewhere this module chose, and never inside the
+            target.
+        settings: the environment reader (ruling R2).
+
+    Raises:
+        EditorFailedError: `$EDITOR` is unset, blank or unsplittable. Raised **before** the
+            workspace is touched, so a misconfigured editor leaves nothing behind.
+    """
+    command = editor_command(settings)
+    return ReportingConflictEditor(
+        SubprocessConflictEditor(command, workspace=workspace), command=command
+    )
+
+
 __all__ = [
+    "DEFAULT_TARGET_DIRECTORY",
     "LibraryRootError",
+    "ReportingConflictEditor",
+    "TargetNotInstalledError",
+    "TargetRootError",
+    "TargetSession",
+    "default_target_root",
     "is_library",
+    "open_editor",
     "open_library",
+    "open_target",
     "require_library",
+    "require_target",
     "resolve_library_root",
 ]

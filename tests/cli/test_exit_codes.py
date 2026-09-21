@@ -8,11 +8,16 @@ added, rather than in whichever command first happens to raise it.
 from __future__ import annotations
 
 from harness_library.cli.exit_codes import (
+    BACKUP_FAILED,
     BAD_REQUEST,
     EXIT_STATUS,
+    INCOMPLETE,
     LIBRARY_UNUSABLE,
+    LOCK_HELD,
+    MANIFEST_UNREADABLE,
     NOT_FOUND,
     OK,
+    TARGET_UNWRITABLE,
     USAGE,
     VALIDATION_FAILED,
     exit_status_for,
@@ -72,3 +77,48 @@ def test_the_statuses_group_by_what_the_user_must_do() -> None:
         ErrorCode.LIBRARY_YAML_INVALID,
         ErrorCode.NOT_A_LIBRARY,
     }
+
+
+# -- Contract C-14, the install statuses (T-13) ---------------------------------------------------
+#
+# Every test above is unchanged. These are additions, over rows that did not exist when they were
+# written; each of the five new codes takes a status of its own, so the three group assertions
+# above keep exactly the sets they already asserted.
+
+
+def test_the_install_statuses_are_the_numbers_c14_fixed() -> None:
+    """The integers themselves, because a script branches on them.
+
+    C-14 and rulings R57 and R59 fix these five; they are not this table's to choose. Asserted as
+    literals rather than as "distinct and above 5", which would pass for any renumbering.
+    """
+    assert INCOMPLETE == 6
+    assert TARGET_UNWRITABLE == 7
+    assert MANIFEST_UNREADABLE == 8
+    assert BACKUP_FAILED == 9
+    assert LOCK_HELD == 10
+
+
+def test_each_install_code_maps_to_its_own_status() -> None:
+    """Unlike the read path, these five are **not** grouped. Five different actions — decide, fix
+    the target, delete the manifest, fix the backup directory, wait — and a caller that cannot
+    tell them apart cannot take any of them."""
+    install = {
+        ErrorCode.INCOMPLETE: INCOMPLETE,
+        ErrorCode.TARGET_UNWRITABLE: TARGET_UNWRITABLE,
+        ErrorCode.MANIFEST_UNREADABLE: MANIFEST_UNREADABLE,
+        ErrorCode.BACKUP_FAILED: BACKUP_FAILED,
+        ErrorCode.LOCK_HELD: LOCK_HELD,
+    }
+
+    assert {code: exit_status_for(code) for code in install} == install
+    assert len(set(install.values())) == len(install)
+
+
+def test_no_install_status_reuses_a_read_path_status() -> None:
+    """A script that already branches on 3, 4 and 5 must not find `hl install` answering one of
+    them with a different meaning."""
+    read_path = {NOT_FOUND, BAD_REQUEST, LIBRARY_UNUSABLE}
+    install = {INCOMPLETE, TARGET_UNWRITABLE, MANIFEST_UNREADABLE, BACKUP_FAILED, LOCK_HELD}
+
+    assert read_path.isdisjoint(install)

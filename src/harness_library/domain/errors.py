@@ -9,6 +9,16 @@ added to `ErrorCode` before it is emitted**, never invented at a raise site.
 cannot then disagree about their code, and adding a new code means adding a new class — which is
 the moment the taxonomy is meant to be reviewed.
 
+**Four codes currently have no class, deliberately.** `TARGET_UNWRITABLE`, `BACKUP_FAILED`,
+`INCOMPLETE` and `LOCK_HELD` entered the enum in T-13 together with `MANIFEST_UNREADABLE`, because
+invariant I-8 makes `cli/exit_codes.py` total over `ErrorCode` and a code added later without its
+exit row turns the gate red in a task that looks nothing like the cause (ruling R26's recorded
+failure). What the *contract* fixes is the code and its status; what a class fixes is the fields a
+raise site carries — what a failed backup names, what a held lock names — and those belong to the
+tasks that raise them (T-16, T-17, T-22). So the sentence above still holds in the direction that
+matters: **no code is invented at a raise site.** A code may arrive before its class; a class may
+never arrive before its code.
+
 **Placement.** This taxonomy is project-wide: `cli/` maps codes to exit codes and `api/` will map
 them to HTTP statuses. It lives in `domain/` because that is the only layer every other layer may
 import. `application/` and `infrastructure/` are independent siblings under the
@@ -113,6 +123,60 @@ class ErrorCode(StrEnum):
     Raised during **composition**, before any repository exists, which is what distinguishes it
     from `LIBRARY_YAML_INVALID`: that one is a library whose metadata document is broken, this one
     is not a library at all.
+    """
+
+    # -- The install path (initiative 02, the C-6 amendment) -------------------------------------
+    #
+    # All five entered the enum in T-13, the first task that emits one of them, with all five exit
+    # rows in the same edit. Charter §9 requires a code to be in the contract before it is emitted,
+    # and I-8 requires every member here to have a status in `cli/exit_codes.py`.
+
+    INCOMPLETE = "INCOMPLETE"
+    """Install ran, wrote everything it safely could, and some artifact was not applied.
+
+    Named for the **outcome** rather than for either of its two causes (R57): a conflict awaiting
+    `--resolve`, or a V11 symlinked root that was never scanned. A script branches on "you must
+    decide something" and does not care which of the two it was — the plan already says, per entry
+    and with a reason. This is not a failure: nothing broke, and the target is in a good state.
+
+    `InstallPlan.is_complete` is the predicate, and `BLOCKING_VERDICTS` is its register.
+    """
+
+    TARGET_UNWRITABLE = "TARGET_UNWRITABLE"
+    """The install target cannot be written to at all — missing, not a directory, or read-only.
+
+    Distinct from `LIBRARY_UNUSABLE`'s pair, which is about the source. A user whose library is
+    fine and whose target is a typo needs to be told which of the two directories to look at.
+    """
+
+    MANIFEST_UNREADABLE = "MANIFEST_UNREADABLE"
+    """The manifest for this target exists and cannot be used.
+
+    Unparseable JSON, a value of the wrong type, an unknown key, a schema version this build does
+    not read, or a file that is not UTF-8 text. One code for all of them, exactly as
+    `LIBRARY_YAML_INVALID` covers both halves of its own document's failures: to every caller this
+    is one fact — "what I recorded about this target is damaged, here is where" — and the location
+    in the message says the rest.
+
+    An **absent** manifest is not this error and is not an error at all: nothing has been installed
+    into that target yet, and a first install must work. Returning an empty manifest for a damaged
+    one would be far worse than either — the next install would see no record of anything, judge
+    every one of the user's files `CREATE`, and overwrite them.
+    """
+
+    BACKUP_FAILED = "BACKUP_FAILED"
+    """The pre-install backup could not be taken, so nothing was written.
+
+    Its own code because the remedy is nothing like the others': the target is fine, the library is
+    fine, and the place backups go is not. Install refuses rather than proceeding unprotected
+    (F-9) — a write with no way back is the failure mode this initiative exists to remove.
+    """
+
+    LOCK_HELD = "LOCK_HELD"
+    """Another writer holds this target's advisory lock, so this one did not write (R50).
+
+    Charter §12: a single-writer lock, an `O_EXCL` sentinel beside the manifest, stale-broken by
+    pid check. Its own code because "wait and retry" is a remedy no other code shares.
     """
 
 
@@ -265,6 +329,60 @@ class InvalidQueryError(HarnessLibraryError):
     def __init__(self, reason: str) -> None:
         self.reason = reason
         super().__init__(reason)
+
+
+# -- The install path (initiative 02) ------------------------------------------------------------
+#
+# One class, for the one code T-13 emits. The other four codes above are in the contract ahead of
+# their raise sites; see this module's docstring for why that is deliberate and not an oversight.
+
+
+class ManifestError(HarnessLibraryError):
+    """This target's manifest exists and cannot be used.
+
+    The loud half of the reader in `infrastructure/manifest_store.py`. Absent is not this error —
+    it is `None`, meaning nothing has been installed here yet.
+
+    **Two kinds of location, because JSON offers two.** A file that does not parse has a line and
+    a column, straight from the decoder, and renders as `path:line:column: reason`, the same shape
+    `LibraryYamlError` renders. A file that parses into the wrong *shape* has neither: by the time
+    a value is known to be a number where a string belongs, the parser has thrown its positions
+    away. What that failure has instead is a **field path** — `artifacts[0].files[1].sha256` — which
+    is the location a reader of the document actually needs, and it renders as
+    `path: artifacts[0].files[1].sha256: reason`.
+
+    Both are carried as fields as well as folded into the message, because the CLI prints
+    `str(error)` and a diagnosis nobody can locate is half a diagnosis.
+
+    Attributes:
+        code: always `ErrorCode.MANIFEST_UNREADABLE`.
+        path: the manifest file that failed, as text. Absolute; always present.
+        location: the field path inside the document, or `None` when the failure is not about one
+            field — a file that does not parse, or one that is not text at all.
+        line: 1-based line of the offending construct, or `None` when the failure has no position.
+            Present-and-null, never omitted.
+        column: 1-based column, with the same nullability rule as `line`.
+        reason: the human sentence, without the location prefix `str(error)` carries. Not contract.
+    """
+
+    code = ErrorCode.MANIFEST_UNREADABLE
+
+    def __init__(
+        self,
+        reason: str,
+        *,
+        path: str,
+        location: str | None = None,
+        line: int | None = None,
+        column: int | None = None,
+    ) -> None:
+        self.path = path
+        self.location = location
+        self.line = line
+        self.column = column
+        self.reason = reason
+        located = reason if location is None else f"{location}: {reason}"
+        super().__init__(_render(located, path=path, line=line, column=column))
 
 
 def _render(reason: str, *, path: str, line: int | None, column: int | None) -> str:

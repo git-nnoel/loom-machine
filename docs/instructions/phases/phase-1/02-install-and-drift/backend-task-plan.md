@@ -1034,3 +1034,213 @@ uv run ruff format --check . && uv run ruff check . && uv run mypy src tests && 
 ```
 
 Whole, every time (L2), exit code read without a pipe (L44). Baseline 745 passed.
+
+---
+
+# Backend task plan — T-19, prune and `clean --foreign`
+
+Initiative 02 · phase 1 · base commit `0a322bb` · owner `backend-developer-specialist`.
+Realises **F-10**'s second half (`clean --foreign`) and **F-12**'s `--prune`, over contracts
+**C-9**, **C-10**, **C-11**, **C-12**, **C-13** (amended here), **C-15** and **C-16**. Rulings
+**R44**, **R82**, **R83**, **R86**, **R88**, **R90**, **R91** and **R92** bind.
+
+## 1. Where the code goes
+
+| File | Why |
+|---|---|
+| `src/harness_library/application/write/prune.py` | new. `prune_target`, `PruneResult`, `pruned_entries`. §2 argues why it is a use case and not a mode |
+| `src/harness_library/application/write/clean.py` | new. `clean_foreign`, `CleanResult`, `foreign_entries` |
+| `src/harness_library/application/write/install.py` | **one line.** `apply --prune` selects its entries through `pruned_entries`, so "which entries are pruned" has one spelling and not two. No behaviour change |
+| `src/harness_library/application/write/rollback.py` · `uninstall.py` | the manifest write after the work raises `RecordStaleError` instead of a bare `OSError` — R90 is the plan-level decision both modules' docstrings said they were waiting for |
+| `src/harness_library/application/write/__init__.py` | re-exports the four new names |
+| `src/harness_library/domain/errors.py` | `ErrorCode.RECORD_STALE` and `RecordStaleError` (R90) |
+| `src/harness_library/cli/exit_codes.py` | `RECORD_STALE = 13` and its `EXIT_STATUS` row. I-8 makes the table total, so the row lands in the same edit as the code |
+| `src/harness_library/domain/backup.py` | **C-13 amended (R92).** `BackupRecord.kept` — the paths the backup holds bytes for |
+| `src/harness_library/infrastructure/backup.py` | writes and reads `kept`; `SCHEMA_VERSION` 1 → 2; `restore` pre-flights the kept set |
+| `tests/application/test_prune.py` · `tests/application/test_clean.py` | new. Fakes only, zero disk |
+| `tests/test_clean.py` | new, cross-layer by necessity — §5 |
+| `tests/application/fakes.py` | `FakeBackupStore` records its kept set; nothing else changes |
+| `tests/test_single_writer.py` · `tests/test_architecture.py` · `tests/cli/test_exit_codes.py` · `tests/domain/test_backup.py` · `tests/infrastructure/test_backup.py` | added to, never altered |
+
+No new `domain/` module, so `tests/domain/test_purity.py` is untouched (L13, L18). No dependency
+change.
+
+## 2. Prune is a use case, not a mode
+
+`apply --prune` and `hl prune` remove the same paths and cannot be the same function, for one
+reason that is not a matter of taste: **they record at opposite ends of the run.** Apply makes
+files appear and writes its manifest first (R63); prune only makes files disappear and writes its
+manifest last (charter §13b, R86). A `prune`-shaped mode of apply would need apply to hold two
+orderings and choose between them at runtime, which is the one thing R63's position in the
+function exists to make impossible.
+
+It is not a mode of `uninstall_artifact` either: uninstall is given an `artifact_id` and removes
+everything recorded for it, while prune is given no id and removes the recorded paths the
+*library* no longer holds — which can be some of an artifact's files, or all of them, across every
+artifact at once.
+
+**What the two share is the definition of "pruned", and that is now one spelling.**
+`pruned_entries(plan)` lives in `prune.py` and `install.py` imports it. The verdict itself is
+C-9's and is decided in `domain/install_plan.py`; neither module re-derives it.
+
+## 3. `clean --foreign` — the listing *is* the safety model
+
+```
+1  lock        R82: required, keyword-only, wrapping every step below
+2  list        the plan's FOREIGN paths the target still holds — `exists` per path, nothing removed
+3  (stop)      unless `remove=True`. The default lists and removes nothing
+4  back up     every listed path. R88: no backup, no removal
+5  remove      in listing order
+6  record      last, charter §13b
+```
+
+**Two guarantees, not one.** The parameter is the structural half: `remove` defaults to `False`,
+so the default call is a listing and T-22's CLI shows it before asking. C-9's `FOREIGN` docstring
+already fixes this — *"only `clean --foreign` acts on one, and only when asked"*. The ordering is
+the second half: inside a `remove=True` run the listing pass is **complete** before the first
+delete, which the interleaving fake in §6(a) is what proves.
+
+**Why the listing pass calls `exists` per path rather than trusting the plan.** Uninstall does the
+same and for the same reason: a recorded path the target no longer holds is reported rather than
+raised on, because aborting half way through a destructive run over a file somebody already
+deleted is worse than finishing. Clean needs it harder — it is about to destroy files this tool
+never wrote, and the list it reports has to be a statement about what is *there*, not about what a
+scan saw some time ago.
+
+**R44 is honoured by having nothing to honour.** Clean's list is the plan's `FOREIGN` verdicts, and
+every path of Claude Code's `synced/` bucket is one. There is no name in this module, no prefix and
+no exclusion; the bucket is protected by the listing and the backup, exactly as the dispatch
+requires, and by the fact that the default removes nothing.
+
+**A foreign *directory* is never listed and never removed.** C-12's scan reports files and not
+directories, so `synced/` is four leaf paths and not one tree, and `delete` refuses a directory
+outright. A cleaned `synced/` therefore leaves its empty directories behind — visible, harmless,
+removable by hand — which is the same decision uninstall makes about an emptied artifact root, and
+for the same reason: removing a directory is deciding that nothing else in it matters.
+
+**`manifest` is required and not optional**, exactly as uninstall's is. A target with no manifest
+is not one this tool manages, and `clean --foreign` against it would mean "every path here is
+foreign, delete them all" — `rm -rf` reached through a plan. The composition root answers that.
+
+## 4. C-13's amendment (R92) and the pre-amendment backup
+
+`BackupRecord` gains `kept: tuple[str, ...]` — the subset of `paths` the backup holds bytes for —
+and `backup.json` records it. `restore` then tells the two states apart before it moves a byte:
+
+* a path in `paths` and not in `kept` was **absent when the backup was taken**, so it is removed —
+  R79, unchanged, and what makes a first install undoable;
+* a path in `kept` whose `files/<path>` is **gone** is a damaged backup, and the whole restore is
+  refused with `KeyError` *before* anything is written.
+
+Today those two are one state by construction, and the second silently **deletes** a live target
+path. Narrow trigger, no error, no report, no code.
+
+`KeyError` and no new code: the store already answers "this directory is not a complete backup"
+that way, and `rollback_install` already turns it into `BackupNotFoundError` — `BACKUP_FAILED`,
+exit 9, whose remedy is *go and look at where backups live*, which is exactly the remedy here. A
+code whose remedy already matches takes a class, not a second code.
+
+**A pre-amendment backup is not offered.** `SCHEMA_VERSION` goes 1 → 2, and the reader's existing
+rule — a version this build does not read is passed over — does the rest: `list()` skips it and
+`restore` refuses it. Reading one and inferring `kept` from the `files/` tree would reproduce the
+exact indistinguishability this amendment closes, so the only honest readings are "refuse it" and
+"carry the defect forward". A backup is regenerated by the next install; the cost is one rollback
+point on a tool that has not shipped.
+
+## 5. Tests, and why one module is cross-layer
+
+`tests/application/test_prune.py` and `tests/application/test_clean.py` are fakes only and zero
+disk (charter §10). What they cannot see: that a real `delete` unlinks a foreign symlink as itself
+rather than following it, that a real directory survives its emptying, and that a real scan
+reports every leaf of the `synced/` tree without filtering.
+
+`tests/test_clean.py` is **cross-layer by necessity**, the third module in this suite that is. The
+dispatch's criterion — *every path of the fixture's `synced/` tree is in the listing* — is a claim
+about a **real committed tree** and a real scan (`infrastructure/target.py`, where R44's absence of
+an exclusion actually lives) joined to a decision in `application/write/clean.py`. Neither layer
+alone can witness it: the fake target is given its entries by the test, so a fake agreeing that
+`synced/` is foreign proves only that the test author said so.
+
+## 6. Mutation checks (L35 — read this if the session was interrupted)
+
+Three, each run alone with `-k` (L42). Each file is copied to
+`…/scratchpad/<name>.t19.orig` before it is mutated and restored from that copy.
+
+**Result — none is applied; both modules match their backup by md5.**
+`application/write/clean.py` `20dcc11a640d8ce566d80eb2ed1049b7`,
+`application/write/prune.py` `234cd2d7068edab2f2c715016b09d81e`.
+
+Under **(a)**, `-k "every_foreign_path_is_listed_before_any_is_removed or
+no_path_the_manifest_records_is_ever_listed"` gave `1 failed, 1 passed`. The interleaving test
+failed on the log itself — *"At index 5 diff: 'removed' != 'listed'"*, with the log printed in the
+message showing `('listed', …swp), ('removed', …swp), ('listed', …bucket), ('removed', …bucket)`
+— and the manifest-known control **stayed green**, which is the half that matters: the mutation
+changes *when* a path goes, never *which*, so it cannot reach an assertion about the set. Both
+back to `2 passed` on restore.
+
+Worth knowing for the next reader: in the unmutated run the log holds each path **twice** under
+`listed`, because `FakeBackupStore.create` calls `exists` per path and the recorder cannot tell
+the store's question from the use case's. That does not weaken the assertion — the shape is still
+"every listing, then every removal" — and it is why the assertion is written over the *kinds* in
+order rather than over an expected list of pairs.
+
+Under **(b)**, `-k "a_still_present_artifacts_files_survive_a_prune or
+prune_removes_the_files_of_an_artifact_that_left_the_library"` gave `1 failed, 1 passed`:
+`test_a_still_present_artifacts_files_survive_a_prune` failed on the surviving file's **bytes** —
+`KeyError: 'skills/delivery-lead/SKILL.md'`, the file simply no longer there — and the removal
+test **stayed green**, so the mutation could not pass by pruning nothing. Restored: `2 passed`.
+The control asserts `set(result.removed) >= {…}` and not the exact tuple, which is L51 applied
+before the run rather than after a wasted cycle.
+
+Under **(c)**, `-k "the_manifest_is_written_only_after_the_pruned_files_are_gone or
+the_manifest_drops_only_the_pruned_files"` gave `1 failed, 1 passed`: the ordering witness failed
+on `manifests.written == []` — *"Left contains one more item: Manifest(target_path=…)"* — while
+the successful run's record test **stayed green**, because a run that does not fail produces the
+identical record under both orders (L52, exactly). Restored: `2 passed`.
+
+**(a)** `clean --foreign` acts before listing — `application/write/clean.py`, the listing pass and
+the delete loop fused so each path is deleted as it is found.
+Must fail: `tests/application/test_clean.py::test_every_foreign_path_is_listed_before_any_is_removed`,
+driven by a target that records `exists` and `delete` in one interleaving log.
+Must stay green: `tests/application/test_clean.py::test_no_path_the_manifest_records_is_ever_listed`.
+Heeding **L51**: that control asserts a membership and a non-membership of `listed`, and says
+**nothing** about ordering or about the exact list — the mutation cannot reach it.
+
+**(b)** prune deletes a path the manifest records for an artifact still in the library —
+`application/write/prune.py`, the entry filter widened from `Verdict.PRUNE` to every entry the
+manifest records.
+Must fail: `tests/application/test_prune.py::test_a_still_present_artifacts_files_survive_a_prune`,
+on the surviving file's **bytes**, with the exact removal tuple asserted in the same test.
+Must stay green: `tests/application/test_prune.py::test_prune_removes_the_files_of_an_artifact_that_left_the_library`,
+which asserts `set(result.removed) >= {…}` and not the exact list — **L51**, the lesson T-18 paid
+for and addressed to this task by name.
+
+**(c)** my own, for **R86** — prune records first instead of last —
+`application/write/prune.py`, `manifests.write(record)` moved above the delete loop.
+Must fail: `tests/application/test_prune.py::test_the_manifest_is_written_only_after_the_pruned_files_are_gone`,
+which injects an `OSError` into the **second** delete and asserts `manifests.written == []` (L52 —
+a run that does not fail cannot tell the two orders apart).
+Must stay green: `tests/application/test_prune.py::test_the_manifest_drops_only_the_pruned_files`,
+a successful run, whose record is identical under both orders.
+
+## 7. Gate
+
+```
+export PATH="$HOME/.local/bin:$PATH"
+uv run ruff format --check . && uv run ruff check . && uv run mypy src tests && uv run lint-imports && uv run pytest
+```
+
+Whole, every time (L2), exit code read without a pipe (L44). Baseline 787 passed; **849 passed,
+exit 0** after this task, read with `… > gate.log 2>&1; echo $?`.
+
+## 8. What the contracts left open, and what I decided
+
+| Open point | Decision |
+|---|---|
+| **Is prune a use case or a mode** | its own use case. The two record at opposite ends of the run (§2), which a mode cannot express without apply holding both orderings |
+| **What gates `clean --foreign`'s removal** | a `remove: bool = False` parameter. C-9's `FOREIGN` docstring already says *only when asked*; T-22 owns the flag |
+| `clean`'s `manifest` when a target has none | **not expressible.** `manifest: Manifest`, required and non-optional, exactly as uninstall's is. Against a target with no record every path is foreign, and this function must not make "delete everything in a directory this tool has never touched" a thing a caller can ask for |
+| Whether `clean` writes a record at all | yes, and only when it removed something. It disowns nothing, so §13b is vacuous for it; the record's `backup_id` is the pointer to the only way back, and a listing-only run leaves no trace |
+| `absent` on both | reported, not raised on and not listed. For clean the listing is what a user authorises, and nobody should be asked to authorise destroying a path that is not there |
+| **A foreign *symlink* cannot be backed up** | found by the fixture. `BackupStore.create` read through `FilesystemTargetRepository`, which refuses a link (R6), so `clean --foreign` over the committed target raised a bare `ValueError` part-way through a copy. A link is now described in `paths`, left out of `kept` and stored nowhere — so it is removed and **not put back**. No content is lost (the file it names is outside every tree the backup describes) but the removal of a link is that far un-undoable. Asserted in `tests/test_clean.py`; **flagged, it wants a ruling** |
+| `RecordStaleError` on rollback and uninstall too | yes. Both already reached that state and both said in their docstrings that a code was a plan-level decision; R90 is that decision, and leaving two spellings of one condition is the drift the taxonomy exists to prevent |

@@ -59,7 +59,11 @@ from datetime import datetime
 
 from harness_library.domain.artifact import ArtifactFile
 from harness_library.domain.backup import BackupStore
-from harness_library.domain.errors import BackupNotFoundError, RestoreFailedError
+from harness_library.domain.errors import (
+    BackupNotFoundError,
+    RecordStaleError,
+    RestoreFailedError,
+)
 from harness_library.domain.hashing import content_hash_of_files
 from harness_library.domain.identity import parse_artifact_id
 from harness_library.domain.lock import WriteLock
@@ -133,12 +137,12 @@ def rollback_install(
         RestoreFailedError: the target would not take the write. The restore may have got part of
             the way; the manifest is **not** rewritten, so nothing on disk is disowned, and
             running the same rollback again completes it — see the class.
-        OSError: the manifest could not be written, after a restore that succeeded. Deliberately
-            **not** `ManifestWriteError`: that code says "nothing happened", which under R63's
-            ordering is what it means for an apply and is exactly false here — the target has
-            already been put back. Raising a code carrying the wrong guarantee is worse than
-            raising the builtin, and giving this failure a code of its own is a C-6 amendment and
-            therefore a plan-level decision.
+        RecordStaleError: the manifest could not be written, after a restore that succeeded.
+            **Ruling R90** is the C-6 amendment this docstring used to say it was waiting for.
+            Deliberately not `ManifestWriteError`: that code says "nothing happened", which under
+            R63's ordering is what it means for an apply and is exactly false here — the target
+            has already been put back, and a code carrying the wrong guarantee is worse than the
+            builtin this used to raise.
     """
     with lock.hold():
         before = _by_path(target)
@@ -146,7 +150,7 @@ def rollback_install(
         after = _by_path(target)
 
         record = _manifest_after_rollback(manifest, held=after, installed_at=installed_at)
-        manifests.write(record)
+        _write_record(manifests, record)
 
         return RollbackResult(
             manifest=record,
@@ -174,6 +178,18 @@ def _restore(backups: BackupStore, backup_id: str) -> None:
         raise BackupNotFoundError(backup_id) from error
     except OSError as error:
         raise RestoreFailedError(backup_id, str(error)) from error
+
+
+def _write_record(manifests: ManifestStore, record: Manifest) -> None:
+    """Record the restored state, **after the restore**. Charter §13b.
+
+    Raises:
+        RecordStaleError: it could not be written (R90). The target is already back.
+    """
+    try:
+        manifests.write(record)
+    except OSError as error:
+        raise RecordStaleError("rollback", str(error)) from error
 
 
 def _by_path(target: TargetRepository) -> dict[str, TargetFile]:

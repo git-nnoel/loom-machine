@@ -285,7 +285,17 @@ class FakeBackupStore:
     criterion is a fact about content, and a store that only recorded ids would let every
     assertion about it be an assertion about a recording. `create` copies what the target holds
     and merely *records* what it does not, which is ruling R79 — so `restore` removes a path the
-    target did not hold when the backup was taken, and a first install is undoable.
+    target did not hold when the backup was taken, and a first install is undoable. Which of
+    the two a path was is carried in `BackupRecord.kept` since ruling R92, here as in the real
+    store; what this fake **cannot** prove is the case that amendment exists for — a
+    `files/<path>` that goes missing after the backup was taken — because a dictionary cannot
+    lose a key on its own. `tests/infrastructure/test_backup.py` proves that half against a
+    real tree.
+
+    **It keeps bytes for a symlink and the real store cannot** — R6 forbids reading through one,
+    so `FilesystemBackupStore` describes a link and stores nothing for it, which is why a clean
+    that removes one is not undoable. A dictionary has no links, so this fake cannot show that
+    either; `tests/test_clean.py` does.
 
     Attributes:
         created: the path tuples `create` was called with, in call order.
@@ -330,6 +340,10 @@ class FakeBackupStore:
                 created_at=UPDATED_AT,
                 target_path=TARGET_PATH,
                 paths=paths,
+                # Derived from the bytes this fake really kept, never restated from the paths it
+                # was given: C-13's `kept` is a claim about stored bytes (R92), and a fake that
+                # echoed its own argument would agree with itself whatever the store did.
+                kept=tuple(self._kept[backup_id]),
             )
         )
         return backup_id
@@ -342,6 +356,9 @@ class FakeBackupStore:
         if self._target is None:
             return
         kept = self._kept[backup_id]
+        for path in record.kept:
+            if path not in kept:  # pragma: no cover - a dict cannot lose a key on its own
+                raise KeyError(f"backup {backup_id!r} records bytes for {path!r} and has none")
         for path in record.paths:
             if path in kept:
                 self._target.write(path, kept[path])

@@ -78,6 +78,7 @@ from typing import NamedTuple
 
 from harness_library.application.read._access import read_file_bytes
 from harness_library.application.read.drift import diff_against_target
+from harness_library.application.write.prune import pruned_entries
 from harness_library.domain.artifact import Artifact, ArtifactFile
 from harness_library.domain.backup import BackupStore
 from harness_library.domain.errors import (
@@ -301,9 +302,10 @@ def _apply(
     `with`, and a step added here is inside the lock by construction rather than by remembering.
     """
     written_entries = tuple(entry for entry in plan.entries if entry.verdict in WRITTEN_VERDICTS)
-    deleted_entries = (
-        tuple(entry for entry in plan.entries if entry.verdict is Verdict.PRUNE) if prune else ()
-    )
+    # `pruned_entries`, not a second comprehension: `hl prune` removes the same paths through
+    # the same function, and two spellings of "what --prune removes" would agree until one of
+    # them grew a narrowing the other did not (T-19).
+    deleted_entries = pruned_entries(plan) if prune else ()
     left_alone = tuple(entry for entry in plan.entries if entry.verdict in BLOCKING_VERDICTS)
     sources = _library_sources(library.list_all())
 

@@ -233,6 +233,30 @@ class ErrorCode(StrEnum):
     failure this code and a class to carry the path.
     """
 
+    RECORD_STALE = "RECORD_STALE"
+    """The work was done and the record of it could not be written. **Ruling R90**, exit 13.
+
+    The counterpart of `MANIFEST_UNWRITABLE`, and the reason that one can keep its guarantee.
+    Under R63 an apply writes its manifest between the backup and the first file, so a failure
+    there always means *nothing happened*. Charter §13b sends every run that makes files
+    **disappear** the other way — rollback, uninstall, prune and `clean --foreign` all record
+    last, because a record written first can disown a file that is still on disk. For those four
+    a failed manifest write means the opposite: the target has already changed and only the
+    record is behind.
+
+    Its own code because `MANIFEST_UNWRITABLE`'s promise would be a lie here, and a status
+    carrying the wrong guarantee is worse than no status at all — a script that read "nothing
+    happened" off a target that had just been emptied would retry, report success, or do nothing,
+    and every one of those is wrong. The remedy is its own too: nothing is broken and nothing is
+    lost, but the next `hl diff` over-reports until the record catches up, so the answer is to
+    fix the state directory and run the same command again. All four are idempotent, which is
+    what makes that remedy safe.
+
+    **Nothing is disowned**, which is the whole point of the ordering that produces this code.
+    The record still claims the files that went, so they come back `CREATE` — a decision the user
+    is asked about — rather than `FOREIGN`, which nothing in this initiative can reach.
+    """
+
 
 class HarnessLibraryError(Exception):
     """Base of every error this project raises deliberately at a user-facing boundary.
@@ -620,6 +644,50 @@ class RestoreFailedError(HarnessLibraryError):
         super().__init__(
             f"backup {backup_id} could not be put back: {reason}. The target may be part-way "
             "restored and is still fully described by its manifest; fix this and roll back again"
+        )
+
+
+# -- The record that could not keep up (initiative 02, T-19, ruling R90) -------------------------
+
+
+class RecordStaleError(HarnessLibraryError):
+    """The work was done and the manifest describing it could not be written.
+
+    **The counterpart of `ManifestWriteError`, and its opposite in the one way that matters.**
+    That one says *nothing happened*, which is true of an apply because R63 writes its manifest
+    between the backup and the first file. Charter §13b sends every run that makes files
+    disappear the other way round — rollback, uninstall, prune and `clean --foreign` record last,
+    because a record written first can disown a file that is still on disk — so for those four
+    the same syscall failing means the target has already changed and only the record is behind.
+
+    Both codes existed in a document long before this class did: the two use cases that record
+    last let a bare `OSError` out and said in their docstrings that a code carrying the wrong
+    guarantee would be worse, and that giving this failure one of its own was a plan-level
+    decision. Ruling **R90** is that decision.
+
+    **Nothing is disowned**, which is the whole reason the ordering puts this failure here. The
+    record still claims every file that went, so they come back `CREATE` on the next `hl diff` —
+    something the user is asked about — and not `FOREIGN`, which nothing in this initiative can
+    reach. Running the same command again is safe and is the remedy: all four are idempotent.
+
+    Attributes:
+        code: always `ErrorCode.RECORD_STALE`.
+        operation: which run left the record behind — `"prune"`, `"clean"`, `"uninstall"`,
+            `"rollback"`. A diagnosis and not contract; a caller branches on `code`, and a user
+            reading stderr needs to know which command to run again.
+        reason: the human sentence, usually the underlying `OSError`'s. Not contract.
+    """
+
+    code = ErrorCode.RECORD_STALE
+
+    def __init__(self, operation: str, reason: str) -> None:
+        self.operation = operation
+        self.reason = reason
+        super().__init__(
+            f"the {operation} finished and its record could not be written: {reason}. Nothing "
+            "was lost and nothing is unreachable — the manifest still names the files that went, "
+            f"so they report as missing until it catches up. Fix this and run the {operation} "
+            "again"
         )
 
 

@@ -28,6 +28,7 @@ from harness_library.domain.errors import (
     BackupFailedError,
     ErrorCode,
     LockHeldError,
+    RecordStaleError,
     TargetUnwritableError,
 )
 from harness_library.domain.manifest import Manifest
@@ -481,3 +482,28 @@ def test_the_lock_is_released_when_a_delete_fails_part_way_through() -> None:
     assert target.deletes == [INSTALLED_ENTRY]
     assert lock.events == ["acquired", "released"]
     assert lock.held is False
+
+
+# -- Ruling R90: a record that could not keep up (T-19) ------------------------------------------
+
+
+def test_a_record_that_cannot_be_written_after_the_deletes_is_record_stale() -> None:
+    """**R90**, which is the plan-level decision `uninstall_artifact` used to say it was waiting
+    for.
+
+    This module used to let a bare `OSError` out here, because `MANIFEST_UNWRITABLE` promises
+    *nothing happened* and the files are already gone. The code now says what is true: the work
+    is done and only the record is behind, so nothing is lost and the remedy is to fix the state
+    directory and run the uninstall again.
+
+    Asserted on the code and on the target together, because a status claiming nothing happened
+    over a target that has just lost two files is the whole reason this code exists.
+    """
+    target = a_target()
+
+    with pytest.raises(RecordStaleError) as raised:
+        uninstall(target, manifests=FakeManifestStore(fail=True))
+
+    assert raised.value.code is ErrorCode.RECORD_STALE
+    assert raised.value.operation == "uninstall"
+    assert INSTALLED_ENTRY not in target.snapshot()

@@ -94,3 +94,39 @@ def test_an_object_missing_a_member_is_not_a_backup_store() -> None:
             return "id"
 
     assert not isinstance(NotAStore(), BackupStore)
+
+
+# -- Ruling R92, amending C-13: the kept set ------------------------------------------------------
+#
+# Added, never altered: every test above keeps the field list and the invariants it already
+# asserted, and `kept` defaults to `()` so a record built without it is still a record.
+
+
+def test_a_record_says_which_of_its_paths_it_holds_bytes_for() -> None:
+    """The amendment itself. Before it, "this path was absent when the backup was taken" was
+    inferred from the `files/` tree, so a byte-file removed afterwards read as an absence and the
+    restore **deleted** a live target path. Now the record says which is which."""
+    record = a_record(
+        paths=("skills/delivery-lead/SKILL.md", "skills/new/SKILL.md"),
+        kept=("skills/delivery-lead/SKILL.md",),
+    )
+
+    assert record.kept == ("skills/delivery-lead/SKILL.md",)
+    assert set(record.paths) - set(record.kept) == {"skills/new/SKILL.md"}
+
+
+def test_a_record_keeping_bytes_for_nothing_it_describes_is_refused() -> None:
+    """`kept` is a subset of `paths` and not a second list.
+
+    `restore` walks `paths`, so bytes recorded outside it would be held forever and put back
+    never — a backup silently smaller than it claims. The invariant runs one way only: a path in
+    `paths` and not in `kept` is the ordinary case R79 exists for.
+    """
+    with pytest.raises(ValueError, match="does not describe"):
+        a_record(paths=("skills/a/SKILL.md",), kept=("skills/b/SKILL.md",))
+
+
+def test_a_record_keeping_nothing_is_a_value_and_not_an_error() -> None:
+    """A first install into an empty target holds bytes for none of the paths it describes, and
+    restoring it removes every one of them. That is the case R79 exists for, not a fault."""
+    assert a_record(paths=("skills/new/SKILL.md",)).kept == ()

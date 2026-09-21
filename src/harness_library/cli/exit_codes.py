@@ -113,6 +113,23 @@ take a write is a plan it never got to run. The remedies differ — a permission
 a permission on the directory — and telling a user which is the whole point of these statuses.
 """
 
+RECORD_STALE = 13
+"""The work was done and the record of it could not be written. Contract C-14, ruling R90.
+
+**The mirror of `MANIFEST_UNWRITABLE`, and the reason that one can promise anything.** Under R63
+an apply writes its manifest before the first file, so 11 means *nothing happened*. Charter §13b
+sends every run that makes files **disappear** the other way — rollback, uninstall, prune and
+`clean --foreign` record last — so the same failure there means the target has already changed.
+Answering it with 11 would tell a script the opposite of the truth about a target that had just
+been emptied, and a script that believed it would retry, report success, or do nothing.
+
+Its own number rather than `MANIFEST_UNWRITABLE`'s because these two send a user to the same
+directory with two different situations, and the whole point of these statuses is telling them
+apart. **Not a failure of the work** — nothing is lost and nothing is unreachable; the next
+`hl diff` over-reports until the record catches up, and the remedy is to fix the state directory
+and run the same command again, which is safe because all four are idempotent.
+"""
+
 EXIT_STATUS: dict[ErrorCode, int] = {
     ErrorCode.LIBRARY_YAML_INVALID: LIBRARY_UNUSABLE,
     ErrorCode.ARTIFACT_NOT_FOUND: NOT_FOUND,
@@ -122,10 +139,11 @@ EXIT_STATUS: dict[ErrorCode, int] = {
     ErrorCode.FILE_NOT_TEXT: BAD_REQUEST,
     ErrorCode.INVALID_QUERY: BAD_REQUEST,
     ErrorCode.NOT_A_LIBRARY: LIBRARY_UNUSABLE,
-    # The install path. One status each, unlike the read path's groups: these seven call for
-    # seven different actions — decide, fix the target, delete the manifest, fix the backup
-    # directory, wait, fix the state directory, fix the unreadable path — so grouping them would
-    # throw away the only thing a script wants from them. The last has no emitter yet (R81).
+    # The install path. One status each, unlike the read path's groups: these eight call for
+    # eight different actions — decide, fix the target, delete the manifest, fix the backup
+    # directory, wait, fix the state directory, fix the unreadable path, run the command again —
+    # so grouping them would throw away the only thing a script wants from them. The seventh has
+    # no emitter yet (R81); the eighth is T-19's (R90).
     ErrorCode.INCOMPLETE: INCOMPLETE,
     ErrorCode.TARGET_UNWRITABLE: TARGET_UNWRITABLE,
     ErrorCode.MANIFEST_UNREADABLE: MANIFEST_UNREADABLE,
@@ -133,6 +151,7 @@ EXIT_STATUS: dict[ErrorCode, int] = {
     ErrorCode.LOCK_HELD: LOCK_HELD,
     ErrorCode.MANIFEST_UNWRITABLE: MANIFEST_UNWRITABLE,
     ErrorCode.TARGET_UNREADABLE: TARGET_UNREADABLE,
+    ErrorCode.RECORD_STALE: RECORD_STALE,
 }
 """One entry per `ErrorCode`. A member without one fails `tests/cli/test_exit_codes.py`."""
 
@@ -153,6 +172,7 @@ __all__ = [
     "MANIFEST_UNWRITABLE",
     "NOT_FOUND",
     "OK",
+    "RECORD_STALE",
     "TARGET_UNREADABLE",
     "TARGET_UNWRITABLE",
     "USAGE",

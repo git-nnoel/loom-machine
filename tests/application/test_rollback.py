@@ -26,6 +26,7 @@ from harness_library.domain.errors import (
     BackupNotFoundError,
     ErrorCode,
     LockHeldError,
+    RecordStaleError,
     RestoreFailedError,
 )
 from harness_library.domain.manifest import Manifest
@@ -428,3 +429,27 @@ def test_the_lock_is_released_on_a_rollback_that_succeeds() -> None:
 
     assert lock.events == ["acquired", "released"]
     assert lock.held is False
+
+
+# -- Ruling R90: a record that could not keep up (T-19) ------------------------------------------
+
+
+def test_a_record_that_cannot_be_written_after_the_restore_is_record_stale() -> None:
+    """**R90**, which is the C-6 amendment `rollback_install` used to say it was waiting for.
+
+    This module used to let a bare `OSError` out here, on the argument that `MANIFEST_UNWRITABLE`
+    promises *nothing happened* and that promise is exactly false after a restore. R90 gives the
+    condition a code of its own — exit 13 — so a caller can tell "the target is as it was" from
+    "the target moved and the record did not".
+
+    Asserted on the code and on the target together: the restore really did happen, so the error
+    cannot be read as a refusal.
+    """
+    target, backups, manifest = an_apply_that_overwrote_and_created()
+
+    with pytest.raises(RecordStaleError) as raised:
+        rollback(target, backups, manifest=manifest, manifests=FakeManifestStore(fail=True))
+
+    assert raised.value.code is ErrorCode.RECORD_STALE
+    assert raised.value.operation == "rollback"
+    assert target.snapshot()[INSTALLED_ENTRY] == BEFORE_BYTES

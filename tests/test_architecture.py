@@ -85,7 +85,14 @@ def test_contract_is_configured_and_kept(
 WRITE_PACKAGE = "harness_library.application.write"
 READ_PACKAGE = "harness_library.application.read"
 
-WRITE_USE_CASES = ("apply_install", "plan_install", "rollback_install", "uninstall_artifact")
+WRITE_USE_CASES = (
+    "apply_install",
+    "clean_foreign",
+    "plan_install",
+    "prune_target",
+    "rollback_install",
+    "uninstall_artifact",
+)
 """Every use case `application/write/` exports. A new one is added here.
 
 The `mcp-is-read-only` contract forbids `mcp/` from reaching this package, which is the mechanism
@@ -95,13 +102,26 @@ a *given* use case is in it: move one into `application/read/` and `mypy`, `ruff
 the only thing that fails.
 """
 
-WRITE_TYPES = ("ApplyResult", "RollbackResult", "UninstallResult")
-"""Every non-use-case name `application/write/` exports — three result types, today.
+WRITE_TYPES = (
+    "ApplyResult",
+    "CleanResult",
+    "PruneResult",
+    "RollbackResult",
+    "UninstallResult",
+    "foreign_entries",
+    "pruned_entries",
+)
+"""Every non-use-case name `application/write/` exports — five result types and two selectors.
 
 Listed separately from the use cases so the definition-site guard above keeps meaning "a use case
 is where the contract can see it" rather than quietly widening to any exported name, and listed
 **at all** so that the exports-exactly test below still covers the whole package surface. A name
 that is neither a use case nor named here is what fails.
+
+`pruned_entries` and `foreign_entries` are here rather than above because neither is a use case:
+each is one comprehension over a plan's verdicts, and they are exported because two callers share
+`pruned_entries` (T-19) and because the definition-site guard should cover them too — a selector
+that drifted into `application/read/` would be the first half of the use case following it.
 """
 
 READ_USE_CASES = ("diff_against_target", "list_artifacts", "search_artifacts", "validate_library")

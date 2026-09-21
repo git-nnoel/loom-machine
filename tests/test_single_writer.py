@@ -23,6 +23,11 @@ Each keeps the shape above: uninstall's callback hangs off the first `delete`, a
 the entry to `restore` — the moment the run is between taking the lock and moving a byte, which is
 the window an early release opens.
 
+**T-19 adds prune's and clean's** for the same reason and in the same shape: both make files
+disappear through `target.delete`, so both reuse `TargetCallingBackOnItsFirstDelete`. Clean's is
+the one that matters most — it is the only use case whose *listing* is inside the lock, and a
+listing taken outside it would offer the user paths another writer's apply is about to claim.
+
 Nothing here writes outside `tmp_path`. Every state root and every target is a temporary
 directory, and `default_state_root()` is not called.
 """
@@ -40,11 +45,16 @@ from pathlib import Path
 
 import pytest
 
+from harness_library.application.read.drift import diff_against_target
 from harness_library.application.write import (
     ApplyResult,
+    CleanResult,
+    PruneResult,
     RollbackResult,
     UninstallResult,
     apply_install,
+    clean_foreign,
+    prune_target,
     rollback_install,
     uninstall_artifact,
 )
@@ -590,3 +600,170 @@ def test_a_second_rollback_against_a_held_lock_restores_nothing(tmp_path: Path) 
         "was restored"
     )
     assert hash_set(target_root)[INSTALLED_ENTRY] == hash_bytes(LIBRARY_BYTES)
+
+
+# -------------------------------------------------------------------------------------------
+# C-16 / R82 — the last two write use cases, under the same sentinel (T-19)
+# -------------------------------------------------------------------------------------------
+
+
+def an_empty_library() -> FakeArtifactRepository:
+    """A library that holds nothing, so everything the manifest records reads `PRUNE`.
+
+    The realistic shape of what prune is for: the artifacts were installed from a library that
+    has since dropped them, and the verdict rule reaches `PRUNE` because the manifest and the
+    target still agree about every path.
+    """
+    return FakeArtifactRepository([])
+
+
+def run_prune(
+    *,
+    library: ArtifactRepository,
+    target_root: Path,
+    state_root: Path,
+    manifest: Manifest,
+    target: TargetRepository | None = None,
+) -> PruneResult:
+    """One real prune of `target_root`, planned from the target as it is now, under a real lock."""
+    repository = target if target is not None else FilesystemTargetRepository(target_root)
+    return prune_target(
+        diff_against_target(library, FilesystemTargetRepository(target_root), manifest=manifest),
+        repository,
+        FilesystemBackupStore(state_root, target_root, now=lambda: INSTALLED_AT),
+        FilesystemManifestStore(state_root),
+        lock=FilesystemWriteLock(target_root, state_root=state_root, now=lambda: INSTALLED_AT),
+        manifest=manifest,
+        installed_at=INSTALLED_AT,
+    )
+
+
+def run_clean(
+    *,
+    library: ArtifactRepository,
+    target_root: Path,
+    state_root: Path,
+    manifest: Manifest,
+    target: TargetRepository | None = None,
+) -> CleanResult:
+    """One real `clean --foreign` over `target_root`, removing, under a real lock."""
+    repository = target if target is not None else FilesystemTargetRepository(target_root)
+    return clean_foreign(
+        diff_against_target(library, FilesystemTargetRepository(target_root), manifest=manifest),
+        repository,
+        FilesystemBackupStore(state_root, target_root, now=lambda: INSTALLED_AT),
+        FilesystemManifestStore(state_root),
+        lock=FilesystemWriteLock(target_root, state_root=state_root, now=lambda: INSTALLED_AT),
+        manifest=manifest,
+        installed_at=INSTALLED_AT,
+        remove=True,
+    )
+
+
+def test_a_second_prune_against_a_held_lock_removes_nothing(tmp_path: Path) -> None:
+    """**C-16 for prune, in the shape L50 requires.**
+
+    The second prune starts while the first is between its backup and its first delete — the
+    window in which two runs interleave and one writes a record about files the other has already
+    removed. It must be refused with `LOCK_HELD` and leave the target untouched, and both are
+    asserted on the **hash set** across the second run rather than on either report: a report
+    saying "I removed nothing" is exactly what the wrong implementation also says.
+
+    The positive control is the last assertion — the first prune really does remove both files,
+    so "unchanged" cannot mean "this use case never deletes".
+    """
+    state_root = tmp_path / "state"
+    target_root = a_target(tmp_path)
+    installed = run_apply(library=a_library(), target_root=target_root, state_root=state_root)
+    library = an_empty_library()
+    second = SecondRun()
+
+    def a_second_prune_while_the_first_is_deleting() -> None:
+        second.before = hash_set(target_root)
+        try:
+            run_prune(
+                library=library,
+                target_root=target_root,
+                state_root=state_root,
+                manifest=installed.manifest,
+            )
+        except LockHeldError as refused:
+            second.refused = refused
+        second.after = hash_set(target_root)
+
+    run_prune(
+        library=library,
+        target_root=target_root,
+        state_root=state_root,
+        manifest=installed.manifest,
+        target=TargetCallingBackOnItsFirstDelete(
+            FilesystemTargetRepository(target_root), a_second_prune_while_the_first_is_deleting
+        ),
+    )
+
+    assert isinstance(second.refused, LockHeldError), (
+        "the second prune was not refused: while one writer holds this target's lock another "
+        "must exit LOCK_HELD rather than interleaving its deletes with the first's (R50, R82)"
+    )
+    assert second.refused.code is ErrorCode.LOCK_HELD
+    assert second.after == second.before, (
+        "the second prune changed the target although it was refused: LOCK_HELD means nothing "
+        "was removed, and the lock is taken before the backup so that it can"
+    )
+    assert hash_set(target_root) == {FOREIGN: hash_bytes(FOREIGN_BYTES)}
+
+
+def test_a_second_clean_against_a_held_lock_removes_nothing(tmp_path: Path) -> None:
+    """**C-16 for `clean --foreign`, the one whose listing is inside the lock too.**
+
+    Every other use case takes the lock around work it was already told to do. Clean decides
+    *what* to act on inside the lock, because a listing taken outside it would offer the user
+    paths another writer's apply is about to claim — a `FOREIGN` path that becomes a `CREATE`
+    between the listing and the removal is a file this command would delete out from under an
+    install that had just written it.
+
+    The positive control is the last assertion: the first clean really does remove the foreign
+    file, so "unchanged" cannot mean "this use case never deletes".
+    """
+    state_root = tmp_path / "state"
+    target_root = a_target(tmp_path)
+    installed = run_apply(library=a_library(), target_root=target_root, state_root=state_root)
+    library = a_library()
+    second = SecondRun()
+
+    def a_second_clean_while_the_first_is_removing() -> None:
+        second.before = hash_set(target_root)
+        try:
+            run_clean(
+                library=library,
+                target_root=target_root,
+                state_root=state_root,
+                manifest=installed.manifest,
+            )
+        except LockHeldError as refused:
+            second.refused = refused
+        second.after = hash_set(target_root)
+
+    run_clean(
+        library=library,
+        target_root=target_root,
+        state_root=state_root,
+        manifest=installed.manifest,
+        target=TargetCallingBackOnItsFirstDelete(
+            FilesystemTargetRepository(target_root), a_second_clean_while_the_first_is_removing
+        ),
+    )
+
+    assert isinstance(second.refused, LockHeldError), (
+        "the second clean was not refused: while one writer holds this target's lock another "
+        "must exit LOCK_HELD rather than removing files beside the first's writes (R50, R82)"
+    )
+    assert second.refused.code is ErrorCode.LOCK_HELD
+    assert second.after == second.before, (
+        "the second clean changed the target although it was refused: LOCK_HELD means nothing "
+        "was removed, and the lock is taken before the listing so that it can"
+    )
+    assert hash_set(target_root) == {
+        INSTALLED_ENTRY: hash_bytes(LIBRARY_BYTES),
+        INSTALLED_OTHER: hash_bytes(LIBRARY_BYTES),
+    }

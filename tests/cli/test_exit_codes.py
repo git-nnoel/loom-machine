@@ -18,6 +18,7 @@ from harness_library.cli.exit_codes import (
     MANIFEST_UNWRITABLE,
     NOT_FOUND,
     OK,
+    RECORD_STALE,
     TARGET_UNREADABLE,
     TARGET_UNWRITABLE,
     USAGE,
@@ -224,3 +225,64 @@ def test_no_error_class_carries_target_unreadable_yet() -> None:
 
     assert ErrorCode.LOCK_HELD in carried
     assert ErrorCode.TARGET_UNREADABLE not in carried
+
+
+# -- Contract C-14's eighth install status (T-19, ruling R90) -------------------------------------
+#
+# Added, not altered, as in T-13, T-16 and T-17. Unlike `TARGET_UNREADABLE`, this one arrives with
+# its emitters: `prune_target` and `clean_foreign` raise it, and `rollback_install` and
+# `uninstall_artifact` — which used to let a bare `OSError` out and said in their docstrings that
+# giving it a code was a plan-level decision — now raise it too.
+
+
+def test_the_record_stale_status_is_the_number_r90_fixed() -> None:
+    """The integer itself, because a script branches on it. R90 fixes 13."""
+    assert RECORD_STALE == 13
+    assert exit_status_for(ErrorCode.RECORD_STALE) == RECORD_STALE
+
+
+def test_a_stale_record_is_told_apart_from_a_manifest_that_was_never_written() -> None:
+    """**The distinction the code exists for, and it is about a guarantee, not a directory.**
+
+    `MANIFEST_UNWRITABLE` means *nothing happened*: R63 writes an apply's manifest before the
+    first file, so the target is exactly as it was. `RECORD_STALE` means the opposite — charter
+    §13b records last for every run that makes files disappear, so the work is done and only the
+    record is behind. Answering the second with the first would tell a script the target was
+    untouched when it had just been emptied.
+    """
+    assert RECORD_STALE != MANIFEST_UNWRITABLE
+    assert exit_status_for(ErrorCode.MANIFEST_UNWRITABLE) != exit_status_for(ErrorCode.RECORD_STALE)
+
+
+def test_the_eight_install_statuses_are_eight_distinct_numbers() -> None:
+    """The eight together, as one set. An eighth code reusing a seventh's number would make a
+    script that already branches on 6..12 read this one as something it is not."""
+    install = {
+        ErrorCode.INCOMPLETE,
+        ErrorCode.TARGET_UNWRITABLE,
+        ErrorCode.MANIFEST_UNREADABLE,
+        ErrorCode.BACKUP_FAILED,
+        ErrorCode.LOCK_HELD,
+        ErrorCode.MANIFEST_UNWRITABLE,
+        ErrorCode.TARGET_UNREADABLE,
+        ErrorCode.RECORD_STALE,
+    }
+
+    assert len({exit_status_for(code) for code in install}) == len(install) == 8
+
+
+def test_record_stale_has_a_class_that_carries_it() -> None:
+    """Unlike `TARGET_UNREADABLE`, this code arrives with its raise sites — charter §9 allows a
+    code before its class and forbids the reverse, and R90 named both in one ruling.
+
+    The positive control is the sibling assertion: the walk really does find a code that has no
+    class, so "carried" cannot mean "everything looks carried".
+    """
+    carried = {
+        subclass.code
+        for subclass in HarnessLibraryError.__subclasses__()
+        if getattr(subclass, "code", None) is not None
+    }
+
+    assert ErrorCode.TARGET_UNREADABLE not in carried
+    assert ErrorCode.RECORD_STALE in carried

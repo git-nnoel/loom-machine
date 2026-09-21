@@ -47,12 +47,28 @@ class BackupRecord:
             was taken is described here and stored nowhere, so restoring the backup *removes* it.
             That is what makes a first install undoable: the paths it created were absent before
             it ran, and putting the target back means taking them away again.
+        kept: the subset of `paths` the backup holds **bytes** for — the paths the target really
+            held when it was taken. **Ruling R92, amending C-13.**
+
+            Recorded rather than inferred, and that is the whole amendment. A store that reads
+            "was this path absent?" off its own file tree cannot tell an absence from a loss: a
+            `files/<path>` removed after the fact by a stray `rm`, a half-cleaned state directory
+            or a filesystem repair reads exactly like a path that was never there, and restoring
+            that backup **deletes** a file the user still has — silently, with no error, no
+            report and no code. Narrow trigger, unbounded consequence.
+
+            With this field the two are different documents: a path in `kept` whose bytes are
+            gone is a damaged backup and is refused before anything moves, and a path outside
+            `kept` is removed as R79 requires. The duplication is deliberate and is the point —
+            the record is the claim and the tree is the evidence, and a backup is exactly as
+            trustworthy as the two agreeing.
     """
 
     backup_id: str
     created_at: datetime
     target_path: str
     paths: tuple[str, ...] = ()
+    kept: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.backup_id:
@@ -66,6 +82,13 @@ class BackupRecord:
             raise ValueError(
                 "BackupRecord.target_path must not be empty: a backup whose target is unknown "
                 "cannot be offered for restore without asking the user to guess"
+            )
+        unclaimed = sorted(set(self.kept) - set(self.paths))
+        if unclaimed:
+            raise ValueError(
+                f"this backup keeps bytes for {unclaimed}, which it does not describe: restore "
+                "walks `paths`, so bytes outside it would be held forever and put back never. "
+                "`kept` is a subset of `paths` (R92), not a second list"
             )
 
 
@@ -83,7 +106,8 @@ class BackupStore(Protocol):
         """Copy every one of these target-relative paths, and return the backup's id.
 
         A path the target does not hold is **not** an error and not a skip: it is recorded as one
-        of the backup's paths and no bytes are kept for it, so a restore removes it again.
+        of the backup's paths, left out of `kept`, and no bytes are stored for it — so a restore
+        removes it again.
 
         Raises:
             OSError: the backup could not be taken. A builtin, and deliberately so (ruling R24):
@@ -96,15 +120,19 @@ class BackupStore(Protocol):
     def restore(self, backup_id: str) -> None:
         """Put every path this backup describes back as it was.
 
-        A path the backup holds bytes for is written back; a path it describes and holds no bytes
-        for was absent when the backup was taken and is removed. Nothing else in the target is
-        touched — a backup is not a snapshot of the whole directory, and restoring one must not
-        delete a file that was never in it.
+        A path in `kept` is written back from the bytes the backup stored; a path it describes and
+        kept no bytes for was absent when the backup was taken and is removed. Nothing else in the
+        target is touched — a backup is not a snapshot of the whole directory, and restoring one
+        must not delete a file that was never in it.
 
         This is the mechanism; **choosing** to run it is T-18's rollback use case.
 
         Raises:
-            KeyError: no backup has this id.
+            KeyError: no *complete* backup has this id. Since ruling R92 that covers a backup
+                whose record is missing or unreadable **and** one whose record claims bytes the
+                store no longer holds: the second is checked before the first path is touched,
+                because a half-restored target is a cost worth paying to undo a real install and
+                is not a cost worth paying to act on a damaged record.
             OSError: the target could not be written.
         """
         ...

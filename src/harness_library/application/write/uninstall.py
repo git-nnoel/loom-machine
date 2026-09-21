@@ -57,6 +57,7 @@ from harness_library.domain.backup import BackupStore
 from harness_library.domain.errors import (
     ArtifactNotFoundError,
     BackupFailedError,
+    RecordStaleError,
     TargetUnwritableError,
 )
 from harness_library.domain.identity import parse_artifact_id
@@ -131,11 +132,11 @@ def uninstall_artifact(
         TargetUnwritableError: a path could not be removed. The deletes before it stand and the
             manifest is **not** rewritten, so nothing on disk is disowned; the backup taken above
             is what puts the run back.
-        OSError: the manifest could not be written, after deletes that succeeded. Deliberately
-            **not** `ManifestWriteError`: under R63 that code means *nothing happened*, which is
-            true of an apply and false here — the files are already gone. A code carrying the
-            wrong guarantee is worse than a builtin, and giving this failure one of its own is a
-            C-6 amendment and therefore a plan-level decision.
+        RecordStaleError: the manifest could not be written, after deletes that succeeded.
+            **Ruling R90** is the plan-level decision this docstring used to say it was waiting
+            for. Deliberately not `ManifestWriteError`: under R63 that code means *nothing
+            happened*, which is true of an apply and false here — the files are already gone, and
+            a code carrying the wrong guarantee is worse than the builtin this used to raise.
     """
     with lock.hold():
         record = _record_of(manifest, artifact_id)
@@ -162,7 +163,7 @@ def uninstall_artifact(
                 other for other in manifest.artifacts if other.artifact_id != artifact_id
             ),
         )
-        manifests.write(remaining)
+        _write_record(manifests, remaining)
 
         return UninstallResult(
             artifact_id=artifact_id,
@@ -220,6 +221,19 @@ def _take_backup(backups: BackupStore, paths: tuple[str, ...]) -> str | None:
         return backups.create(paths)
     except OSError as error:
         raise BackupFailedError(str(error)) from error
+
+
+def _write_record(manifests: ManifestStore, record: Manifest) -> None:
+    """Record what is left, **after the last delete**. Charter §13b.
+
+    Raises:
+        RecordStaleError: it could not be written (R90). The files are already gone, so this is
+            the opposite of `ManifestWriteError`'s guarantee and needs a code that says so.
+    """
+    try:
+        manifests.write(record)
+    except OSError as error:
+        raise RecordStaleError("uninstall", str(error)) from error
 
 
 def _delete(target: TargetRepository, path: str) -> None:

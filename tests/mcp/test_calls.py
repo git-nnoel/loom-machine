@@ -87,14 +87,25 @@ def test_list_artifacts_narrows_on_the_arguments_it_advertises(fixture_library: 
 
 
 def test_search_artifacts_finds_a_phrase_and_reports_what_it_skipped(fixture_library: Path) -> None:
-    """Feature F-3 as a client meets it: matches with a path and a line number, and the files that
-    were passed over reported rather than silently omitted (ruling R4)."""
+    """Feature F-3 as a client meets it: matches with a path, a line number and the line either
+    side of it (ruling R36), and the files that were passed over reported rather than silently
+    omitted (ruling R4).
+
+    The neighbour *values* are decided and pinned in `application/read`; what only this layer can
+    show is that they survive a real JSON-RPC frame — present, and null rather than omitted, which
+    is the C-7 guarantee a client with two code paths would otherwise have to work around.
+    """
     payload = payload_of(call(fixture_library, "search_artifacts", {"query": "checklist"}))
 
     assert payload["matches"], "the fixture library contains this phrase"
     first = payload["matches"][0]
     assert first["line_number"] >= 1
     assert isinstance(first["path"], str)
+    assert "line_before" in first and "line_after" in first
+    assert all(
+        match["line_before"] is None or isinstance(match["line_before"], str)
+        for match in payload["matches"]
+    )
     assert payload["truncated"] is False
     assert all(skipped["reason"] != "binary" for skipped in payload["skipped"])
 

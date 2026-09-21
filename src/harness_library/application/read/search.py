@@ -16,6 +16,10 @@ undecodable, whatever its bytes turn out to be.
 **The cap.** Matching stops at `limit` and `truncated` says so. A caller that ignores `truncated`
 reports a partial answer as a complete one, which is why it is a field and not an inference from
 `len(matches) == limit` — a search finding exactly `limit` matches and no more is not truncated.
+
+**Ruling R36 — one line of context either side.** A match carries `line_before` and `line_after`,
+and each is `None` at a file edge rather than an empty string: "there is no line there" and "the
+line is blank" are different facts, and a consumer renders them differently.
 """
 
 from __future__ import annotations
@@ -156,17 +160,38 @@ def _text_or_skip(
 def _matches_in(
     artifact: Artifact, file: ArtifactFile, text: str, lowered_query: str
 ) -> list[SearchMatch]:
-    """One match per matching line. A line matching twice is reported once."""
+    """One match per matching line, each carrying the line either side of it (ruling R36).
+
+    The lines are indexed rather than consumed from an `enumerate`, because a neighbour is not
+    reachable from a stream: answering "what is above this line" needs the whole file in view, and
+    the file is already in memory.
+    """
+    lines = text.splitlines()
     return [
         SearchMatch(
             artifact_id=artifact.id,
             path=file.path,
-            line_number=number,
+            line_number=index + 1,
             line_text=line.rstrip(),
+            line_before=_neighbour(lines, index - 1),
+            line_after=_neighbour(lines, index + 1),
         )
-        for number, line in enumerate(text.splitlines(), start=1)
+        for index, line in enumerate(lines)
         if lowered_query in line.lower()
     ]
+
+
+def _neighbour(lines: list[str], index: int) -> str | None:
+    """The line at `index`, or `None` when there is no line there.
+
+    The lower bound is checked explicitly and is the whole point of the function: `lines[-1]` is
+    the *last* line of the file, so a match on line 1 would silently report the end of the
+    document as the line above it. `None` and `""` are different answers here — a blank neighbour
+    is a line, an absent one is not — so a missing line is never flattened into an empty string.
+    """
+    if 0 <= index < len(lines):
+        return lines[index].rstrip()
+    return None
 
 
 __all__ = ["SEARCH_RESULT_LIMIT", "is_searchable", "search_artifacts"]

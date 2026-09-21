@@ -982,14 +982,68 @@ def test_the_suppression_is_conditional_on_the_parse_having_failed() -> None:
     assert codes(assembled) == [ValidationCode.V5, ValidationCode.V5]
 
 
-def test_v3_still_reads_the_body_of_an_unparseable_document() -> None:
-    """V10 suppresses the rules that read the *frontmatter*, and only those. The body parsed fine —
-    it is the whole file — so a broken citation in it is still a broken citation.
+def test_v10_suppresses_v3_because_a_failed_parse_declares_no_successor() -> None:
+    """Ruling R37, and **named in advance as the assertion that must fail** when V3 is taken back
+    out of V10's suppression set: this artifact must report exactly one finding.
+
+    V3's exemption is keyed on `superseded_by`, and `_resolve_superseded_by` reads that from the
+    frontmatter whenever no `library.yaml` declares one. After a parse failure nothing is known
+    about what the document declares — including that it is a redirect stub — so the exemption
+    silently stops applying to precisely the artifacts charter §8 carves it out for.
+
+    T-10 pinned the opposite of this as `test_v3_still_reads_the_body_of_an_unparseable_document`,
+    characterising an interaction it was not authorised to close and writing it into
+    `_resolve_superseded_by`'s docstring instead. R37 closed it; this is that test re-aimed.
     """
-    assembled = assemble_artifact(raw_unparseable_skill(body=LIVE_BODY), NO_METADATA)
+    raw = raw_unparseable_skill(body=LIVE_BODY)
+
+    assert cited_reference_paths(LIVE_BODY) == ("references/persistence.md",), (
+        "positive control: the body really does cite a path, so there is something to suppress"
+    )
+    assert raw.file_paths == {"SKILL.md"}, "and the artifact really does not hold it"
+
+    assembled = assemble_artifact(raw, NO_METADATA)
+
+    assert codes(assembled) == [ValidationCode.V10]
+    assert assembled.is_valid is False
+
+
+def test_the_v3_suppression_is_conditional_on_the_parse_having_failed() -> None:
+    """The positive control for the absence above, and **named in advance as the assertion that
+    must stay green** under the same mutation.
+
+    Same body, same citation, same artifact that does not hold the file: one difference, the
+    frontmatter parsed. V3 fires, so the suppression is a decision about *this* document rather
+    than a rule that quietly stopped working. Without this pair, "conditional on the parse having
+    failed" and "V3 deleted" are the same green.
+    """
+    parsed = raw_skill("frontend-system-pattern", body=LIVE_BODY)
+
+    assert parsed.entry is not None
+    assert parsed.entry.parse_error is None, "the one difference from the test above"
+
+    assembled = assemble_artifact(parsed, NO_METADATA)
 
     assert findings_for(assembled, ValidationCode.V3) == ["references/persistence.md"]
-    assert ValidationCode.V10 in codes(assembled)
+
+
+def test_a_redirect_stub_whose_frontmatter_broke_reports_one_cause_and_not_the_flood() -> None:
+    """The case ruling R37 exists for, in the shape the real library has it: a redirect stub, no
+    `library.yaml` to declare its successor, and a frontmatter block that did not parse.
+
+    Without the suppression this artifact reports the six citations pinned in `STUB_A_CITATIONS`
+    — every one of them correct prose about the successor (L5) — and the one actionable finding
+    is the last of seven. Six is read from the golden citation list rather than written here as a
+    number, so the count cannot agree with itself by accident.
+    """
+    raw = raw_unparseable_skill(STUB_A_NAME, body=STUB_A_BODY)
+
+    assert len(cited_reference_paths(STUB_A_BODY)) == 6, "what the flood would have reported"
+    assert raw.file_paths.isdisjoint(STUB_A_CITATIONS), "none of them exist here"
+
+    assembled = assemble_artifact(raw, NO_METADATA)
+
+    assert codes(assembled) == [ValidationCode.V10]
 
 
 def test_v1_and_v10_never_both_fire() -> None:

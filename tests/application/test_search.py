@@ -8,6 +8,9 @@ Three rules are under test and each has a way of passing vacuously, so each is p
 * **ruling R25** — the reason is *not a markdown reference*, never "binary". A UTF-8 HTML asset is
   the case that tells the two apart, so that is the fixture.
 * **the cap** — `truncated` is a reported fact, not `len(matches) == limit`.
+* **ruling R36** — a match carries the line either side of it. Every case below names the
+  neighbouring lines as **values**, never as the presence of a field: the requirement survived
+  three tasks unbuilt because the criterion said only "and context", which no test can fail.
 """
 
 from __future__ import annotations
@@ -125,6 +128,103 @@ def test_a_markdown_reference_that_does_not_decode_is_reported_as_unreadable() -
     assert [m.path for m in results.matches] == ["SKILL.md"]
     assert [(s.path, s.reason) for s in results.skipped] == [
         ("references/bad.md", SearchSkipReason.UNREADABLE_AS_TEXT)
+    ]
+
+
+# ----------------------------------------------------------------------------------------------
+# Ruling R36 — one line of context either side
+# ----------------------------------------------------------------------------------------------
+
+
+def _one_skill(body: str) -> FakeArtifactRepository:
+    """A single skill whose entry document is exactly `body`."""
+    artifact, contents = skill_with_entry("delivery-lead", body)
+    return FakeArtifactRepository([artifact], contents=contents)
+
+
+CONTEXT_BODY = "# Delivery lead\nthe line above\nthe needle is here\nthe line below\ntail\n"
+"""Five lines, the needle on the third, so neither neighbour is a file edge."""
+
+
+def test_a_match_carries_the_lines_either_side_of_it_as_values() -> None:
+    """Feature F-3 and ruling R36, and **named in advance as the assertion that must fail** when
+    `line_before` and `line_after` are returned as `None` for every match.
+
+    The neighbours are named here as literals. A test asserting only that the fields exist, or
+    comparing them against lines recomputed from the same body, passes through exactly the change
+    it exists to catch (L12).
+    """
+    results = search_artifacts(_one_skill(CONTEXT_BODY), "the needle")
+
+    (match,) = results.matches
+    assert (match.line_number, match.line_before, match.line_text, match.line_after) == (
+        3,
+        "the line above",
+        "the needle is here",
+        "the line below",
+    )
+
+
+def test_a_match_on_the_first_line_has_no_line_before_but_still_has_the_one_after() -> None:
+    """`None` above, a real value below — so "no line there" is not being returned wholesale."""
+    results = search_artifacts(_one_skill("needle at the top\nthe line below\n"), "needle")
+
+    (match,) = results.matches
+    assert (match.line_number, match.line_before, match.line_after) == (1, None, "the line below")
+
+
+def test_a_match_on_the_last_line_has_no_line_after_but_still_has_the_one_before() -> None:
+    """The mirror of the case above, and the one an off-by-one is most likely to survive: a
+    negative index would wrap to the end of the file rather than run off it.
+    """
+    results = search_artifacts(_one_skill("the line above\nneedle at the end\n"), "needle")
+
+    (match,) = results.matches
+    assert (match.line_number, match.line_before, match.line_after) == (2, "the line above", None)
+
+
+def test_a_match_in_a_single_line_file_has_no_neighbour_on_either_side() -> None:
+    """**Named in advance as the control that must stay green** under the same mutation.
+
+    Both neighbours are legitimately `None` here, so this test alone cannot tell "correct at a
+    file edge" from "always `None`" — it is evidence only in the pair, beside
+    `test_a_match_carries_the_lines_either_side_of_it_as_values`, which names real values.
+    """
+    results = search_artifacts(_one_skill("the needle, alone\n"), "needle")
+
+    (match,) = results.matches
+    assert (match.line_number, match.line_before, match.line_after) == (1, None, None)
+
+
+def test_a_blank_neighbour_is_an_empty_string_and_not_an_absent_line() -> None:
+    """The distinction ruling R36 turns on: a blank line *is* a line, and a consumer renders it
+    differently from the end of a file. Flattening one into the other loses a fact.
+    """
+    results = search_artifacts(_one_skill("\nthe needle is here\n\ntail\n"), "needle")
+
+    (match,) = results.matches
+    assert (match.line_before, match.line_after) == ("", "")
+    assert match.line_before is not None, "a blank line is present, not absent"
+    assert match.line_after is not None
+
+
+def test_a_neighbour_is_trimmed_of_trailing_whitespace_like_the_matching_line() -> None:
+    """One rule for all three lines. A consumer joining them into a block would otherwise get
+    ragged trailing space from the neighbours and none from the match.
+    """
+    results = search_artifacts(_one_skill("above   \nthe needle\nbelow\t\n"), "needle")
+
+    (match,) = results.matches
+    assert (match.line_before, match.line_after) == ("above", "below")
+
+
+def test_every_match_in_a_file_gets_its_own_neighbours() -> None:
+    """Two matches, two different contexts — the neighbours are per match, not per file."""
+    results = search_artifacts(_one_skill("a\nneedle one\nb\nneedle two\nc\n"), "needle")
+
+    assert [(m.line_before, m.line_text, m.line_after) for m in results.matches] == [
+        ("a", "needle one", "b"),
+        ("b", "needle two", "c"),
     ]
 
 

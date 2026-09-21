@@ -233,9 +233,11 @@ TOOLS: tuple[ToolSpec[Any, Any], ...] = (
         title="Search artifacts",
         description=(
             "Find a phrase across the library's entry documents and their markdown references, "
-            "returning the artifact, the file, the line number and the matching line. Files that "
-            "were not searched are reported with the reason, so an omission is visible rather "
-            "than silent, and a result set that reached the cap is marked truncated."
+            "returning the artifact, the file, the line number, the matching line and the one "
+            "line either side of it — each null when the match sits at the start or the end of "
+            "the file, never an empty string. Files that were not searched are reported with the "
+            "reason, so an omission is visible rather than silent, and a result set that reached "
+            "the cap is marked truncated."
         ),
         arguments=SearchArtifactsArguments,
         payload=SearchResults,

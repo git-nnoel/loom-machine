@@ -105,8 +105,9 @@ def assemble_artifact(raw: RawArtifact, metadata: LibraryMetadata) -> Artifact:
 
     **Two rules suppress others, and both suppressions are conditional.** V1 silences V5, because a
     document that is not there cannot be missing a key in any way worth three findings; V10 silences
-    V2 and V5, because a frontmatter block that did not parse supports no claim about its keys at
-    all (R33). Neither is a blanket skip: remove the cause and the dependent rules fire again.
+    V2, V3 and V5, because a frontmatter block that did not parse supports no claim about what the
+    document declares at all (R33, widened to V3 by R37). Neither is a blanket skip: remove the
+    cause and the dependent rules fire again.
     """
     declared = metadata.for_artifact(raw.id)
     superseded_by = _resolve_superseded_by(raw.entry, declared.superseded_by)
@@ -206,12 +207,23 @@ def _check_v3(raw: RawArtifact, superseded_by: str | None) -> list[ValidationFin
     stubs cite seven such paths between them, and every one of them is correct prose rather than a
     broken link. The exemption is keyed on being a stub, not on the citation looking unusual.
 
+    **Silent when the frontmatter did not parse, which is V10's fault** (ruling R37). The exemption
+    above is keyed on `superseded_by`, and `_resolve_superseded_by` falls back to the frontmatter
+    whenever no `library.yaml` declares a successor — so after a parse failure nothing is known
+    about whether this artifact is a stub, and the exemption silently stops applying to the very
+    artifacts it exists for. One unquoted colon in a redirect stub would then flood V3 with the
+    seven findings charter §8 carves out, burying the one true cause. Conditional, like V10's
+    silencing of V2 and V5: an artifact that *parses* and cites a path it does not hold still
+    reports V3.
+
     Citations are deduplicated and reported in first-appearance order, so a body that mentions the
     same missing path twice is one fault, not two.
     """
     if raw.kind is not ArtifactKind.DIRECTORY:
         return []
     if raw.entry is None or superseded_by is not None:
+        return []
+    if raw.entry.parse_error is not None:
         return []
     present = raw.file_paths
     return [
@@ -452,12 +464,13 @@ def _resolve_superseded_by(entry: RawEntry | None, declared: str | None) -> str 
     exactly the case charter §8 carves out. An unparseable value is ignored rather than raised on:
     it is user-authored data, and V4 reports it as unresolvable.
 
-    **The interaction V10 does not close.** A stub whose frontmatter fails to parse declares no
-    `superseded_by` here, so a library with no `library.yaml` loses the exemption and V3 floods —
-    the precise case charter §8 carves out, reopened by one unquoted colon. V10 now names the real
-    cause in the same report, which is the difference between a confusing report and a misleading
-    one, but it does not restore the exemption. Charter §8 scopes V10's suppression to V2 and V5;
-    widening it to V3 is a register change and belongs to the delivery lead.
+    **The interaction this fallback has with V10, and where it is closed.** A stub whose
+    frontmatter fails to parse declares no `superseded_by` here, so a library with no
+    `library.yaml` would lose the exemption and V3 would flood — the precise case charter §8 carves
+    out, reopened by one unquoted colon. It is not repaired here by synthesising a successor
+    nobody declared: after a parse failure there is no evidence of one. Ruling R37 closes it in
+    `_check_v3`, which is silent when the frontmatter did not parse, so V10 reports the one true
+    cause and nothing downstream of it.
     """
     if declared is not None:
         return declared

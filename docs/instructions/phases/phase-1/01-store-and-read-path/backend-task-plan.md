@@ -1184,3 +1184,126 @@ No change to any frozen contract shape. No new rule beyond V10. No fix for the V
 directory-kind stub with unparseable frontmatter would still produce (R15's fallback; reported, not
 repaired — the register scopes V10's suppression to V2/V5). No dependency change, no
 `pyproject.toml` or `uv.lock` edit. No commit.
+
+---
+
+# T-11 backend task plan — search context lines, and V10's suppression of V3
+
+Written before the first edit. Task: phase-1 / initiative 01-store-and-read-path / T-11.
+
+## Understanding
+
+Two corrections a `phase-reviewer` cold read found in documents already certified. Neither was
+caught by a test, and the reason is the same in both cases: the criterion was written as the
+presence of a thing rather than as a value, so no test could fail.
+
+1. **Search returns one line of context either side** (R36, amending C-5 and C-7). `SearchMatch`
+   gains `line_before` and `line_after`, both `str | None`. `None` means *there is no line there*;
+   an empty string means *the line is blank*. Those are different facts and a consumer renders them
+   differently, so the edge case is `None` and never `""`. The requirement sat in the spec unbuilt
+   through three tasks because `dtos.SearchMatch.line_text` carried a docstring asserting that the
+   whole line *was* "the context feature F-3 asks for" — a claim in prose that redefined the
+   requirement out of existence. That sentence is deleted, not softened.
+2. **V10's suppression widens to V3** (R37, charter §8 as of 2026-09-20, marked *pending T-11*).
+   V3's `superseded_by` exemption falls back to reading the entry's frontmatter whenever no
+   `library.yaml` declares supersession. When the frontmatter did not parse, nothing is known about
+   what the document declares — including that it is a redirect stub — so one unquoted colon in a
+   stub floods V3 with precisely the findings the exemption exists to prevent, burying the single
+   true cause. T-10's author examined this interaction and wrote it into
+   `_resolve_superseded_by`'s docstring as *"the interaction V10 does not close"*, correctly
+   leaving the register change to the delivery lead. R37 made it, so the docstring is now stale and
+   is rewritten rather than left as a description of the old behaviour.
+
+## The amendment, and why it is a task rather than a fix
+
+C-5 and C-7 are frozen; initiatives 02–04 build against them. R42 bounds this one: the change is
+**additive** (two new fields, no rename, no removal) and the only consumers named in C-5 — the HTTP
+API of initiative 03 and the SPA of initiative 04 — do not yet exist. Plan §6 already carries the
+amended text for both contracts, so this task transcribes a ruling rather than making one. Nothing
+else in either contract is touched.
+
+**Strictly additive means positional too.** `line_before` and `line_after` are appended *after*
+`line_text` rather than wrapped around it in reading order. Field order is Pydantic's declaration
+order and therefore the JSON key order, and leaving every existing field where it was keeps the
+amendment additive by any reading of R42.
+
+## Where the suppression goes, and the shape it must not take
+
+In `_check_v3`, as a gate on `raw.entry.parse_error`, beside the two gates already there — not in
+`_resolve_superseded_by` by synthesising a successor, and not as a blanket `if parse_error: return`
+around the whole rule set. The distinction the mutation check exists to prove is that the
+suppression is **conditional on the parse having failed**: an artifact that parses and genuinely
+cites a missing reference still reports V3, exactly as one that parses and genuinely omits a key
+still reports V5. That is the same shape V2 and V5 already use, which is the point — three rules
+that are all claims about what the frontmatter declares, silenced by the one fact that nothing was
+declared.
+
+## Approach — file by file
+
+- `application/read/dtos.py` — `SearchMatch` gains `line_before` / `line_after`; the false claim in
+  `line_text`'s docstring is deleted; `FindingPayload`'s docstring says `V1` to `V10` (V10 shipped
+  in T-10).
+- `application/read/search.py` — `_matches_in` indexes the split lines instead of consuming an
+  enumerate, so a neighbour is reachable; `_neighbour` returns `None` outside the bounds. The lower
+  bound is explicit, because `lines[-1]` is the *last* line and would make a match on line 1 report
+  the end of the file as its predecessor.
+- `domain/assembly.py` — `_check_v3` gains the `parse_error` gate; `assemble_artifact`'s and
+  `_resolve_superseded_by`'s docstrings are corrected to describe the closed interaction.
+- `mcp/tools.py` — the `search_artifacts` prose enumerates the fields a match carries and now goes
+  stale. Prose only: `outputSchema` is generated from `SearchResults`, so the schema half is
+  already correct, and the MCP client revalidates every result against it.
+
+## Existing tests changed, not deleted
+
+- `tests/application/test_dtos.py::EXPECTED_FIELDS` — the `SearchMatch` golden is **extended** to
+  six fields and stays one whole-list equality (L12). Never weakened to a subset check.
+- `tests/domain/test_assembly.py::test_v3_still_reads_the_body_of_an_unparseable_document` — pinned
+  the behaviour R37 reverses. Re-aimed at the corrected behaviour and renamed; it is now the named
+  assertion for mutation (b).
+- `tests/mcp/test_calls.py::test_search_artifacts_finds_a_phrase_and_reports_what_it_skipped` —
+  gains two assertions that the neighbour keys cross a real JSON-RPC frame present-and-null.
+
+## Mutation checks — assertions named in advance
+
+**(a) Return `None` for `line_before` and `line_after` on every match.** Must fail:
+`test_a_match_carries_the_lines_either_side_of_it_as_values`, which names the neighbouring lines as
+literals. Must **stay green**: `test_a_match_in_a_single_line_file_has_no_neighbour_on_either_side`,
+where both are legitimately `None`. Without the pair, "always `None`" and "correct at a file edge"
+are the same green.
+
+**(b) Remove the `parse_error` gate from `_check_v3`.** Must fail:
+`test_v10_suppresses_v3_because_a_failed_parse_declares_no_successor`, which asserts an artifact
+with unparseable frontmatter and a citing body reports **exactly one** finding. Must **stay green**:
+`test_the_v3_suppression_is_conditional_on_the_parse_having_failed`, the same artifact and the same
+body with the block parsing, which still reports V3 — and
+`test_a_missing_reference_on_a_live_artifact_is_a_v3_error` beside it.
+
+**L35 — the file under mutation is named here while it is mutated.** Each file is copied to the
+scratchpad before the edit and restored from that copy, not from memory of it. Nothing is mutated
+as this line is written.
+
+## Verification
+
+The gate, whole, from the repository root, never path-scoped (**L2**, **L9**):
+
+```
+export PATH="$HOME/.local/bin:$PATH"
+uv run ruff format --check . && uv run ruff check . && uv run mypy src tests && uv run lint-imports && uv run pytest
+```
+
+Mutation runs are kept to a few suites (**L36**: the whole suite under a mutation is what was
+OOM-killed on T-10, and a bare exit 137 is memory, not a red test). Plus a SHA-256 manifest over
+`~/.claude` taken before the first command and diffed after — content, never mtime (**L37**).
+
+**The real library will not change its output.** Its two redirect stubs parse cleanly, so their
+seven V3 findings are the exemption working as charter §8 intends, and `frontend-system-pattern`
+— the one artifact whose frontmatter does not parse — cites no reference path it does not hold, so
+it already reports exactly one finding. R37 closes a reachable interaction that `~/.claude` does
+not currently exhibit; the proof is a fixture, not the install target, and nothing is tuned toward
+a number.
+
+## Out of scope
+
+No contract but C-5 and C-7, and those only as R36 describes. No change to the CLI's human search
+rendering (`--json` carries the new fields already, and the columnar format is presentation, R7).
+No new validation rule. No dependency change, no `pyproject.toml` or `uv.lock` edit. No commit.

@@ -47,7 +47,7 @@ class FindingPayload(Payload):
     """One validation finding. Contract C-3 on the wire.
 
     Attributes:
-        code: the rule that fired, `V1` to `V9`. **This is the branchable value.**
+        code: the rule that fired, `V1` to `V10`. **This is the branchable value.**
         severity: `error` or `warning`. Ruling R13 — it comes from the register, never from a
             caller, so it cannot disagree with `code`.
         message: a human sentence. Not contract.
@@ -261,21 +261,29 @@ class SkippedFile(Payload):
 
 
 class SearchMatch(Payload):
-    """One line matching the query.
+    """One line matching the query, with the line either side of it. Ruling R36.
+
+    **`None` and the empty string are different answers.** `None` means there is no line there —
+    the match sits on the first or the last line of the file — while `""` means the line is there
+    and is blank. A consumer renders the two differently, so a file edge is never reported as a
+    blank line and a blank line is never reported as the end of the file.
 
     Attributes:
         artifact_id: the artifact the match is in.
         path: the file, relative to the artifact root.
         line_number: 1-based, matching what an editor shows.
-        line_text: the whole matching line, with trailing whitespace stripped. This is the context
-            feature F-3 asks for; it is the line and not a byte window so that a consumer can show
-            it without re-reading the file.
+        line_text: the whole matching line, with trailing whitespace stripped. The line rather
+            than a byte window, so a consumer can show it without re-reading the file.
+        line_before: the line above the match, or `None` when the match is on line 1.
+        line_after: the line below the match, or `None` when the match is on the last line.
     """
 
     artifact_id: str
     path: str
     line_number: int
     line_text: str
+    line_before: str | None
+    line_after: str | None
 
 
 class SearchResults(Payload):

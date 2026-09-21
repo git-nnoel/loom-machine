@@ -79,7 +79,14 @@ EXPECTED_FIELDS: dict[type[BaseModel], list[str]] = {
     ],
     ArtifactListPayload: ["artifacts", "total", "sort"],
     FileContent: ["artifact_id", "path", "sha256", "size", "is_text", "text"],
-    SearchMatch: ["artifact_id", "path", "line_number", "line_text"],
+    SearchMatch: [
+        "artifact_id",
+        "path",
+        "line_number",
+        "line_text",
+        "line_before",
+        "line_after",
+    ],
     SkippedFile: ["artifact_id", "path", "reason", "message"],
     SearchResults: ["query", "matches", "truncated", "limit", "skipped"],
     ArtifactValidation: ["id", "path", "is_valid", "findings"],
@@ -177,6 +184,34 @@ def test_payloads_are_frozen() -> None:
         assert "frozen" in str(error).lower()
     else:  # pragma: no cover - reached only if the models stop being frozen
         raise AssertionError("FindingPayload accepted a mutation")
+
+
+def test_a_search_match_reports_a_file_edge_as_null_and_a_blank_line_as_empty() -> None:
+    """Ruling R36's whole point, on the wire. `None` and `""` are different answers, and both are
+    *present*: a consumer that had to tell "absent" from "null" would need two code paths where
+    the domain has one (this module's docstring), and one that saw `""` for a file edge would
+    render a blank line where there is no line at all.
+    """
+    edge = SearchMatch(
+        artifact_id="skill/one",
+        path="SKILL.md",
+        line_number=1,
+        line_text="the only line",
+        line_before=None,
+        line_after=None,
+    )
+    blank = edge.model_copy(update={"line_before": "", "line_after": ""})
+
+    assert json.loads(edge.model_dump_json()) == {
+        "artifact_id": "skill/one",
+        "path": "SKILL.md",
+        "line_number": 1,
+        "line_text": "the only line",
+        "line_before": None,
+        "line_after": None,
+    }
+    assert json.loads(blank.model_dump_json())["line_before"] == ""
+    assert json.loads(blank.model_dump_json())["line_after"] == ""
 
 
 def test_the_fake_satisfies_contract_c_4() -> None:

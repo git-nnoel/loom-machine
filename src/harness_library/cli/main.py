@@ -66,6 +66,7 @@ from harness_library.application.read import (
     export_collection,
     get_collection,
     list_artifacts,
+    list_backups,
     list_collections,
     search_artifacts,
     validate_library,
@@ -522,19 +523,57 @@ def rollback_command(
     """
     with _run(as_json):
         session = open_target(target)
+        manifest = _installed(session, "roll back")
+        chosen = _backup_id(session, manifest, backup_id)
+        if chosen is None:
+            # Ruling R112. Not a failure, so not raised: the payload goes to stdout naming no
+            # backup and the command exits 0, which is `INCOMPLETE`'s shape and `hl clean`'s.
+            _emit(
+                payloads.RollbackPayload.of_nothing(target_path=session.target_path),
+                as_json,
+                rendering.render_rollback,
+            )
+            return
         result = rollback_install(
             session.target,
             session.backups,
             session.manifests,
             lock=session.lock,
-            manifest=_installed(session, "roll back"),
-            backup_id=_backup_id(session, backup_id),
+            manifest=manifest,
+            backup_id=chosen,
             installed_at=_now(),
         )
         _emit(
             payloads.RollbackPayload.of(result, target_path=session.target_path),
             as_json,
             rendering.render_rollback,
+        )
+
+
+@app.command("backups")
+def backups_command(
+    ctx: typer.Context,
+    target: TargetOption = None,
+    as_json: JsonOption = False,
+) -> None:
+    """List this target's rollback points, with the ids `hl rollback` takes. Ruling R113.
+
+    A backup is taken before anything is written, removed or restored, and kept — nothing here
+    deletes one. `hl rollback` with no id puts back the last row; naming one puts back that one,
+    which is the difference between undoing the last install and undoing three.
+
+    Reads only, so it takes **no lock** (R85) and needs no manifest: a target whose record was
+    deleted still has its backups, and that is exactly when a user comes looking for them.
+    """
+    with _run(as_json):
+        session = open_target(target)
+        _emit(
+            payloads.BackupsPayload.of(
+                list_backups(session.backups, target_path=session.target_path),
+                target_path=session.target_path,
+            ),
+            as_json,
+            rendering.render_backups,
         )
 
 
@@ -820,26 +859,41 @@ def _installed(session: TargetSession, operation: str) -> Manifest:
     return session.manifest
 
 
-def _backup_id(session: TargetSession, requested: str | None) -> str:
-    """Which backup to put back: the one named, or this target's most recent.
+def _backup_id(session: TargetSession, manifest: Manifest, requested: str | None) -> str | None:
+    """Which backup to put back: the one named, this target's most recent, or **none at all**.
 
-    `BackupStore.list()` returns **every** target's backups (R43) oldest first, so the filter is
-    on `target_path` and not on position — a user who installs into two directories must not roll
-    one back over the other.
+    `list_backups` is the filter and it lives in `application/read/` (R113): `BackupStore.list()`
+    returns **every** target's backups (R43), a user who installs into two directories must not
+    roll one back over the other, and `hl backups` needs the same definition of "this target's"
+    that this choice uses.
+
+    **Ruling R112 — "there is nothing to put back" is a fact, and the record is what tells it
+    from a failure.** A run that wrote nothing takes no backup: a `MANIFEST_REPAIR`-only install
+    is the common case, and answering `hl rollback` after one with `BACKUP_FAILED` told a script
+    *the backup could not be taken* about a run that needed none. So the two are separated by
+    `Manifest.backup_id`, which is C-11's record of the backup the last run took:
+
+    * no backup here, and the record claims none — nothing happened, so there is nothing to
+      undo. `None`, and the caller reports it and exits 0.
+    * no backup here, and the record **names one** — that backup is missing, which is a failure
+      and keeps `BACKUP_FAILED`. This branch is why the predicate is not simply "the store is
+      empty": a backup written by an older build is one this reader declines to offer (see
+      `infrastructure/backup.py`'s `SCHEMA_VERSION`), and reporting *nothing to put back* for a
+      rollback point still sitting on the user's disk would be the tool lying about its own undo.
 
     Raises:
-        BackupNotFoundError: no backup of this target exists, so there is nothing to put back. A
-            named id that does not exist is not checked here: the store decides that, and it also
-            decides that a directory with no readable record is not a backup at all.
+        BackupNotFoundError: the record names a backup this target does not have. A named id
+            that does not exist is not checked here at all: the store decides that, and it also
+            decides that a directory with no readable record is not a backup.
     """
     if requested is not None:
         return requested
-    mine = [
-        record for record in session.backups.list() if record.target_path == session.target_path
-    ]
-    if not mine:
-        raise BackupNotFoundError("(most recent)")
-    return mine[-1].backup_id
+    mine = list_backups(session.backups, target_path=session.target_path)
+    if mine:
+        return mine[-1].backup_id
+    if manifest.backup_id is None:
+        return None
+    raise BackupNotFoundError(manifest.backup_id)
 
 
 def _write_archive(destination: Path, data: bytes) -> None:

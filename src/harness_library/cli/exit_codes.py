@@ -144,6 +144,24 @@ rather than mislabel it as one of the codes that already existed, and said so in
 without a status a mistyped environment variable reaches the user as a traceback.
 """
 
+STATE_UNWRITABLE = 15
+"""The state directory would not take the lock, so this run took none. C-14, ruling R111.
+
+**Nothing happened**, and unlike `MANIFEST_UNWRITABLE`'s the guarantee costs no argument: the
+lock is taken before the backup, before the record and before the first file, so a failure to
+take it is a failure before anything.
+
+Its own number because the three codes it would otherwise fold into each say something false.
+`LOCK_HELD` sends a user to wait for a run that is not there. `MANIFEST_UNWRITABLE` names the
+manifest, and the sentinel is not the manifest — a script reading 11 would believe a record had
+been attempted. `RECORD_STALE` is the exact opposite: the work done and the record behind.
+
+Until T-24 this condition had no status at all: `infrastructure/lock.py` contained no
+`except OSError`, so an unwritable `~/.local/state` reached the user as a traceback and exit 1
+on `install`, `uninstall`, `rollback` and `clean --remove` alike. The remedy is the state
+directory — a permission, a mount, a full disk — and the run is safe to repeat afterwards.
+"""
+
 EXIT_STATUS: dict[ErrorCode, int] = {
     ErrorCode.LIBRARY_YAML_INVALID: LIBRARY_UNUSABLE,
     ErrorCode.ARTIFACT_NOT_FOUND: NOT_FOUND,
@@ -153,12 +171,12 @@ EXIT_STATUS: dict[ErrorCode, int] = {
     ErrorCode.FILE_NOT_TEXT: BAD_REQUEST,
     ErrorCode.INVALID_QUERY: BAD_REQUEST,
     ErrorCode.NOT_A_LIBRARY: LIBRARY_UNUSABLE,
-    # The install path. One status each, unlike the read path's groups: these nine call for
-    # nine different actions — decide, fix the target, delete the manifest, fix the backup
+    # The install path. One status each, unlike the read path's groups: these ten call for
+    # ten different actions — decide, fix the target, delete the manifest, fix the backup
     # directory, wait, fix the state directory, fix the unreadable path, run the command again,
     # set $EDITOR — so grouping them would throw away the only thing a script wants from them.
-    # The eighth is T-19's (R90) and the ninth is T-22's (R102); every one of the nine now has
-    # an emitter.
+    # The eighth is T-19's (R90), the ninth is T-22's (R102) and the tenth is T-24's (R111) —
+    # fix the state directory. Every one of the ten has an emitter.
     ErrorCode.INCOMPLETE: INCOMPLETE,
     ErrorCode.TARGET_UNWRITABLE: TARGET_UNWRITABLE,
     ErrorCode.MANIFEST_UNREADABLE: MANIFEST_UNREADABLE,
@@ -168,6 +186,7 @@ EXIT_STATUS: dict[ErrorCode, int] = {
     ErrorCode.TARGET_UNREADABLE: TARGET_UNREADABLE,
     ErrorCode.RECORD_STALE: RECORD_STALE,
     ErrorCode.EDITOR_FAILED: EDITOR_FAILED,
+    ErrorCode.STATE_UNWRITABLE: STATE_UNWRITABLE,
 }
 """One entry per `ErrorCode`. A member without one fails `tests/cli/test_exit_codes.py`."""
 
@@ -190,6 +209,7 @@ __all__ = [
     "NOT_FOUND",
     "OK",
     "RECORD_STALE",
+    "STATE_UNWRITABLE",
     "TARGET_UNREADABLE",
     "TARGET_UNWRITABLE",
     "USAGE",

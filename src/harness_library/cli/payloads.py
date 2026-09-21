@@ -23,6 +23,8 @@ predicate, disagreeing with the first exactly where it mattered.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from harness_library.application.read import ExportedCollection, Payload
 from harness_library.application.write import (
     ApplyResult,
@@ -33,6 +35,7 @@ from harness_library.application.write import (
     RollbackResult,
     UninstallResult,
 )
+from harness_library.domain.backup import BackupRecord
 from harness_library.domain.install_plan import (
     BLOCKING_VERDICTS,
     InstallPlan,
@@ -295,13 +298,18 @@ class RollbackPayload(Payload):
 
     Attributes:
         target_path: the directory restored.
-        backup_id: the backup that was put back.
+        backup_id: the backup that was put back, or **null when there was nothing to put back**
+            (ruling R112). A run that wrote nothing takes no backup — a `MANIFEST_REPAIR`-only
+            install is the ordinary case — and rolling one back is a fact about this target
+            rather than a failure of this command. The nullability is what a script branches on:
+            `restored` and `removed` are empty in that case, and so they are for a rollback that
+            genuinely moved nothing.
         restored: every path whose bytes changed or that reappeared, in path order.
         removed: every path the restore took away — what a first install created, undone (R79).
     """
 
     target_path: str
-    backup_id: str
+    backup_id: str | None = None
     restored: tuple[str, ...] = ()
     removed: tuple[str, ...] = ()
 
@@ -312,6 +320,72 @@ class RollbackPayload(Payload):
             backup_id=result.backup_id,
             restored=result.restored,
             removed=result.removed,
+        )
+
+    @classmethod
+    def of_nothing(cls, *, target_path: str) -> RollbackPayload:
+        """No backup of this target exists and the record claims none. **Ruling R112.**
+
+        Not built from a `RollbackResult` because there was no rollback: no lock was taken, no
+        restore ran and the record was not rewritten. The payload says so by naming no backup.
+        """
+        return cls(target_path=target_path, backup_id=None)
+
+
+class BackupSummary(Payload):
+    """One backup, as a listing shows it. Contract C-13's record, projected. **Ruling R113.**
+
+    Attributes:
+        backup_id: **what `hl rollback` takes as its argument.** The whole reason this listing
+            exists: the id is opaque, the store chooses its spelling, and before R113 a user had
+            no way to discover one but to list the state directory by hand.
+        created_at: when it was taken, ISO-8601 and timezone-aware, so two backups order the
+            same way here as they do in the store.
+        described: how many paths it would act on — restored, or removed again.
+        kept: how many of those it holds bytes for. The rest were **absent** when it was taken,
+            and restoring it takes them away again (R79), which is what makes a first install
+            undoable and is not obvious from a count of paths alone.
+        links: how many were symlinks, recorded by destination and recreated as links (R94).
+    """
+
+    backup_id: str
+    created_at: str
+    described: int
+    kept: int
+    links: int
+
+    @classmethod
+    def of(cls, record: BackupRecord) -> BackupSummary:
+        return cls(
+            backup_id=record.backup_id,
+            created_at=record.created_at.isoformat(),
+            described=len(record.paths),
+            kept=len(record.kept),
+            links=len(record.links),
+        )
+
+
+class BackupsPayload(Payload):
+    """Every rollback point one target has, oldest first. **Ruling R113.**
+
+    Attributes:
+        target_path: the target these backups are of. Every other target's are filtered out
+            (R43) — one state root holds them all, and rolling one target back over another is
+            the mistake the filter exists to prevent.
+        backups: the records, **oldest first**, so the last row is what `hl rollback` with no id
+            would choose. Empty is a value and not a failure: a target nothing was ever backed
+            up from has no rollback point, which is the same fact R112 reports from the other
+            command.
+    """
+
+    target_path: str
+    backups: tuple[BackupSummary, ...] = ()
+
+    @classmethod
+    def of(cls, records: Sequence[BackupRecord], *, target_path: str) -> BackupsPayload:
+        return cls(
+            target_path=target_path,
+            backups=tuple(BackupSummary.of(record) for record in records),
         )
 
 
@@ -416,6 +490,8 @@ class ExportPayload(Payload):
 
 
 __all__ = [
+    "BackupSummary",
+    "BackupsPayload",
     "CleanPayload",
     "ExportPayload",
     "InstallPayload",

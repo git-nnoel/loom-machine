@@ -32,6 +32,7 @@ from harness_library.application.read import (
     ValidationReport,
 )
 from harness_library.cli.payloads import (
+    BackupsPayload,
     CleanPayload,
     ExportPayload,
     InstallPayload,
@@ -321,12 +322,57 @@ def render_uninstall(payload: UninstallPayload, stream: TextIO) -> None:
 
 
 def render_rollback(payload: RollbackPayload, stream: TextIO) -> None:
-    """What one rollback put back. Feature F-11."""
+    """What one rollback put back. Feature F-11, and ruling R112's other outcome.
+
+    **A rollback with nothing to put back is reported here, not raised.** It reaches this
+    function as a payload naming no backup, and it leaves as a sentence on stdout and exit 0 —
+    the shape `INCOMPLETE` already uses for "a run that did not fail and did not do everything".
+    """
+    if payload.backup_id is None:
+        stream.write(f"nothing to roll back in {payload.target_path}\n")
+        stream.write(
+            "\nNo backup of this target exists and the record claims none: the last run wrote "
+            "nothing, so there is nothing to undo. A run that writes takes a backup first.\n"
+        )
+        return
     stream.write(f"backup {payload.backup_id}\n")
     _field("target", payload.target_path, stream)
     _paths("restored", payload.restored, stream)
     _paths("removed again", payload.removed, stream)
     stream.write(f"\n{len(payload.restored)} file(s) restored, {len(payload.removed)} removed.\n")
+
+
+def render_backups(payload: BackupsPayload, stream: TextIO) -> None:
+    """Every rollback point this target has. Ruling R113.
+
+    **The id column is the whole point** — it is what `hl rollback` takes — so it is first, and
+    it is printed verbatim rather than abbreviated: a truncated id is not an id.
+    """
+    stream.write(f"backups of {payload.target_path}\n")
+    if not payload.backups:
+        stream.write(
+            "\nNo backups. One is taken before anything is written, removed or restored; a run "
+            "that changed no file took none.\n"
+        )
+        return
+    _table(
+        ("BACKUP ID", "TAKEN", "PATHS", "BYTES", "LINKS"),
+        (
+            (
+                backup.backup_id,
+                backup.created_at,
+                str(backup.described),
+                str(backup.kept),
+                str(backup.links),
+            )
+            for backup in payload.backups
+        ),
+        stream,
+    )
+    stream.write(
+        f"\n{len(payload.backups)} backup(s), oldest first. Put one back with "
+        f"hl rollback {payload.backups[-1].backup_id} — or with no id for the most recent.\n"
+    )
 
 
 def render_clean(payload: CleanPayload, stream: TextIO) -> None:

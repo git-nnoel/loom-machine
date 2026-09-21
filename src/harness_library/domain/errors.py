@@ -279,6 +279,28 @@ class ErrorCode(StrEnum):
     this program rejected — `$EDITOR` is not a flag and the shell did not reject it.
     """
 
+    STATE_UNWRITABLE = "STATE_UNWRITABLE"
+    """The state directory could not be written, so no lock was taken. **Ruling R111**, exit 15.
+
+    **Nothing happened, and that guarantee is free rather than argued.** Charter §12 takes the
+    advisory lock before the first of a write run's three steps, so a failure to take it is a
+    failure before the backup, before the record and before the first byte.
+
+    T-23 found this as the one disk step of a write run with no code at all: `install`,
+    `uninstall`, `rollback` and `clean --remove` each answered an unwritable `~/.local/state`
+    with a raw traceback and exit 1 — outside C-14's table, so a script could not tell it from
+    anything. A full disk, a read-only mount and a state root one `sudo` run left owned by root
+    all reach it.
+
+    Its own code because no existing one is true. `LOCK_HELD` says another writer holds the lock
+    and would send a user to wait for a run that does not exist. `MANIFEST_UNWRITABLE` promises
+    something specifically about **the manifest** — R63's ordering is what makes that promise
+    meaningful — and the sentinel is not the manifest, so answering with it would claim a record
+    was attempted when nothing was. `RECORD_STALE` is its opposite: work done, record behind.
+
+    The remedy is the state directory itself, and the run is safe to repeat once it is fixed.
+    """
+
 
 class HarnessLibraryError(Exception):
     """Base of every error this project raises deliberately at a user-facing boundary.
@@ -633,6 +655,40 @@ class LockHeldError(HarnessLibraryError):
         super().__init__(
             f"{path} is held by {holder}: another install is writing to this target, so this run "
             "wrote nothing. Wait for it to finish and run again"
+        )
+
+
+class StateUnwritableError(HarnessLibraryError):
+    """The state directory would not take the advisory lock, so this run took none and did nothing.
+
+    **Ruling R111**, T-24. The sibling of `LockHeldError` over a different code: both are the
+    lock refusing to hand over a target and both guarantee that nothing was written, and they
+    differ in what a user must do. A held lock is somebody else's run and the remedy is to wait;
+    this is the state directory itself and the remedy is a permission, a mount or a disk.
+
+    Raised by the lock rather than translated in `application/`, which is the opposite of the
+    direction ruling R24 sets for `BackupStore` and `TargetRepository`, and deliberately.
+    `WriteLock.hold()` wraps a whole use-case body, so an `except OSError` around it in the
+    use case would also catch the backup's and the target's — labelling a half-written target
+    "nothing was written", which is the one thing this code exists to be able to say. The
+    precedent is in the same class: `FilesystemWriteLock` already raises `LockHeldError`.
+
+    Attributes:
+        code: always `ErrorCode.STATE_UNWRITABLE`.
+        path: the sentinel that could not be created, as text. It names the directory a user has
+            to fix, and it is the same path `LockHeldError` prints for the other outcome.
+        reason: the human sentence, usually the underlying `OSError`'s. Not contract.
+    """
+
+    code = ErrorCode.STATE_UNWRITABLE
+
+    def __init__(self, path: str, reason: str) -> None:
+        self.path = path
+        self.reason = reason
+        super().__init__(
+            f"{path} could not be created, so this run took no lock and wrote nothing: {reason}. "
+            "The lock is taken before the backup, the record and the first file, so the target "
+            "is exactly as it was. Fix the state directory and run the same command again"
         )
 
 

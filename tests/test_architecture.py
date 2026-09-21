@@ -132,10 +132,17 @@ READ_USE_CASES = (
     "diff_against_target",
     "export_collection",
     "list_artifacts",
+    "list_backups",
     "search_artifacts",
     "validate_library",
 )
 """A sample of `application/read/`'s surface, including T-15's drift report and T-21's export.
+
+**`list_backups` is here because it is the one read use case that touches the state root** (R113,
+T-24). Everything else on this side reads a library or a target; this one reads where the undo
+lives, which is the neighbourhood every write use case writes in, and a listing that drifted into
+`application/write/` would stop `mcp/` reaching it for no reason and would put a read behind the
+`mcp-is-read-only` contract as though it mutated something.
 
 `diff_against_target` in particular must stay on the read side: it is what `mcp/` reaches, and a
 read use case that drifted into `write/` would break the contract loudly — which is the opposite

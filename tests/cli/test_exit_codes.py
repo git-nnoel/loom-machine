@@ -20,6 +20,7 @@ from harness_library.cli.exit_codes import (
     NOT_FOUND,
     OK,
     RECORD_STALE,
+    STATE_UNWRITABLE,
     TARGET_UNREADABLE,
     TARGET_UNWRITABLE,
     USAGE,
@@ -360,3 +361,78 @@ def test_editor_failed_has_a_class_that_carries_it() -> None:
 
     assert ErrorCode.INCOMPLETE not in carried
     assert ErrorCode.EDITOR_FAILED in carried
+
+
+# -- Contract C-14's tenth install status (T-24, ruling R111) ------------------------------------
+#
+# Added, not altered, as in T-13, T-16, T-17, T-19 and T-22. Every test above keeps the sets and
+# the numbers it already asserted. Like `RECORD_STALE` and `EDITOR_FAILED`, this one arrives
+# **with** its emitter: `FilesystemWriteLock._acquire` translates the `OSError` it had been
+# letting out since T-17 — the one disk step of a write run that had no code, so an unwritable
+# `~/.local/state` reached the user as a traceback and exit 1 on all four write commands.
+
+
+def test_the_state_unwritable_status_is_the_number_r111_fixed() -> None:
+    """The integer itself, because a script branches on it. R111 fixes 15."""
+    assert STATE_UNWRITABLE == 15
+    assert exit_status_for(ErrorCode.STATE_UNWRITABLE) == STATE_UNWRITABLE
+
+
+def test_a_state_root_that_will_not_take_the_lock_is_told_apart_from_a_lock_that_is_held() -> None:
+    """**The distinction the code exists for, and it is about the remedy.**
+
+    Both are the lock refusing to hand over a target and both mean nothing was written. One is
+    another run, and the answer is to wait; the other is the state directory itself, and waiting
+    for a run that does not exist will not make it writable. A script told the wrong one of the
+    two retries for ever.
+    """
+    assert STATE_UNWRITABLE != LOCK_HELD
+    assert exit_status_for(ErrorCode.STATE_UNWRITABLE) != exit_status_for(ErrorCode.LOCK_HELD)
+
+
+def test_a_state_root_that_will_not_take_the_lock_is_not_the_manifest_or_a_stale_record() -> None:
+    """The other two codes that name the state directory, and neither is true here.
+
+    `MANIFEST_UNWRITABLE` promises something specifically about the **manifest**, which R63's
+    ordering is what makes meaningful — the sentinel is not the manifest, and answering with 11
+    would claim a record had been attempted when nothing had. `RECORD_STALE` is the opposite
+    again: work done, record behind. The lock precedes all of it.
+    """
+    assert STATE_UNWRITABLE not in {MANIFEST_UNWRITABLE, RECORD_STALE}
+
+
+def test_the_ten_install_statuses_are_ten_distinct_numbers() -> None:
+    """The ten together, as one set. A tenth code reusing a ninth's number would make a script
+    that already branches on 6..14 read this one as something it is not."""
+    install = {
+        ErrorCode.INCOMPLETE,
+        ErrorCode.TARGET_UNWRITABLE,
+        ErrorCode.MANIFEST_UNREADABLE,
+        ErrorCode.BACKUP_FAILED,
+        ErrorCode.LOCK_HELD,
+        ErrorCode.MANIFEST_UNWRITABLE,
+        ErrorCode.TARGET_UNREADABLE,
+        ErrorCode.RECORD_STALE,
+        ErrorCode.EDITOR_FAILED,
+        ErrorCode.STATE_UNWRITABLE,
+    }
+
+    assert len({exit_status_for(code) for code in install}) == len(install) == 10
+
+
+def test_state_unwritable_has_a_class_that_carries_it() -> None:
+    """Charter §9 allows a code before its class and forbids the reverse; R111 named both.
+
+    The positive control is the sibling assertion, unchanged from the three tests above: the
+    walk really does find a code with no class, so "carried" cannot mean "everything looks
+    carried". `INCOMPLETE` is that code and `errors.py` argues it may never get one — it is not
+    a failure and is never raised.
+    """
+    carried = {
+        subclass.code
+        for subclass in HarnessLibraryError.__subclasses__()
+        if getattr(subclass, "code", None) is not None
+    }
+
+    assert ErrorCode.INCOMPLETE not in carried
+    assert ErrorCode.STATE_UNWRITABLE in carried

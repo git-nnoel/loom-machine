@@ -2064,3 +2064,128 @@ uv run ruff format --check . && uv run ruff check . && uv run mypy src tests && 
 
 Whole, every time (L2), exit code read without a pipe (L44). **1038 passed, 3 contracts kept,
 exit 0** — the base commit's number, because this task changed no code.
+
+---
+
+# Backend task plan — T-24, the corrections acceptance found
+
+Initiative 02 · phase 1 · base commit `0e4eec3` · owner `backend-developer-specialist`.
+Four corrections, one of them a security regression on the recovery path. Amends **C-13** (a
+per-path mode in the backup record, **R110**) and **C-14** (`STATE_UNWRITABLE = 15`, **R111**).
+Rulings **R110**, **R111**, **R112**, **R113** are what this task exists for; **R6**, **R24**,
+**R43**, **R56**, **R79**, **R82**, **R85**, **R86**, **R92**, **R94** bind and none of them
+changes.
+
+## 1. Where the code goes
+
+| File | Why |
+|---|---|
+| `domain/backup.py` | **C-13 amendment (R110).** `BackupRecord.modes: Mapping[str, int]`, keyed **within `kept` and total over it**. A mode is an `int`, so `domain/` needs no stdlib for it (L13/L18) |
+| `infrastructure/target.py` | two **concrete** members, `read_mode` and `write_with_mode`. **Not C-12** — the dispatch amends C-13 only, nothing that plans or applies an install needs a mode, and no fake has to grow one. The same shape `read_link`/`write_link` shipped in T-20 before R97 |
+| `infrastructure/backup.py` | `create` records each kept path's mode; `restore` puts it back; `SCHEMA_VERSION` 3 → 4; the saved copy under `files/` is written `0600` |
+| `domain/errors.py` | `ErrorCode.STATE_UNWRITABLE` and `StateUnwritableError(path, reason)` |
+| `cli/exit_codes.py` | `STATE_UNWRITABLE = 15` and its `EXIT_STATUS` row — one edit, because I-8 makes the table total |
+| `infrastructure/lock.py` | the translation. **One `except OSError`**, wrapping the whole acquire |
+| `application/read/backups.py` | new. `list_backups(backups, *, target_path)` — this target's backups, oldest first. Read side: it takes no lock (R85) and writes nothing |
+| `cli/payloads.py`, `cli/rendering.py`, `cli/main.py` | `hl backups` (R113), and `hl rollback`'s "nothing to put back" (R112) |
+
+## 2. D-2 — the mode is content, and it is lost at backup time
+
+The root cause is `FilesystemBackupStore.create`, not `restore`: the copy goes through
+`FilesystemTargetRepository.write`, which applies R56's `0644`, and `BackupRecord` has no mode
+field, so **by restore time the information does not exist anywhere**. Three changes, in order:
+
+1. `create` reads the source mode through the new `read_mode` and records it in
+   `BackupRecord.modes`, one entry per path in `kept`.
+2. `restore` writes through `write_with_mode(path, data, record.modes[path])`.
+3. **R56 is untouched on the install path.** `write` still ends at `0644` and `_make_parents`
+   still ends at `0755`; `write_with_mode` is a second member and not a parameter on the first,
+   so "a restore is not an install" is a fact about which function a caller reaches for rather
+   than about a flag it remembered to pass.
+
+`modes` is **total over `kept`**, enforced in `__post_init__`. A kept path is a regular file and
+always has a mode; making the field optional would leave "no mode recorded" restoring at `0644`,
+which is the defect this amendment closes. A link is excluded — `modes` and `links` are disjoint
+because `kept` and `links` already are — because `chmod` follows a symlink and `lchmod` is not
+available on Linux: a link has no mode of its own to put back, and R94 already says its whole
+content is its destination.
+
+**The saved copy is written `0600`** (`BACKUP_FILE_MODE`), which goes one step past the literal
+ruling and is flagged for the lead. A `clean --foreign --remove` of the real harness copies 149
+mode-`0600` files into `<state_root>/backups/<id>/files/`, and at `0644` the backup *itself*
+exposes what the restore was accused of exposing. `0600` rather than the source's own mode
+because the record is the authority for the restore and a source mode of `0000` or `0200` would
+make the copy unreadable by the restore that has to read it back.
+
+**A pre-amendment backup is not offered.** `SCHEMA_VERSION` goes 3 → 4 and `_read_record` turns a
+version-3 record away, exactly as R92 did for 1 and R95 for 2. Reading one with `modes = {}`
+would restore every path at `0644` — the defect — and inferring a mode is inventing one.
+
+## 3. D-1 — `STATE_UNWRITABLE = 15`, translated in one place
+
+`_acquire` becomes `_take`, unchanged, and the new `_acquire` is the single translation:
+
+```python
+try:
+    return self._take()
+except OSError as error:
+    raise StateUnwritableError(str(self._path), str(error)) from error
+```
+
+One clause and not three, because the rule stated three times is a rule a mutation cannot break
+(L60). `LockHeldError` is not an `OSError`, so the refusal still passes through untouched and the
+ordinary lock-held test is the control. `_holder` already swallows its own `OSError`, so every
+`OSError` escaping `_take` is a state-root I/O fault and nothing else.
+
+Translated **here** and not in `application/`, against R24's usual direction, because `hold()` is
+a context manager wrapping the whole use-case body: a `try` in the use case would catch the
+body's `OSError`s too and label a failed backup or a failed target write "nothing was written".
+The precedent is in the same class — `FilesystemWriteLock` already raises `LockHeldError`.
+
+`STATE_UNWRITABLE` and not `LOCK_HELD` (which would be false) or `MANIFEST_UNWRITABLE` (which
+promises something about the manifest specifically). Nothing is written when it fires — the lock
+precedes the backup — so the message says so.
+
+## 4. R112 — "nothing to put back" is a fact, not a failure
+
+The predicate is **not** "the store has no backup". It is "the store has no backup of this target
+**and** the record does not claim one":
+
+* no backup, and `manifest.backup_id is None` → the last run took none, so there is nothing to
+  undo. Exit `OK`, `RollbackPayload.backup_id` null, and the renderer says so.
+* no backup, and the manifest names one → that backup is *missing*. Still `BackupNotFoundError`,
+  now naming the id the record claims rather than `"(most recent)"`.
+* an id passed on the command line that names nothing → unchanged; the store decides.
+
+The second branch matters more than it looks: without it, a backup this build declines to read —
+a schema-3 one, §2 — would be reported as "there is nothing to put back", which is the tool
+lying about a rollback point the user still has on disk.
+
+## 5. R113 — `hl backups`
+
+`list_backups` in `application/read/`, filtering on `BackupRecord.target_path`, because
+`BackupStore.list()` returns **every** target's backups (R43) and `hl rollback`'s own
+`_backup_id` already needed that filter. One definition of "this target's backups", reached by
+both, rather than the two spellings that were about to exist. Listing only — retention and
+deletion are out of scope.
+
+## 6. Mutation checks (L35 — read this if the session was interrupted)
+
+| Mutation | Must fail | Must stay green |
+|---|---|---|
+| restore applies `0644` to every path (the pre-fix behaviour) | the restored-mode test, **as an octal integer**, over `0600`/`0644`/`0700` | the installed-file test: `0644` files and `0755` directories, R56 untouched |
+| the lock swallows `OSError` and returns as if it acquired | the unwritable-state-root test: exit `STATE_UNWRITABLE` and the target's hash set unchanged | the ordinary lock-held test, still exit `LOCK_HELD` |
+
+Neither control can be reddened by the other's mutation: the first pair is restore against
+install, two different call sites in two different modules, and the second pair is `OSError`
+against `LockHeldError`, which is not one.
+
+## 7. Gate
+
+```
+export PATH="$HOME/.local/bin:$PATH"
+uv run ruff format --check . && uv run ruff check . && uv run mypy src tests && uv run lint-imports && uv run pytest
+```
+
+Whole, every time (L2), exit code read without a pipe (L44). Baseline **1038 passed**; the count
+must go up.

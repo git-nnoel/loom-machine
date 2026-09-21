@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import stat
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -113,6 +114,62 @@ def test_a_clean_can_be_rolled_back(runner: CliRunner, fixture_target: Path) -> 
 
     assert result.exit_code == 0
     assert digests(fixture_target) == before
+
+
+def test_a_clean_and_rollback_puts_the_modes_back_too(
+    runner: CliRunner, fixture_target: Path
+) -> None:
+    """**Acceptance's D-2 repro, as a test. Ruling R110.**
+
+    `clean --foreign --remove` followed by `hl rollback` put every path's *content* back exactly
+    and its *mode* back never: on the real harness, 149 private files made world-readable and 56
+    executables disarmed, by the recovery path. The command a user reaches for when they think
+    better of a deletion left them worse off than the deletion did.
+
+    **The test above cannot see it, and that is the point.** `digests` compares content, so a
+    target whose modes have all been rewritten to `0644` is byte-identical by its measure and
+    the whole suite stays green — which is exactly how this survived eleven tasks and was found
+    by an acceptance run looking at `stat` instead of at hashes. So this asserts the octal
+    integer, and the pair `0600`/`0700` is chosen because those are what a credentials document
+    and a hook script carry.
+    """
+    private = fixture_target / SETTINGS
+    executable = fixture_target / "bin" / "hook.sh"
+    executable.parent.mkdir(parents=True, exist_ok=True)
+    executable.write_text("#!/bin/sh\necho hook\n", encoding="utf-8")
+    private.chmod(0o600)
+    executable.chmod(0o700)
+    assert run(runner, FIXTURE_LIBRARY, "install", "--target", str(fixture_target)).exit_code == 6
+    assert (
+        run(runner, FIXTURE_LIBRARY, "clean", "--target", str(fixture_target), "--remove").exit_code
+        == 0
+    )
+    assert not private.exists() and not executable.exists()
+
+    result = run(runner, None, "rollback", "--target", str(fixture_target), "--json")
+
+    assert result.exit_code == 0
+    assert stat.S_IMODE(private.stat().st_mode) == 0o600
+    assert stat.S_IMODE(executable.stat().st_mode) == 0o700
+
+
+def test_an_installed_file_is_still_normalised_and_a_directory_too(
+    runner: CliRunner, empty_target: Path, tmp_path: Path
+) -> None:
+    """**R56, untouched — the control for the test above.**
+
+    The two mutations that would break each half are opposite: a restore that normalises
+    publishes the user's secrets, and an install that stopped normalising would ship a harness
+    whose modes are whatever the library's copy happened to carry and whose files a strict umask
+    could make unreadable. Asserted in the same module so that a change collapsing the two
+    cannot pass by leaving one of them alone.
+    """
+    library = library_with(tmp_path, only="The one skill.")
+
+    assert run(runner, library, "install", "--target", str(empty_target)).exit_code == 0
+
+    assert stat.S_IMODE((empty_target / ONLY).stat().st_mode) == 0o644
+    assert stat.S_IMODE((empty_target / "skills" / "only").stat().st_mode) == 0o755
 
 
 def test_cleaning_a_target_with_no_record_is_refused(

@@ -339,6 +339,15 @@ def target_holding(*entries: tuple[str, bytes]) -> FakeTargetRepository:
     )
 
 
+FAKE_MODE = 0o644
+"""What `FakeBackupStore` records as every kept path's mode. **A placeholder, not a model.**
+
+C-13 requires a mode per kept path (R110) and a dictionary of bytes has none, so this value
+exists to satisfy the record's invariant. No test may assert on it: the mode round trip is a fact
+about a real filesystem and is proven in `tests/infrastructure/test_backup.py`.
+"""
+
+
 class FakeBackupStore:
     """Contract C-13 in memory, over a `FakeTargetRepository` when it is given one.
 
@@ -366,6 +375,15 @@ class FakeBackupStore:
     ruling R94) and recreates it on restore. A dictionary has no links, so this fake models
     neither the distinction nor the restore; `tests/infrastructure/test_backup.py` proves the
     round trip against real files and `tests/test_clean.py` proves it end to end.
+
+    **It records `FAKE_MODE` for every kept path and models no mode at all.** C-13 requires one
+    per kept path since ruling R110 — a restore that does not put the mode back publishes a
+    `0600` credentials file and disarms a `0700` hook — and `FakeTargetRepository` is a
+    dictionary of bytes with no permissions to read. So the value here is a placeholder that
+    satisfies the record's invariant and proves nothing: **that a restored file carries the mode
+    it was backed up at is proven against real files**, in `tests/infrastructure/test_backup.py`
+    and end to end in `tests/test_rollback.py`. Nothing in `application/` reads this field; the
+    use cases hand the store a list of paths and the store decides what a backup of one is.
 
     Attributes:
         created: the path tuples `create` was called with, in call order.
@@ -414,6 +432,9 @@ class FakeBackupStore:
                 # was given: C-13's `kept` is a claim about stored bytes (R92), and a fake that
                 # echoed its own argument would agree with itself whatever the store did.
                 kept=tuple(self._kept[backup_id]),
+                # A placeholder, and the docstring says why: C-13 makes `modes` total over
+                # `kept` (R110) and this fake has no filesystem to read a mode from.
+                modes=dict.fromkeys(self._kept[backup_id], FAKE_MODE),
             )
         )
         return backup_id

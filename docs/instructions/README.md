@@ -10,8 +10,8 @@ raised to the user and amended at the source, with a row in the spec's §14 amen
 | Phase | Initiative | Status | Independently deployable |
 |---|---|---|---|
 | 1 | `01-store-and-read-path` | **CLOSED** 2026-09-21 — 11 tasks, 437 tests, two cold reads resolved | Yes — a working read-only CLI and MCP server |
-| 1 | `02-install-and-drift` | **Plan drafted** — cold read in flight, then the review gate | Yes |
-| 2 | `03-http-api` | Not opened | No — needs 01 |
+| 1 | `02-install-and-drift` | **CLOSED** 2026-09-21 — 13 tasks, 1090 tests | Yes — `hl install` replaces the manual `cp -a` |
+| 2 | `03-http-api` | **Next** — not opened | No — needs 01 and 02 |
 | 2 | `04-web-ui` | Not opened | No — needs 03 |
 
 **Gate before any dispatch:** the initiative's `implementation-plan.md` has been reviewed by the user.

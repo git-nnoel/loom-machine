@@ -5,7 +5,7 @@ The store, its read surface, and the safe install that replaces the manual `cp -
 | Initiative | Status | Closes |
 |---|---|---|
 | `01-store-and-read-path` | **CLOSED** 2026-09-21 — 11 tasks, 437 tests, two cold reads resolved | Reading, validating and serving the library |
-| `02-install-and-drift` | **Plan in review** — second cold read pending | Writing it back out, reversibly |
+| `02-install-and-drift` | **CLOSED** 2026-09-21 — 13 tasks, 1090 tests | Writing it back out, reversibly |
 
 **Ids are project-wide** (R51). Across this phase: T-1…T-23, F-1…F-16, DEC-1…DEC-14, C-1…C-14,
 R-1…R-54, V1…V11, L1…L39. Recompute rather than trusting that line —

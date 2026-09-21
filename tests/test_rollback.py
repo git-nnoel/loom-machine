@@ -321,14 +321,25 @@ def test_the_manifest_records_nothing_after_a_first_install_is_rolled_back(
 def test_a_restored_file_and_the_directory_it_needs_carry_the_installed_modes(
     target_root: Path, state_root: Path
 ) -> None:
-    """R56, on the undo path. A restore writes through `FilesystemTargetRepository`, which is the
-    single place that decides a mode — so a file put back by a rollback is `0644` and a directory
-    recreated for it is `0755`, exactly as an install's are, and a strict umask cannot ship the
-    user a harness their own editor cannot read.
+    """**`0644` here because that is what the file *was*, not because a restore normalises.**
 
-    The artifact's whole directory is removed between the apply and the rollback, which is a real
-    thing a user does and is what makes the restore recreate the parent rather than write into an
-    existing one. The control is `stat.S_IMODE`, never the raw mode word.
+    Ruling R110 corrected the reason without changing the assertion, and the distinction is
+    worth stating because this test read as proof of the opposite for eleven tasks. The path is
+    one *this tool installed*: the first apply wrote it at R56's `FILE_MODE`, so that is the
+    mode the backup recorded and that is the mode that comes back. A file the tool did **not**
+    create keeps whatever mode it had — `0600` stays `0600` — and that is asserted in
+    `tests/infrastructure/test_backup.py` and end to end in
+    `tests/cli/write/test_clean_export.py`, over the foreign paths only `clean --foreign` backs
+    up. Before R110 every restored path came back `0644`, which made this test green while the
+    recovery path published 149 private files on a real harness.
+
+    **The directory is a different claim and is unchanged.** A backup records files and links,
+    never directories, so a parent the restore has to recreate is created by
+    `_make_parents` at `DIRECTORY_MODE` exactly as an install's is. The artifact's whole
+    directory is removed between the apply and the rollback — a real thing a user does — which
+    is what makes the restore recreate the parent rather than write into an existing one.
+
+    The control is `stat.S_IMODE`, never the raw mode word.
     """
     first = a_library(SKILL_NAME)
     install(first, target_root, state_root, manifest=None)

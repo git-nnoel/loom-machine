@@ -44,6 +44,21 @@ the code does not act on it.
 
 **The state root is a parameter, never the environment** — charter §13 and ruling R66, the same
 rule `manifest_store` keeps. Nothing here reads `$XDG_STATE_HOME` or `Path.home()`.
+
+## A state root that will not take the sentinel
+
+Ruling **R111**, T-24. This module had no `except OSError` at all, which made it the one disk
+step of a write run with no code: a read-only mount, a full disk, or a `~/.local/state` a `sudo`
+run left owned by root gave `install`, `uninstall`, `rollback` and `clean --remove` a raw
+traceback and exit 1 — outside contract C-14's table, so a script could not tell it from
+anything else that goes wrong.
+
+`_acquire` translates it to `StateUnwritableError` (`STATE_UNWRITABLE`, exit 15). Translated
+**here** rather than in `application/`, against the direction ruling R24 sets for the backup
+store and the target repository, because `hold()` wraps a whole use-case body: a `try` around it
+in the use case would catch the backup's and the target's failures too, and answer a half-written
+target with a code whose whole content is *nothing was written*. `LockHeldError` has been raised
+from this class since T-17 for the same reason — a judgement only the lock can make.
 """
 
 from __future__ import annotations
@@ -58,7 +73,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from harness_library.domain.errors import LockHeldError
+from harness_library.domain.errors import LockHeldError, StateUnwritableError
 from harness_library.infrastructure.manifest_store import manifest_path_for
 
 LOCK_SUFFIX = ".lock"
@@ -136,9 +151,12 @@ class FilesystemWriteLock:
 
         Raises:
             LockHeldError: a live process holds this target's lock. Nothing has been written.
-            OSError: the state directory could not be created or the sentinel could not be
-                written. Left as a builtin, unlike the refusal above: that is a judgement this
-                class alone can make, and this is an ordinary I/O fault with no code of its own.
+            StateUnwritableError: the state directory could not be created or the sentinel could
+                not be written. **Ruling R111** — until T-24 this was left as a builtin, on the
+                argument that it was an ordinary I/O fault with no code of its own, and T-23
+                found what that costs: a read-only mount, a full disk or a `~/.local/state` one
+                `sudo` run left owned by root gave a raw traceback and exit 1 on every write
+                command. Nothing has been written either way; see `_acquire`.
         """
         token = self._acquire()
         try:
@@ -149,6 +167,29 @@ class FilesystemWriteLock:
     # -- Acquire ---------------------------------------------------------------------------------
 
     def _acquire(self) -> str:
+        """`_take`, with every disk fault under it given contract C-14's code. Ruling R111.
+
+        **One `except OSError` and not one per syscall.** `_take` reaches the disk four times —
+        the `mkdir`, two `os.open`s and the `unlink` of a stale sentinel — and a translation
+        repeated at each of them is a rule stated four times, which is a rule a mutation cannot
+        break: three of the four would keep the code alive while the fourth returned a
+        traceback. Stated once, it is one line to get wrong and one line to check.
+
+        Nothing else can arrive here. `LockHeldError` is not an `OSError`, so the refusal passes
+        through untouched, and `_holder` swallows its own read failures — every `OSError` out of
+        `_take` is the state directory, and the guarantee `StateUnwritableError` carries (the
+        lock precedes the backup, the record and the first file) holds for all four of them.
+
+        Raises:
+            LockHeldError: a live process holds this target's lock.
+            StateUnwritableError: the state directory would not take the sentinel.
+        """
+        try:
+            return self._take()
+        except OSError as error:
+            raise StateUnwritableError(str(self._path), str(error)) from error
+
+    def _take(self) -> str:
         """Create the sentinel, breaking a stale one. Returns the token it wrote into it.
 
         The token, and not merely "it worked": `_release` reads it back before unlinking, so a

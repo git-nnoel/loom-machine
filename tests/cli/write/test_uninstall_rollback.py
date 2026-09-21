@@ -18,6 +18,7 @@ What this layer decides, and what is asserted here:
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -171,3 +172,174 @@ def test_rollback_undoes_an_uninstall(
 
     assert result.exit_code == 0
     assert (empty_target / ONLY).read_bytes() == installed
+
+
+# -- A rollback with nothing to put back, and the listing that makes ids reachable (T-24) --------
+#
+# **Ruling R112.** A `MANIFEST_REPAIR`-only install writes the record and not one file, so it
+# takes no backup — and `hl rollback` after one exited `BACKUP_FAILED = 9`, the same status as
+# *the backup could not be taken*. C-14's whole point is that a script can tell "you must decide"
+# from "it broke"; that made it tell a fact from a failure.
+#
+# **Ruling R113.** `hl rollback [BACKUP_ID]` takes an id and nothing in the tool would say one:
+# `BackupStore.list()` has been on C-13 since T-16 and no command reached it, so "undo three
+# installs rather than the last" (R54) was unreachable in practice.
+
+
+def an_already_populated_target(tmp_path: Path, target: Path) -> Path:
+    """A target already holding the library's exact bytes, with no record of them.
+
+    That is the `MANIFEST_REPAIR` case and it is the ordinary one: a user's harness holds the
+    artifacts already and the first `hl install` adopts them, writing the manifest and no file.
+    Returns the library.
+    """
+    library = library_with(tmp_path, only="The one skill.")
+    destination = target / ONLY
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_bytes((library / "skills" / "only" / "SKILL.md").read_bytes())
+    return library
+
+
+def test_an_install_that_wrote_nothing_takes_no_backup(
+    runner: CliRunner, tmp_path: Path, empty_target: Path
+) -> None:
+    """The precondition, asserted so the test below cannot pass for the wrong reason.
+
+    If this install did take a backup, the rollback after it would have one to put back and
+    R112's branch would never be reached — the test would be green and about nothing.
+    """
+    library = an_already_populated_target(tmp_path, empty_target)
+    before = digests(empty_target)
+
+    result = run(runner, library, "install", "--target", str(empty_target), "--json")
+
+    assert result.exit_code == 0
+    assert payload_of(result.stdout)["backup_id"] is None
+    assert payload_of(result.stdout)["written"] == []
+    assert digests(empty_target) == before
+
+
+def test_rolling_back_a_run_that_wrote_nothing_is_not_a_failure(
+    runner: CliRunner, tmp_path: Path, empty_target: Path
+) -> None:
+    """**Ruling R112, on the integer.** A run that wrote nothing has nothing to undo.
+
+    Exit 0 and a payload naming no backup, rather than `BACKUP_FAILED = 9` — which says *the
+    backup could not be taken*, about a run that needed none, and shares a number with the
+    genuine failure below.
+    """
+    library = an_already_populated_target(tmp_path, empty_target)
+    assert run(runner, library, "install", "--target", str(empty_target)).exit_code == 0
+    before = digests(empty_target)
+
+    result = run(runner, None, "rollback", "--target", str(empty_target), "--json")
+
+    assert result.exit_code == 0
+    assert payload_of(result.stdout)["backup_id"] is None
+    assert payload_of(result.stdout)["restored"] == []
+    assert payload_of(result.stdout)["removed"] == []
+    assert digests(empty_target) == before
+
+
+def test_the_human_rendering_says_there_is_nothing_to_undo(
+    runner: CliRunner, tmp_path: Path, empty_target: Path
+) -> None:
+    """A status a script reads and a sentence a person reads. Exit 0 with no output at all would
+    be the tool doing nothing quietly, which is the one thing this product exists not to do."""
+    library = an_already_populated_target(tmp_path, empty_target)
+    assert run(runner, library, "install", "--target", str(empty_target)).exit_code == 0
+
+    result = run(runner, None, "rollback", "--target", str(empty_target))
+
+    assert result.exit_code == 0
+    assert "nothing to roll back" in result.stdout
+    assert result.stderr == ""
+
+
+def test_a_backup_the_record_names_and_the_store_has_lost_is_still_a_failure(
+    runner: CliRunner, tmp_path: Path, empty_target: Path, state_root: Path
+) -> None:
+    """**The control for R112, and the reason the predicate is not "the store is empty".**
+
+    The record is what tells a fact from a failure: a run that took no backup recorded none, and
+    a run that took one and cannot find it again has lost a rollback point the user still
+    believes in. Reporting *there is nothing to put back* for the second would be the tool lying
+    about its own undo — and it is not hypothetical, because a backup written by an older build
+    is one this reader declines to offer (`infrastructure/backup.py`'s `SCHEMA_VERSION`).
+    """
+    library = library_with(tmp_path, only="The one skill.")
+    assert run(runner, library, "install", "--target", str(empty_target)).exit_code == 0
+    shutil.rmtree(state_root / "backups")
+
+    result = run(runner, None, "rollback", "--target", str(empty_target), "--json")
+
+    assert result.exit_code == 9
+    assert payload_of(result.stderr)["error"]["code"] == "BACKUP_FAILED"
+
+
+def test_backups_lists_an_id_rollback_accepts(
+    runner: CliRunner, tmp_path: Path, empty_target: Path
+) -> None:
+    """**Ruling R113, and the assertion is that the two commands agree.**
+
+    A listing whose ids `hl rollback` would not take is not a listing. So the id is read out of
+    this command's payload and passed straight to the other one, which is the whole journey
+    R54's argument describes and which no test could make before T-24.
+    """
+    library = library_with(tmp_path, only="The one skill.", other="The other skill.")
+    before = digests(empty_target)
+    assert run(runner, library, "install", "--target", str(empty_target)).exit_code == 0
+
+    listed = run(runner, None, "backups", "--target", str(empty_target), "--json")
+
+    assert listed.exit_code == 0
+    payload = payload_of(listed.stdout)
+    assert len(payload["backups"]) == 1
+    backup_id = payload["backups"][0]["backup_id"]
+    assert payload["backups"][0]["described"] == 2
+    assert payload["backups"][0]["kept"] == 0
+
+    result = run(runner, None, "rollback", backup_id, "--target", str(empty_target))
+
+    assert result.exit_code == 0
+    assert {
+        path: digest for path, digest in digests(empty_target).items() if digest != "<directory>"
+    } == before
+
+
+def test_backups_lists_only_this_targets_own(runner: CliRunner, tmp_path: Path) -> None:
+    """Ruling R43, the same filter `hl rollback` makes without an id, and one definition of it.
+
+    One state root holds every target's backups. A listing that showed them all would offer a
+    user ids that `hl rollback --target` would put back over a different directory — or refuse,
+    which is no better for a command whose job is to say what can be undone.
+    """
+    library = library_with(tmp_path, only="The one skill.")
+    first, second = tmp_path / "first", tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    assert run(runner, library, "install", "--target", str(first)).exit_code == 0
+    assert run(runner, library, "install", "--target", str(second)).exit_code == 0
+
+    of_first = payload_of(run(runner, None, "backups", "--target", str(first), "--json").stdout)
+    of_second = payload_of(run(runner, None, "backups", "--target", str(second), "--json").stdout)
+
+    assert len(of_first["backups"]) == len(of_second["backups"]) == 1
+    assert of_first["backups"][0]["backup_id"] != of_second["backups"][0]["backup_id"]
+    assert of_first["target_path"] != of_second["target_path"]
+
+
+def test_backups_of_a_target_with_none_is_an_empty_listing_and_not_a_failure(
+    runner: CliRunner, empty_target: Path
+) -> None:
+    """The positive control for the two above: an empty listing is a value.
+
+    And it needs **no manifest** — this command takes no lock and reads no record (R85), because
+    a target whose record was deleted still has its backups and that is exactly when a user
+    comes looking for them. `hl uninstall`, `hl rollback` and `hl clean` all refuse such a
+    target; this one answers it.
+    """
+    result = run(runner, None, "backups", "--target", str(empty_target), "--json")
+
+    assert result.exit_code == 0
+    assert payload_of(result.stdout)["backups"] == []

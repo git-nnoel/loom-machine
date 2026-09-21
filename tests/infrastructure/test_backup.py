@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -21,6 +22,7 @@ import pytest
 
 from harness_library.domain.backup import BackupStore
 from harness_library.infrastructure.backup import (
+    BACKUP_FILE_MODE,
     BACKUPS_DIRECTORY_NAME,
     FILES_DIRECTORY_NAME,
     RECORD_FILENAME,
@@ -514,3 +516,154 @@ def test_a_backup_written_before_the_link_set_existed_is_not_offered(
     with pytest.raises(KeyError, match=backup_id):
         store.restore(backup_id)
     assert (target / ENTRY).read_bytes() == INSTALLED
+
+
+# -- A mode is recorded and put back (ruling R110, C-13's third amendment, T-24) -----------------
+#
+# **The security regression T-23 found, closed here.** `create` copied through
+# `FilesystemTargetRepository.write`, which applies R56's `0644` to a file this tool did not
+# create, and `BackupRecord` had nowhere to say what the mode had been — so the information was
+# gone before `restore` ran and a fix aimed at the restore alone could not have worked. On the
+# real harness the recovery path made 149 private files world-readable and disarmed 56
+# executables, with the content byte-identical: every digest-based check said it had worked.
+#
+# Every assertion here is on an **octal integer**, for that reason.
+
+
+@pytest.mark.parametrize("mode", [0o600, 0o644, 0o700, 0o444])
+def test_a_restored_file_carries_the_mode_it_was_backed_up_at(
+    state_root: Path, target: Path, mode: int
+) -> None:
+    """**The defect, asserted directly.** A file backed up at `mode` comes back at `mode`.
+
+    `0600` is a credentials document, `0700` is a hook script, `0444` is something the user made
+    read-only on purpose, and `0644` is the value the broken restore produced for all of them —
+    it is in the list so that a restore which still normalises cannot pass by being accidentally
+    right about one case.
+    """
+    (target / FOREIGN).chmod(mode)
+    store = a_store(state_root, target)
+    backup_id = store.create((FOREIGN,))
+    (target / FOREIGN).unlink()
+
+    store.restore(backup_id)
+
+    assert (target / FOREIGN).read_bytes() == FOREIGN_BYTES
+    assert stat.S_IMODE((target / FOREIGN).stat().st_mode) == mode
+
+
+def test_a_restore_puts_the_mode_back_over_a_file_the_target_still_holds(
+    state_root: Path, target: Path
+) -> None:
+    """The other half of the round trip: the path is still there and something widened it.
+
+    `write_bytes` truncates and leaves a mode alone, so a restore that only put the bytes back
+    would leave the widened mode in place — the target would be byte-identical and still wrong.
+    """
+    (target / FOREIGN).chmod(0o600)
+    store = a_store(state_root, target)
+    backup_id = store.create((FOREIGN,))
+    (target / FOREIGN).chmod(0o666)
+
+    store.restore(backup_id)
+
+    assert stat.S_IMODE((target / FOREIGN).stat().st_mode) == 0o600
+
+
+def test_the_record_names_a_mode_for_every_path_it_kept_and_no_other(
+    state_root: Path, target: Path
+) -> None:
+    """C-13's invariant, as the real store produces it: `modes` is total over `kept` and keyed
+    within it. The absent path is described, kept for nothing and carries no mode."""
+    (target / ENTRY).chmod(0o640)
+    store = a_store(state_root, target)
+
+    backup_id = store.create((ENTRY, "skills/absent/SKILL.md"))
+
+    record = next(one for one in store.list() if one.backup_id == backup_id)
+    assert record.kept == (ENTRY,)
+    assert dict(record.modes) == {ENTRY: 0o640}
+
+
+def test_the_saved_copy_is_private_whatever_the_target_held(state_root: Path, target: Path) -> None:
+    """**The same exposure, one directory away.** A backup of a real harness holds a credentials
+    document, a control key and every transcript; written through `write` each copy took R56's
+    `0644`, so `clean --foreign --remove` published them into the state root before a restore was
+    ever asked for.
+
+    `0600` rather than the source's own mode: the *record* is what a restore reads the mode from,
+    and a source mode of `0000` copied faithfully would make the backup unreadable by the restore
+    that has to read it back.
+    """
+    (target / FOREIGN).chmod(0o644)
+    store = a_store(state_root, target)
+
+    backup_id = store.create((FOREIGN,))
+
+    saved = default_backups_root(state_root) / backup_id / FILES_DIRECTORY_NAME / FOREIGN
+    assert saved.read_bytes() == FOREIGN_BYTES
+    assert stat.S_IMODE(saved.stat().st_mode) == BACKUP_FILE_MODE
+
+
+def test_a_symlink_is_recorded_with_a_destination_and_no_mode(
+    state_root: Path, target: Path
+) -> None:
+    """R94 and R110 together. `chmod` follows a link, so a mode recorded against one would be
+    the mode of whatever it names — a file outside the target, quite possibly — and `lchmod` is
+    unavailable on Linux. A link's whole content is its destination, which is already recorded.
+    """
+    (target / "link.md").symlink_to("../outside/elsewhere.md")
+    store = a_store(state_root, target)
+
+    backup_id = store.create(("link.md",))
+
+    record = next(one for one in store.list() if one.backup_id == backup_id)
+    assert record.links == {"link.md": "../outside/elsewhere.md"}
+    assert dict(record.modes) == {}
+
+
+def test_a_backup_written_before_the_mode_set_existed_is_not_offered(
+    state_root: Path, target: Path
+) -> None:
+    """**What reading a version-3 backup does**: nothing reads it, as with versions 1 and 2 —
+    and here on R92's argument rather than on version 2's plainer one.
+
+    Reading a version-3 record with no modes is not a true statement about it: every path it
+    kept had a mode and the record simply did not write one down. The only way to read one is to
+    invent a mode for each kept path, and the value that would be invented is `0644` — the
+    defect R110 closes, performed by the code that closes it.
+    """
+    store = a_store(state_root, target)
+    backup_id = store.create((ENTRY,))
+    record = default_backups_root(state_root) / backup_id / RECORD_FILENAME
+    document = json.loads(record.read_text(encoding="utf-8"))
+    document["schema_version"] = 3
+    del document["modes"]
+    record.write_text(json.dumps(document), encoding="utf-8")
+
+    assert store.list() == ()
+    with pytest.raises(KeyError, match=backup_id):
+        store.restore(backup_id)
+    assert (target / ENTRY).read_bytes() == INSTALLED
+
+
+def test_a_record_whose_modes_have_lost_an_entry_is_not_a_record(
+    state_root: Path, target: Path
+) -> None:
+    """A schema-4 document whose `modes` no longer covers `kept` is refused by `BackupRecord`,
+    and `_read_record` answers `None` to it like every other way a record can be damaged.
+
+    The posture is the store's throughout: an unreadable backup is one that cannot be restored,
+    and the honest thing to do with it is not to offer it rather than to guess at the missing
+    half. Guessing here means `0644`.
+    """
+    store = a_store(state_root, target)
+    backup_id = store.create((ENTRY,))
+    record = default_backups_root(state_root) / backup_id / RECORD_FILENAME
+    document = json.loads(record.read_text(encoding="utf-8"))
+    document["modes"] = {}
+    record.write_text(json.dumps(document), encoding="utf-8")
+
+    assert store.list() == ()
+    with pytest.raises(KeyError, match=backup_id):
+        store.restore(backup_id)

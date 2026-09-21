@@ -15,7 +15,11 @@ assembler to turn into V6. None of that belongs here:
   a place you are about to write into. Since ruling R94 a link can also be **read as a link and
   written back as one** — `read_link` and `write_link`, which exist because a backup that could
   not put a link back made `clean --foreign` un-undoable for one, and which **ruling R97 made
-  C-12's sixth and seventh members**.
+  C-12's sixth and seventh members**;
+* a **mode is read and written back** since ruling R110, by `read_mode` and `write_with_mode`,
+  which are on this class and **not** in C-12. `write` still applies R56's `0644` to everything
+  an install creates, unchanged; a *restore* is putting back a file this tool did not create,
+  and a mode chosen for one of those is a private file published or an executable disarmed.
 
 **What this layer is blind to.** It cannot see whether any path it reports belongs to an artifact,
 was installed by this tool, or has drifted. Those are the verdict rule's (C-9, C-10) and the
@@ -29,6 +33,7 @@ reorders itself between two runs cannot be diffed or pinned to a golden list.
 from __future__ import annotations
 
 import os
+import stat
 from collections.abc import Iterator
 from pathlib import Path, PurePosixPath
 
@@ -125,6 +130,11 @@ class FilesystemTargetRepository:
     def write(self, path: str, data: bytes) -> None:
         """Write `data` at one target-relative path, creating the directories it needs.
 
+        **This is the install path's write, and it ends at `FILE_MODE`** — ruling R56, for a file
+        this tool created. Putting back a file it did **not** create is `write_with_mode`, and
+        the two are separate members rather than one with a flag so that "a restore is not an
+        install" is a fact about which function a caller reaches for.
+
         Not atomic, and that is a choice rather than an omission. `manifest_store.write_manifest`
         writes through a temporary file and `os.replace` because a half-written manifest is
         unrecoverable; here the same technique would leave a stray `.tmp` file inside the user's
@@ -132,6 +142,14 @@ class FilesystemTargetRepository:
         subsequent scan, forever, with nothing able to remove it but the user. T-16's backup is
         the recovery mechanism for an interrupted apply (F-9), and it recovers the whole target
         rather than one file.
+        """
+        self._write(path, data, mode=FILE_MODE)
+
+    def _write(self, path: str, data: bytes, *, mode: int) -> None:
+        """The bytes and the mode, in one call. The one place either lands on a target path.
+
+        One function and not two so that the refusal, the parent creation and the ordering are
+        stated once; **which** mode is the caller's, and there is no default here on purpose.
         """
         located = self._locate(path)
         if located.is_symlink():
@@ -141,7 +159,9 @@ class FilesystemTargetRepository:
             )
         self._make_parents(located)
         located.write_bytes(data)
-        located.chmod(FILE_MODE)
+        # After the write, always: `write_bytes` truncates an existing file and leaves its mode
+        # alone, so a path that is already there would otherwise keep whatever mode it has.
+        located.chmod(mode)
 
     def delete(self, path: str) -> None:
         """Remove one file, or one symlink, at a target-relative path.
@@ -220,6 +240,58 @@ class FilesystemTargetRepository:
             # something back over whatever is there now. Unlinked as itself — never followed.
             os.unlink(located)
         os.symlink(destination, located)
+
+    # -- A mode, read and written back. Ruling R110, and NOT contract C-12 -----------------------
+    #
+    # `read_mode` and `write_with_mode` are on this class alone, exactly as `read_link` and
+    # `write_link` were between T-20 and R97. Nothing that plans or applies an install needs a
+    # mode — R56 chooses `0644` for every file this tool creates and R9 keeps the mode out of
+    # every digest — so putting these in C-12 would make every hand-written fake grow two members
+    # for a decision none of them takes. The one caller is `FilesystemBackupStore`, which holds a
+    # concrete repository and not the protocol. If a use case ever needs one, that is a C-12
+    # amendment and a plan-level decision, and R97 is the shape it would take.
+
+    def read_mode(self, path: str) -> int:
+        """The permission bits of the file at this target-relative path. Ruling R110.
+
+        Twelve bits, setuid and sticky included: a backup puts back what was there, and nine of
+        the twelve is a different file from the one it took.
+
+        **A symlink is refused**, for the reason `read_bytes` refuses one: `stat` follows a link,
+        so answering would describe a file that may be outside the target entirely. A link has no
+        mode of its own to put back — see `BackupRecord.modes`.
+
+        Raises:
+            ValueError: the path is not addressable inside this target, or is a symlink.
+            OSError: the path could not be described. A builtin, like every other fault this
+                class reports; `application/` is where one becomes a code (ruling R24).
+        """
+        located = self._locate(path)
+        if located.is_symlink():
+            raise ValueError(
+                f"{path!r} is a symlink, which is never followed (ruling R6): stat through one "
+                "reports the mode of whatever it points at, which may be outside the target. A "
+                "link's content is its destination and has no mode of its own"
+            )
+        return stat.S_IMODE(located.stat().st_mode)
+
+    def write_with_mode(self, path: str, data: bytes, mode: int) -> None:
+        """Write `data` and leave the file at exactly `mode`. **A restore's write** (R110).
+
+        The counterpart of `write`, which ends at R56's `0644` because it is putting an artifact
+        *this tool creates* into a target. This one is putting back a file the tool did not
+        create, whose mode is the user's and is as much a part of it as its bytes: restoring a
+        `0600` credentials document at `0644` publishes it, and restoring a `0700` hook at `0644`
+        stops it running, while the content compares byte-identical either way.
+
+        `mode` is required and has no default, so a caller cannot reach a restore's write and
+        quietly get an install's mode.
+
+        Raises:
+            ValueError: the path is not addressable inside this target, or is a symlink.
+            OSError: the write or the `chmod` failed.
+        """
+        self._write(path, data, mode=mode)
 
     # -- The walk --------------------------------------------------------------------------------
 

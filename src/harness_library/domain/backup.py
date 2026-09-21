@@ -21,6 +21,12 @@ record and recreates the link on restore. Copying what it pointed at would put c
 outside the target into a backup of the target and then materialise it as a regular file, which
 is the same escape R6 forbids, reached through the one mechanism meant to undo damage.
 
+**A mode is content, and it is recorded per kept path.** Ruling R110. R56 normalises an
+*installed* artifact to `0644`, which is this tool's decision about a file it created; a backup
+puts back a file it did not create, and restoring one at `0644` makes a private file
+world-readable and an executable inert while every digest says the restore worked. A mode is an
+`int`, so recording one here needs nothing `tests/domain/test_purity.py` bars from this layer.
+
 **Paths are `str`, target-relative, `/`-separated** (R21) — C-12's vocabulary exactly, because the
 paths handed to `create` come straight off a `PlanEntry`. Nothing here performs I/O and
 `tests/domain/test_purity.py` bars `pathlib` from this layer.
@@ -35,6 +41,15 @@ from types import MappingProxyType
 from typing import Protocol, runtime_checkable
 
 _NO_LINKS: Mapping[str, str] = MappingProxyType({})
+
+_NO_MODES: Mapping[str, int] = MappingProxyType({})
+
+MAX_MODE = 0o7777
+"""The widest permission word a path can carry: twelve bits, setuid and sticky included.
+
+All twelve and not nine, because a backup puts back what was there. A file that was setgid before
+this tool removed it is not restored by putting back nine of its bits.
+"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,6 +104,30 @@ class BackupRecord:
 
             Disjoint from `kept`, because a path is bytes or a link and never both, and a subset
             of `paths`, for the reason `kept` is.
+        modes: the permission bits each **kept** path carried when the backup was taken.
+            **Ruling R110, amending C-13.**
+
+            **The mode is content here, and it is the one piece of it this record used to
+            throw away.** A backup exists to put back a file *this tool did not create*, and
+            before this field every restored path came back at the `0644` ruling R56 gives an
+            **installed** artifact. On a real harness that is 149 private files — a credentials
+            document, a control key, every transcript — made world-readable, and 56 executables
+            disarmed, by the recovery path, silently, with the content byte-identical so that
+            every hash-based check says the restore worked.
+
+            R56 is right about an install and says nothing about a restore, and the distinction
+            is the whole of this amendment: an installed file's mode is this tool's to choose,
+            and a backed-up file's is the user's to get back.
+
+            **Total over `kept`**, enforced below. A kept path is a regular file and always has
+            a mode, so an optional field would mean "no mode recorded" restoring at `0644` —
+            which is the defect, reached through the field that closes it.
+
+            **Disjoint from `links`**, because it is keyed within `kept` and those two already
+            are. A symlink has no mode of its own worth putting back: `chmod` follows a link, so
+            setting one would change the permissions of whatever it names — a file outside the
+            target, quite possibly — and `lchmod` is unavailable on Linux. R94 already says a
+            link's whole content is its destination.
     """
 
     backup_id: str
@@ -97,6 +136,7 @@ class BackupRecord:
     paths: tuple[str, ...] = ()
     kept: tuple[str, ...] = ()
     links: Mapping[str, str] = field(default=_NO_LINKS)
+    modes: Mapping[str, int] = field(default=_NO_MODES)
 
     def __post_init__(self) -> None:
         if not self.backup_id:
@@ -112,6 +152,7 @@ class BackupRecord:
                 "cannot be offered for restore without asking the user to guess"
             )
         object.__setattr__(self, "links", MappingProxyType(dict(self.links)))
+        object.__setattr__(self, "modes", MappingProxyType(dict(self.modes)))
         unclaimed = sorted(set(self.kept) - set(self.paths))
         if unclaimed:
             raise ValueError(
@@ -139,6 +180,28 @@ class BackupRecord:
                 f"this backup records an empty link destination for {empty}: a link's "
                 "destination is its whole content, and an empty one cannot be recreated"
             )
+        unkept = sorted(set(self.modes) - set(self.kept))
+        if unkept:
+            raise ValueError(
+                f"this backup records a mode for {unkept}, which it holds no bytes for: a mode "
+                "belongs to a file, and `modes` is keyed within `kept` (R110). A path that was "
+                "absent is put back by being removed, and a symlink has no mode of its own — "
+                "chmod follows one, so setting it would change a file outside the target"
+            )
+        unrecorded = sorted(set(self.kept) - set(self.modes))
+        if unrecorded:
+            raise ValueError(
+                f"this backup holds bytes for {unrecorded} and records no mode for them: `modes` "
+                "is total over `kept` (R110). A restore with no recorded mode puts the file back "
+                "at the 0644 an *installed* artifact gets (R56), which makes a private file "
+                "world-readable and an executable inert — the defect this field closes"
+            )
+        outside = sorted(path for path, mode in self.modes.items() if not 0 <= mode <= MAX_MODE)
+        if outside:
+            raise ValueError(
+                f"this backup records a mode outside 0..0o7777 for {outside}: a mode is the "
+                "permission word of a path, and the file type bits are not a backup's to restore"
+            )
 
 
 @runtime_checkable
@@ -162,6 +225,9 @@ class BackupStore(Protocol):
         because R6 never reads through one, and the destination it names is recorded in `links`
         instead, so a restore can recreate the link as a link.
 
+        A path whose bytes are copied has its **mode** recorded too (R110). The mode is read
+        here and nowhere else: by the time `restore` runs, the file it describes may not exist.
+
         Raises:
             OSError: the backup could not be taken. A builtin, and deliberately so (ruling R24):
                 `application/` is where it becomes `BACKUP_FAILED`, and a store raising that code
@@ -173,9 +239,11 @@ class BackupStore(Protocol):
     def restore(self, backup_id: str) -> None:
         """Put every path this backup describes back as it was.
 
-        A path in `kept` is written back from the bytes the backup stored; a path in `links` is
-        recreated as a symlink naming the destination it named before (R94); a path it describes
-        and holds neither for was absent when the backup was taken and is removed. Nothing else
+        A path in `kept` is written back from the bytes the backup stored **and at the mode it
+        recorded** (R110) — a restore is not an install, so R56's `0644` is not applied to it; a
+        path in `links` is recreated as a symlink naming the destination it named before (R94); a
+        path it describes and holds neither for was absent when the backup was taken and is
+        removed. Nothing else
         in the target is touched — a backup is not a snapshot of the whole directory, and
         restoring one must not delete a file that was never in it.
 
@@ -201,4 +269,4 @@ class BackupStore(Protocol):
         ...
 
 
-__all__ = ["BackupRecord", "BackupStore"]
+__all__ = ["MAX_MODE", "BackupRecord", "BackupStore"]

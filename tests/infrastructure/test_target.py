@@ -677,3 +677,84 @@ def test_a_written_link_may_dangle_and_is_reported_as_one(writable: Path) -> Non
     assert (writable / "skills/new-skill/SKILL.md").is_symlink()
     assert not (writable / "skills/new-skill/SKILL.md").exists()
     assert repository.exists("skills/new-skill/SKILL.md")
+
+
+# -- A mode, read and written back (ruling R110, T-24) -------------------------------------------
+#
+# Two members on this class and **not** on contract C-12, for the reason `read_link` and
+# `write_link` were not until R97: nothing that plans or applies an install needs a mode. The one
+# caller is `FilesystemBackupStore`, which holds a concrete repository.
+#
+# Every test here asserts an **octal integer**. "The mode was preserved" is the claim, and a
+# claim about a mode that is spelled as "the content matches" is the one T-23 found passing
+# while 149 private files were being published.
+
+
+def test_read_mode_reports_the_permission_bits(writable: Path) -> None:
+    """Twelve bits, `stat.S_IMODE`, never the raw mode word — a raw one carries the file type
+    and would ask a later `chmod` to change it."""
+    private = writable / "skills/delivery-lead/SKILL.md"
+    private.chmod(0o600)
+    repository = FilesystemTargetRepository(writable)
+
+    assert repository.read_mode("skills/delivery-lead/SKILL.md") == 0o600
+
+
+def test_read_mode_refuses_a_symlink(writable: Path) -> None:
+    """`stat` follows a link, so answering would report the mode of a file outside the target
+    entirely — the escape R6 exists to prevent, reached through a question about permissions. A
+    link's content is its destination and it has no mode of its own to put back."""
+    repository = FilesystemTargetRepository(writable)
+
+    with pytest.raises(ValueError, match="is a symlink"):
+        repository.read_mode(THE_LINK)
+
+
+def test_write_with_mode_leaves_the_file_at_exactly_that_mode(writable: Path) -> None:
+    """**A restore's write.** The counterpart of `write`, which normalises to R56's `0644`
+    because it is putting an artifact this tool creates into a target; this one is putting back
+    a file the tool did not create, whose mode is as much a part of it as its bytes."""
+    repository = FilesystemTargetRepository(writable)
+
+    repository.write_with_mode("skills/new-skill/secret.json", b"{}\n", 0o600)
+
+    written = writable / "skills/new-skill/secret.json"
+    assert written.read_bytes() == b"{}\n"
+    assert stat.S_IMODE(written.stat().st_mode) == 0o600
+
+
+def test_write_with_mode_replaces_the_mode_an_existing_file_already_had(writable: Path) -> None:
+    """`write_bytes` truncates and leaves the mode alone, so the `chmod` is not decoration: a
+    restore over a path a clean-and-reinstall left at `0644` has to bring the mode back too."""
+    existing = writable / "skills/delivery-lead/SKILL.md"
+    existing.chmod(0o644)
+    repository = FilesystemTargetRepository(writable)
+
+    repository.write_with_mode("skills/delivery-lead/SKILL.md", b"put back\n", 0o700)
+
+    assert stat.S_IMODE(existing.stat().st_mode) == 0o700
+
+
+def test_write_with_mode_refuses_a_symlink(writable: Path) -> None:
+    """The same refusal `write` makes, and for the same reason (R6): the bytes would land
+    wherever the link points, and the `chmod` would follow it there."""
+    repository = FilesystemTargetRepository(writable)
+
+    with pytest.raises(ValueError, match="is a symlink"):
+        repository.write_with_mode(THE_LINK, b"x\n", 0o600)
+
+
+def test_write_still_normalises_and_write_with_mode_does_not(writable: Path) -> None:
+    """**The pair, in one test, because the fix is the distinction between them.**
+
+    R56 is unchanged: an artifact this tool installs is `0644` whatever the umask or the source
+    said. A file put back from a backup is whatever it was. Asserted together so that a change
+    collapsing the two — in either direction — cannot pass by leaving one of them alone.
+    """
+    repository = FilesystemTargetRepository(writable)
+
+    repository.write("skills/new-skill/installed.md", b"# installed\n")
+    repository.write_with_mode("skills/new-skill/restored.md", b"# restored\n", 0o600)
+
+    assert stat.S_IMODE((writable / "skills/new-skill/installed.md").stat().st_mode) == FILE_MODE
+    assert stat.S_IMODE((writable / "skills/new-skill/restored.md").stat().st_mode) == 0o600

@@ -20,7 +20,13 @@ TARGET = "/home/example/.claude"
 
 
 def a_record(**overrides: object) -> BackupRecord:
-    """A valid record, with one field replaced."""
+    """A valid record, with one field replaced.
+
+    **`modes` is derived from `kept` unless a test names it.** C-13 makes it total over `kept`
+    since ruling R110, so a helper that left it out would make every test about `kept` a test
+    about `modes` as well; a test that is *about* the mode passes one explicitly, including the
+    empty mapping the refusals need.
+    """
     fields: dict[str, object] = {
         "backup_id": "2026-09-21T14-29-00Z",
         "created_at": CREATED_AT,
@@ -28,6 +34,9 @@ def a_record(**overrides: object) -> BackupRecord:
         "paths": ("skills/delivery-lead/SKILL.md",),
     }
     fields.update(overrides)
+    if "modes" not in overrides:
+        kept: tuple[str, ...] = fields.get("kept", ())  # type: ignore[assignment]
+        fields["modes"] = dict.fromkeys(kept, 0o644)
     return BackupRecord(**fields)  # type: ignore[arg-type]
 
 
@@ -179,3 +188,88 @@ def test_a_record_with_no_links_is_a_value_and_not_an_error() -> None:
     """The positive control for the three refusals above: an ordinary backup of an ordinary
     target records no link at all, and that is the common case rather than a fault."""
     assert a_record().links == {}
+
+
+# ==============================================================================================
+# C-13's third amendment — `modes`, ruling R110
+# ==============================================================================================
+#
+# Added, never altered: every test above keeps the fields and invariants it already asserted, and
+# `modes` defaults to empty, so a record describing nothing it kept is still a record.
+#
+# **Why the amendment exists.** A backup puts back a file this tool did not create. Before this
+# field the restore wrote through the same member an install does, so every path came back at
+# R56's `0644`: on the real harness, 149 private files made world-readable and 56 executables
+# disarmed, by the recovery path, with the content byte-identical so that every digest-based
+# check said it had worked. R56 is right about an install and says nothing about a restore.
+
+KEPT = "skills/delivery-lead/SKILL.md"
+
+
+def test_a_record_says_what_mode_each_kept_path_carried() -> None:
+    """The amendment itself, asserted as an **octal integer** and not as "a mode was recorded".
+
+    `0600` is the case that matters: it is what a credentials document, a control key and every
+    session transcript carry, and `0644` is what restoring one without this field produced.
+    """
+    record = a_record(paths=(KEPT,), kept=(KEPT,), modes={KEPT: 0o600})
+
+    assert record.modes[KEPT] == 0o600
+
+
+def test_a_record_holding_bytes_with_no_mode_for_them_is_refused() -> None:
+    """**`modes` is total over `kept`, and that totality is the whole guarantee.**
+
+    An optional mode is not a weaker version of this field, it is the defect: a restore with
+    nothing recorded has to choose, every choice available to it is this tool's rather than the
+    user's, and the one it made was `0644`. A record that cannot say what a file was cannot put
+    it back, so it is refused where it is built rather than papered over where it is read.
+    """
+    with pytest.raises(ValueError, match="records no mode"):
+        a_record(paths=(KEPT,), kept=(KEPT,), modes={})
+
+
+def test_a_record_recording_a_mode_for_a_path_it_holds_no_bytes_for_is_refused() -> None:
+    """The other direction: `modes` is keyed **within** `kept`, as `links` is within `paths`.
+
+    A path outside `kept` was absent when the backup was taken and is put back by being removed
+    (R79) — there is no file for a mode to belong to — and a mode against one would be a claim
+    the restore could never act on.
+    """
+    with pytest.raises(ValueError, match="holds no bytes for"):
+        a_record(
+            paths=(KEPT, "skills/new/SKILL.md"), kept=(KEPT,), modes={"skills/new/SKILL.md": 0o600}
+        )
+
+
+def test_a_link_carries_no_mode() -> None:
+    """**A symlink has no mode of its own worth putting back**, and the record cannot claim one.
+
+    `chmod` follows a link, so setting one would change the permissions of whatever it names — a
+    file outside the target, quite possibly — and `lchmod` is unavailable on Linux. R94 already
+    settles that a link's whole content is its destination. The invariant falls out of the two
+    that precede it: `modes` is keyed within `kept`, and `kept` and `links` are disjoint.
+    """
+    with pytest.raises(ValueError, match="holds no bytes for"):
+        a_record(paths=(LINK,), links={LINK: DESTINATION}, modes={LINK: 0o777})
+
+
+def test_a_mode_outside_the_permission_word_is_refused() -> None:
+    """A mode is twelve bits. A raw `st_mode` — file type bits and all — is not one, and
+    restoring it would ask `chmod` to set a file's *type*, which is not a backup's to change."""
+    with pytest.raises(ValueError, match=r"outside 0\.\.0o7777"):
+        a_record(paths=(KEPT,), kept=(KEPT,), modes={KEPT: 0o100644})
+
+
+def test_a_setuid_bit_is_inside_the_permission_word() -> None:
+    """The positive control for the refusal above, and the reason the bound is `0o7777` rather
+    than `0o777`: a backup puts back what was there, and a file that was setgid before this tool
+    removed it is not restored by putting back nine of its twelve bits."""
+    assert a_record(paths=(KEPT,), kept=(KEPT,), modes={KEPT: 0o2755}).modes[KEPT] == 0o2755
+
+
+def test_a_record_keeping_nothing_records_no_mode() -> None:
+    """The positive control for the four refusals above: a first install into an empty target
+    holds bytes for nothing it describes, so it records no mode either — the empty mapping is
+    the ordinary case and not a fault."""
+    assert a_record(paths=("skills/new/SKILL.md",)).modes == {}

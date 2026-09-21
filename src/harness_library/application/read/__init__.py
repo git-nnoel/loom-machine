@@ -23,6 +23,7 @@ from harness_library.application.read.artifacts import (
     select_artifacts,
     sort_artifacts,
 )
+from harness_library.application.read.backups import list_backups
 from harness_library.application.read.collections import get_collection, list_collections
 from harness_library.application.read.drift import (
     UNHASHED_TARGET_SHA,
@@ -81,6 +82,7 @@ __all__ = [
     "get_artifact_file",
     "get_collection",
     "list_artifacts",
+    "list_backups",
     "list_collections",
     "search_artifacts",
     "select_artifacts",

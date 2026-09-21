@@ -24,7 +24,7 @@ from pathlib import Path
 
 import pytest
 
-from harness_library.domain.errors import ErrorCode, LockHeldError
+from harness_library.domain.errors import ErrorCode, LockHeldError, StateUnwritableError
 from harness_library.domain.lock import WriteLock
 from harness_library.infrastructure.lock import (
     LOCK_SUFFIX,
@@ -32,7 +32,10 @@ from harness_library.infrastructure.lock import (
     FilesystemWriteLock,
     lock_path_for,
 )
-from harness_library.infrastructure.manifest_store import manifest_path_for
+from harness_library.infrastructure.manifest_store import (
+    MANIFESTS_DIRECTORY_NAME,
+    manifest_path_for,
+)
 
 HELD_AT = datetime(2026, 9, 21, 16, 45, tzinfo=UTC)
 """When every sentinel in this module was taken. A parameter, never a clock."""
@@ -375,3 +378,93 @@ def test_the_filesystem_lock_is_the_write_lock_seam(tmp_path: Path) -> None:
     """Satisfied structurally, never inherited — the shape ruling R14 settled for C-4."""
     assert isinstance(a_lock(a_target(tmp_path), state_root=tmp_path / "state"), WriteLock)
     assert issubclass(FilesystemWriteLock, WriteLock)
+
+
+# -- A state root that will not take the sentinel (ruling R111, T-24) ----------------------------
+#
+# This module had no `except OSError` at all until T-24, which made the acquire the one disk step
+# of a write run with no code: a read-only mount, a full disk or a `~/.local/state` one `sudo`
+# run left owned by root reached the user as a raw traceback and exit 1 on every write command.
+#
+# The pair below is the whole distinction. Both are the lock refusing to hand over a target and
+# both guarantee that nothing was written; they differ in what a user must do, and the codes are
+# what tell them apart. `LockHeldError` is not an `OSError`, so the refusal above passes through
+# the new translation untouched — which is what makes that test this one's control.
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root writes into a mode-500 directory regardless")
+def test_a_state_directory_that_will_not_take_the_sentinel_is_state_unwritable(
+    tmp_path: Path,
+) -> None:
+    """**Ruling R111.** `STATE_UNWRITABLE`, and not a `PermissionError` out of `os.open`.
+
+    Simulated with a read-only `manifests/` directory, which is where the sentinel goes — the
+    same shape `tests/infrastructure/test_backup.py` uses for a state root that will not take a
+    backup, and the shape T-23 found the traceback with.
+    """
+    state_root = tmp_path / "state"
+    target = a_target(tmp_path)
+    manifests = state_root / MANIFESTS_DIRECTORY_NAME
+    manifests.mkdir(parents=True)
+    manifests.chmod(0o500)
+    try:
+        with (
+            pytest.raises(StateUnwritableError) as raised,
+            a_lock(target, state_root=state_root).hold(),
+        ):
+            pass  # pragma: no cover - the acquire raises before the block runs
+    finally:
+        manifests.chmod(0o700)
+
+    assert raised.value.code is ErrorCode.STATE_UNWRITABLE
+    assert raised.value.path == str(lock_path_for(target, state_root=state_root))
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root creates a directory under a mode-500 parent")
+def test_a_state_root_that_cannot_be_created_is_state_unwritable_too(tmp_path: Path) -> None:
+    """The `mkdir` and the `os.open` are one condition and take one code.
+
+    Both are "the state directory would not take the sentinel", both happen before the backup,
+    the record and the first file, and a user fixes both the same way. Asserted because the
+    translation is a single `except OSError` around the whole acquire rather than one per
+    syscall: a rule stated at four call sites is a rule three of them can keep while the fourth
+    returns a traceback.
+    """
+    parent = tmp_path / "read-only"
+    parent.mkdir()
+    parent.chmod(0o500)
+    target = a_target(tmp_path)
+    try:
+        with (
+            pytest.raises(StateUnwritableError),
+            a_lock(target, state_root=parent / "state").hold(),
+        ):
+            pass  # pragma: no cover - the acquire raises before the block runs
+    finally:
+        parent.chmod(0o700)
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root writes into a mode-500 directory regardless")
+def test_an_unwritable_state_root_is_not_reported_as_a_held_lock(tmp_path: Path) -> None:
+    """**The two refusals must not be one.** `LOCK_HELD` sends a user to wait for another run;
+    there is no other run, and waiting for it will not make `~/.local/state` writable again.
+
+    The positive control is `test_a_second_lock_on_a_held_target_is_refused` above, which still
+    raises `LockHeldError` — so "not a held lock" cannot mean "nothing is ever a held lock".
+    """
+    state_root = tmp_path / "state"
+    target = a_target(tmp_path)
+    manifests = state_root / MANIFESTS_DIRECTORY_NAME
+    manifests.mkdir(parents=True)
+    manifests.chmod(0o500)
+    try:
+        with (
+            pytest.raises(StateUnwritableError) as raised,
+            a_lock(target, state_root=state_root).hold(),
+        ):
+            pass  # pragma: no cover - the acquire raises before the block runs
+    finally:
+        manifests.chmod(0o700)
+
+    assert not isinstance(raised.value, LockHeldError)
+    assert raised.value.code is not ErrorCode.LOCK_HELD

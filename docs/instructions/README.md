@@ -9,8 +9,8 @@ raised to the user and amended at the source, with a row in the spec's §14 amen
 
 | Phase | Initiative | Status | Independently deployable |
 |---|---|---|---|
-| 1 | `01-store-and-read-path` | **REOPENED** 2026-09-20 for T-11 — ten tasks accepted, T-11 outstanding | Yes — a working read-only CLI and MCP server |
-| 1 | `02-install-and-drift` | Not opened — **blocked on T-11 landing** | Yes |
+| 1 | `01-store-and-read-path` | **CLOSED** 2026-09-21 — 11 tasks, 437 tests, two cold reads resolved | Yes — a working read-only CLI and MCP server |
+| 1 | `02-install-and-drift` | **Plan drafted** — cold read in flight, then the review gate | Yes |
 | 2 | `03-http-api` | Not opened | No — needs 01 |
 | 2 | `04-web-ui` | Not opened | No — needs 03 |
 

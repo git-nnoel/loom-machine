@@ -16,16 +16,14 @@ import pytest
 from harness_library.application.read.drift import (
     UNHASHED_TARGET_SHA,
     diff_against_target,
-    target_path_of,
     target_sha_of,
 )
 from harness_library.application.write.install import plan_install
-from harness_library.domain.artifact import Artifact, ArtifactKind
+from harness_library.domain.artifact import Artifact
 from harness_library.domain.hashing import hash_bytes
 from harness_library.domain.identity import ArtifactType, make_artifact_id
 from harness_library.domain.install_plan import InstallPlan, PlanEntry, Verdict
 from harness_library.domain.manifest import Manifest, ManifestArtifact
-from harness_library.domain.registry import ARTIFACT_TYPE_SPECS, spec_for
 from harness_library.domain.target import TargetFile
 from tests.application.fakes import (
     FakeArtifactRepository,
@@ -105,42 +103,30 @@ def _entry(plan: InstallPlan, path: str) -> PlanEntry:
 
 
 # -------------------------------------------------------------------------------------------
-# The join itself
+# The join, as this module consumes it
 # -------------------------------------------------------------------------------------------
+#
+# `target_path_of` itself moved to `domain/registry.py` with ruling R73 and its three tests moved
+# with it, to `tests/domain/test_registry.py`. What stays here is what *this* module owes: that
+# both the library and the manifest reach a target path through the same call, which is asserted
+# by every verdict test below and by the `FILE`-kind row in particular.
 
 
-def test_a_directory_artifacts_file_joins_onto_its_artifact_root() -> None:
-    """`SKILL.md` belongs to the artifact root; the target holds it under that root."""
-    assert target_path_of(ArtifactType.SKILL, SKILL_NAME, ENTRY) == INSTALLED_ENTRY
-    assert (
-        target_path_of(ArtifactType.SKILL, SKILL_NAME, "references/diagram.png")
-        == "skills/delivery-lead/references/diagram.png"
+def test_the_library_and_the_manifest_reach_one_key_through_the_registrys_join() -> None:
+    """The one thing this layer adds to the join: **both** sources go through it.
+
+    A manifest that reached a different key from the library's would make every installed file
+    read `CREATE` plus `FOREIGN`, and the next apply would rewrite a target it did not need to
+    touch while reporting the user's own copy as foreign.
+    """
+    plan = _plan_of(
+        [make_artifact(SKILL_NAME, files=(make_file(ENTRY, INSTALLED_BYTES),))],
+        [manifest_artifact(SKILL_ID, (make_file(ENTRY, INSTALLED_BYTES),))],
+        (target_file(INSTALLED_ENTRY, INSTALLED_BYTES),),
     )
 
-
-def test_a_file_artifact_is_its_own_root_and_is_not_joined_onto_itself() -> None:
-    """The case the directory formula gets wrong. An agent's root path *is* its entry document,
-    so joining the file onto the root would give `agents/scribe.md/scribe.md`."""
-    assert target_path_of(ArtifactType.AGENT, AGENT_NAME, AGENT_ENTRY) == INSTALLED_AGENT
-
-
-@pytest.mark.parametrize("artifact_type", list(ARTIFACT_TYPE_SPECS), ids=lambda t: t.value)
-def test_the_join_of_an_entry_document_agrees_with_the_type_registry(
-    artifact_type: ArtifactType,
-) -> None:
-    """Over **every** registered type, so a third type cannot be added without meeting this.
-
-    The registry already answers "where is this artifact" (`root_path`) and "where is its entry
-    document inside it" (`entry_path`). The join must land exactly where composing those two
-    lands, or install writes to one place and uninstall looks in another.
-    """
-    spec = spec_for(artifact_type)
-    joined = target_path_of(artifact_type, "example", spec.entry_path("example"))
-
-    if spec.kind is ArtifactKind.DIRECTORY:
-        assert joined == f"{spec.root_path('example')}/{spec.entry_path('example')}"
-    else:
-        assert joined == spec.root_path("example")
+    assert [plan_entry.path for plan_entry in plan.entries] == [INSTALLED_ENTRY]
+    assert _entry(plan, INSTALLED_ENTRY).verdict is Verdict.UNCHANGED
 
 
 def test_the_manifest_joins_through_the_same_root_path_as_the_library() -> None:
@@ -172,7 +158,14 @@ def test_an_agent_and_its_installed_copy_line_up_on_one_key() -> None:
 def test_a_manifest_artifact_whose_id_is_not_an_identity_is_refused() -> None:
     """Not skipped. A record whose files cannot be located leaves them held by neither the
     library nor the manifest — `FOREIGN`, unprunable and ununinstallable, orphaned by the record
-    that exists to make them removable."""
+    that exists to make them removable.
+
+    **The refusal moved one layer down with ruling R74**, which put the guard on
+    `ManifestArtifact.__post_init__`: it now fires while the record is being built, before a plan
+    can be composed at all, and `manifest_store` renders it as a located `ManifestError` carrying
+    `MANIFEST_UNREADABLE`. The subject and the sentence are unchanged, and `_manifest_files` keeps
+    its own raise — unreachable through a constructed `Manifest`, which is the point.
+    """
     with pytest.raises(ValueError, match="not a <type>/<name> identity"):
         _plan_of([], [manifest_artifact("nonsense", ())], ())
 

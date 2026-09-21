@@ -89,6 +89,15 @@ The only status whose remedy is "wait and run it again", which is why it is not 
 the others. Charter §12, ruling R50.
 """
 
+MANIFEST_UNWRITABLE = 11
+"""The record of what this install was about to do could not be written. Contract C-14, R64.
+
+**Nothing happened.** Ruling R63 writes the manifest after the backup and before the first file,
+so this status is the one in the table that carries a guarantee rather than a question: the target
+is exactly as it was. Its own number rather than `TARGET_UNWRITABLE`'s because the two send a user
+to two different directories, and the whole point of these statuses is telling them which.
+"""
+
 EXIT_STATUS: dict[ErrorCode, int] = {
     ErrorCode.LIBRARY_YAML_INVALID: LIBRARY_UNUSABLE,
     ErrorCode.ARTIFACT_NOT_FOUND: NOT_FOUND,
@@ -98,14 +107,16 @@ EXIT_STATUS: dict[ErrorCode, int] = {
     ErrorCode.FILE_NOT_TEXT: BAD_REQUEST,
     ErrorCode.INVALID_QUERY: BAD_REQUEST,
     ErrorCode.NOT_A_LIBRARY: LIBRARY_UNUSABLE,
-    # The install path. One status each, unlike the read path's groups: these five call for five
+    # The install path. One status each, unlike the read path's groups: these six call for six
     # different actions — decide, fix the target, delete the manifest, fix the backup directory,
-    # wait — so grouping them would throw away the only thing a script wants from them.
+    # wait, fix the state directory — so grouping them would throw away the only thing a script
+    # wants from them.
     ErrorCode.INCOMPLETE: INCOMPLETE,
     ErrorCode.TARGET_UNWRITABLE: TARGET_UNWRITABLE,
     ErrorCode.MANIFEST_UNREADABLE: MANIFEST_UNREADABLE,
     ErrorCode.BACKUP_FAILED: BACKUP_FAILED,
     ErrorCode.LOCK_HELD: LOCK_HELD,
+    ErrorCode.MANIFEST_UNWRITABLE: MANIFEST_UNWRITABLE,
 }
 """One entry per `ErrorCode`. A member without one fails `tests/cli/test_exit_codes.py`."""
 
@@ -123,6 +134,7 @@ __all__ = [
     "LIBRARY_UNUSABLE",
     "LOCK_HELD",
     "MANIFEST_UNREADABLE",
+    "MANIFEST_UNWRITABLE",
     "NOT_FOUND",
     "OK",
     "TARGET_UNWRITABLE",

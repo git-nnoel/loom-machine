@@ -85,14 +85,23 @@ def test_contract_is_configured_and_kept(
 WRITE_PACKAGE = "harness_library.application.write"
 READ_PACKAGE = "harness_library.application.read"
 
-WRITE_USE_CASES = ("plan_install",)
-"""Every name `application/write/` exports. A new write use case is added here.
+WRITE_USE_CASES = ("apply_install", "plan_install")
+"""Every use case `application/write/` exports. A new one is added here.
 
 The `mcp-is-read-only` contract forbids `mcp/` from reaching this package, which is the mechanism
 behind "an MCP session cannot mutate the user's harness". What the contract cannot tell is whether
 a *given* use case is in it: move one into `application/read/` and `mypy`, `ruff` and
 `lint-imports` all stay green while the guarantee quietly stops covering it. Naming them here is
 the only thing that fails.
+"""
+
+WRITE_TYPES = ("ApplyResult",)
+"""Every non-use-case name `application/write/` exports — a result type, today.
+
+Listed separately from the use cases so the definition-site guard above keeps meaning "a use case
+is where the contract can see it" rather than quietly widening to any exported name, and listed
+**at all** so that the exports-exactly test below still covers the whole package surface. A name
+that is neither a use case nor named here is what fails.
 """
 
 READ_USE_CASES = ("diff_against_target", "list_artifacts", "search_artifacts", "validate_library")
@@ -135,10 +144,26 @@ def test_every_read_use_case_is_defined_in_the_read_package(name: str) -> None:
     )
 
 
-def test_the_write_package_exports_exactly_the_use_cases_named_here() -> None:
+@pytest.mark.parametrize("name", WRITE_TYPES)
+def test_every_write_type_is_defined_in_the_write_package(name: str) -> None:
+    """The same definition-site check for the package's non-use-case exports.
+
+    A result type is not reachable-from-`mcp/` in the way a use case is, but it is defined in the
+    same module as the function that builds it, and a type that drifted into `application/read/`
+    would be the first half of the use case following it.
+    """
+    write_package = importlib.import_module(WRITE_PACKAGE)
+    exported = getattr(write_package, name)
+
+    assert exported.__module__.startswith(f"{WRITE_PACKAGE}."), (
+        f"{name} is exported from {WRITE_PACKAGE} but defined in {exported.__module__}."
+    )
+
+
+def test_the_write_package_exports_exactly_the_names_named_here() -> None:
     """Discovery is not coverage. A write use case that was never added to `WRITE_USE_CASES`
     would simply not be parametrised, and the guard above would pass having checked nothing
     about it."""
     write_package = importlib.import_module(WRITE_PACKAGE)
 
-    assert sorted(write_package.__all__) == sorted(WRITE_USE_CASES)
+    assert sorted(write_package.__all__) == sorted(WRITE_USE_CASES + WRITE_TYPES)

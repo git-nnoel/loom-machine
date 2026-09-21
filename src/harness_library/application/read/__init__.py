@@ -27,7 +27,6 @@ from harness_library.application.read.collections import get_collection, list_co
 from harness_library.application.read.drift import (
     UNHASHED_TARGET_SHA,
     diff_against_target,
-    target_path_of,
     target_sha_of,
 )
 from harness_library.application.read.dtos import (
@@ -83,7 +82,6 @@ __all__ = [
     "search_artifacts",
     "select_artifacts",
     "sort_artifacts",
-    "target_path_of",
     "target_sha_of",
     "validate_library",
 ]

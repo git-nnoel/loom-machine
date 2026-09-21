@@ -32,13 +32,25 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Protocol, runtime_checkable
 
 from harness_library.domain.artifact import ArtifactFile
+from harness_library.domain.identity import parse_artifact_id
 
 
 @dataclass(frozen=True, slots=True)
 class ManifestArtifact:
     """One artifact as it was installed. Part of contract C-11.
+
+    **The id must parse as `<type>/<name>` — ruling R74, amending C-11.** A manifest is
+    machine-written, but it is a plain JSON file in a user's state directory and a hand-edited one
+    can carry anything. An id that does not parse has no artifact root, so the files it names
+    cannot be located inside the target: nothing can prune them, nothing can uninstall them, and
+    the next scan reports every one of them `FOREIGN` — orphaned by the record that exists to make
+    them removable. The guard belongs here rather than at the join, because
+    `infrastructure/manifest_store.py` turns a `ValueError` raised in this constructor into a
+    located `ManifestError` carrying `MANIFEST_UNREADABLE`, which earns the fault the right code,
+    the right exit status and the field path inside the document for free.
 
     Attributes:
         artifact_id: the canonical `<type>/<name>` identity this record is about.
@@ -60,6 +72,12 @@ class ManifestArtifact:
     def __post_init__(self) -> None:
         if not self.artifact_id:
             raise ValueError("ManifestArtifact.artifact_id must not be empty")
+        if parse_artifact_id(self.artifact_id) is None:
+            raise ValueError(
+                f"the manifest records {self.artifact_id!r}, which is not a <type>/<name> "
+                "identity, so there is no artifact root to locate its files under. A manifest "
+                "this tool wrote cannot contain one; reinstalling into this target rewrites it"
+            )
         if not self.content_hash:
             raise ValueError(
                 f"ManifestArtifact.content_hash must not be empty for {self.artifact_id!r}: an "
@@ -132,4 +150,36 @@ class Manifest:
             )
 
 
-__all__ = ["Manifest", "ManifestArtifact"]
+@runtime_checkable
+class ManifestStore(Protocol):
+    """Where a manifest is kept. One member, and no second.
+
+    **The seam no contract named.** C-12 gave the application layer a target it may write and C-13
+    gave it a backup store, and both are protocols in `domain/` for the same reason: `application/`
+    may not import `infrastructure/`, so anything apply has to *do* arrives as one of these. The
+    manifest was left as module functions in `infrastructure/manifest_store.py`, which is reachable
+    from the composition root and from nowhere apply lives. Ruling R63 makes writing the manifest
+    a step of apply — the one between the backup and the first file — so the seam has to exist.
+
+    Additive, not an amendment: C-11 freezes the `Manifest` *entity*, and this says nothing about
+    its shape. It sits beside `Manifest` rather than in a module of its own, mirroring
+    `domain/target.py`, which carries `TargetFile` and the protocol that reads and writes them.
+
+    `write` alone, because that is all apply does. A member a fake has to implement is a member two
+    tasks can get wrong in two places, and reading a manifest already has a home: the composition
+    root reads it once and hands it to `plan_install` and `apply_install` as a value.
+    """
+
+    def write(self, manifest: Manifest) -> None:
+        """Record `manifest` as this target's manifest, replacing whatever was there.
+
+        Raises:
+            OSError: the manifest could not be written. Deliberately a builtin and not one of this
+                project's errors — ruling R24's posture, kept: `application/` is where a builtin
+                becomes a code, and a store that raised `ManifestWriteError` itself would make
+                that translation untestable by pre-supplying its result.
+        """
+        ...
+
+
+__all__ = ["Manifest", "ManifestArtifact", "ManifestStore"]

@@ -28,10 +28,11 @@ import pytest
 
 from harness_library.domain.artifact import ArtifactFile
 from harness_library.domain.errors import ErrorCode, HarnessLibraryError, ManifestError
-from harness_library.domain.manifest import Manifest, ManifestArtifact
+from harness_library.domain.manifest import Manifest, ManifestArtifact, ManifestStore
 from harness_library.infrastructure.manifest_store import (
     MANIFESTS_DIRECTORY_NAME,
     SCHEMA_VERSION,
+    FilesystemManifestStore,
     canonical_target_path,
     default_state_root,
     manifest_path_for,
@@ -569,3 +570,64 @@ def test_the_manifest_is_named_for_the_target_and_not_after_it(
     read = read_manifest(target, state_root=state_root)
     assert read is not None
     assert read.target_path == canonical_target_path(target)
+
+
+# ------------------------------------------------------------------------------------------------
+# Ruling R74 on disk, and the `ManifestStore` seam (T-16)
+# ------------------------------------------------------------------------------------------------
+
+
+def test_a_hand_edited_artifact_id_arrives_as_a_located_coded_error(
+    target: Path, state_root: Path
+) -> None:
+    """**Ruling R74's whole reason for living on the entity.** `ManifestArtifact` refuses an id
+    that is not `<type>/<name>`, `_build` turns that `ValueError` into a `ManifestError`, and the
+    fault therefore arrives with the right code, the right exit status and the **field path**
+    inside the document — none of which a guard at the join could have given it.
+
+    Without the guard this document read back fine and blew up two layers later, in
+    `application/read/drift.py`, as a bare `ValueError` with no location and no code.
+    """
+    deviate(target, state_root, lambda d: d["artifacts"][0].__setitem__("artifact_id", "nonsense"))
+
+    with pytest.raises(ManifestError) as raised:
+        read_manifest(target, state_root=state_root)
+
+    assert raised.value.code is ErrorCode.MANIFEST_UNREADABLE
+    assert raised.value.location == "artifacts[0]"
+    assert "not a <type>/<name> identity" in str(raised.value)
+
+
+def test_a_manifest_this_tool_wrote_round_trips_through_the_same_guard(
+    target: Path, state_root: Path
+) -> None:
+    """The positive control. Every id in the fixture is well formed, so R74's guard must not be
+    refusing documents this tool produces — the failure mode that would make it look correct
+    while breaking every install."""
+    write_manifest(a_manifest(target), state_root=state_root)
+
+    read = read_manifest(target, state_root=state_root)
+
+    assert read is not None
+    assert [record.artifact_id for record in read.artifacts] == [
+        "skill/delivery-lead",
+        "agent/phase-reviewer",
+    ]
+
+
+def test_the_store_object_writes_where_the_function_does(target: Path, state_root: Path) -> None:
+    """`FilesystemManifestStore` is the `ManifestStore` seam apply writes through — it exists
+    because `application/` may not import this package and ruling R63 makes the manifest write a
+    step of apply. It must land in exactly the place the function lands in, or a manifest written
+    by an install would be invisible to the reader the next one uses."""
+    FilesystemManifestStore(state_root).write(a_manifest(target))
+
+    assert manifest_path_for(target, state_root=state_root).is_file()
+    read = read_manifest(target, state_root=state_root)
+    assert read is not None
+    assert read.target_path == canonical_target_path(target)
+
+
+def test_the_store_object_satisfies_the_domain_protocol() -> None:
+    """Structurally, never by inheritance — the shape ruling R14 settled for C-4."""
+    assert issubclass(FilesystemManifestStore, ManifestStore)

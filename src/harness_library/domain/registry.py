@@ -104,3 +104,32 @@ ARTIFACT_DIRECTORIES: tuple[str, ...] = tuple(
     spec.directory for spec in ARTIFACT_TYPE_SPECS.values()
 )
 """Every directory a library may hold artifacts in, derived — never a second literal list."""
+
+
+def target_path_of(artifact_type: ArtifactType, name: str, file_path: str) -> str:
+    """Where one of an artifact's files lands inside an install target. **The join.**
+
+    The third answer in the same family as `TypeSpec.root_path` and `TypeSpec.entry_path`, and
+    here for that reason (**ruling R73**): all three say where something lives, all three read the
+    same spec, and a second implementation of any of them would disagree exactly where it matters
+    — install writing to one place and uninstall looking in another. It arrived in
+    `application/read/drift.py` only because this module was outside T-15's scope.
+
+    `file_path` is relative to the artifact root, as C-1 defines it and as both the scanner and the
+    manifest record it. The result is relative to the **target** root, which is `PlanEntry.path`
+    and `TargetFile.path`, because install mirrors the library's layout into the target.
+
+    The two kinds differ and the difference is easy to get wrong:
+
+    * a `DIRECTORY` artifact has a root *containing* its files, so the join is `root/file`;
+    * a `FILE` artifact **is** its entry document. Its root path is `agents/<name>.md` and its one
+      file's path is `<name>.md`, so joining onto the root would give `agents/scribe.md/scribe.md`.
+      The prefix is the type's directory, and the result is exactly `root_path(name)` again.
+
+    A function rather than a third `TypeSpec` method: it takes the type and resolves the spec
+    itself, the way `spec_for` does, and the ruling moved it rather than renaming it.
+    """
+    spec = spec_for(artifact_type)
+    if spec.kind is ArtifactKind.DIRECTORY:
+        return f"{spec.root_path(name)}/{file_path}"
+    return f"{spec.directory}/{file_path}"

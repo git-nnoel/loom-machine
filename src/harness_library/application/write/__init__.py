@@ -8,9 +8,10 @@ The contract cannot, however, tell whether a *given* use case belongs here. Movi
 functions into `application/read/` leaves `mypy`, `ruff` and `lint-imports` all green and erodes
 the guarantee silently, so `tests/test_architecture.py` asserts the module each name is defined in.
 
-Initiative 01 left this package empty by design. T-15 fills it with the first entry.
+Initiative 01 left this package empty by design. T-15 fills it with the first entry, and T-16 adds
+the one that actually writes.
 """
 
-from harness_library.application.write.install import plan_install
+from harness_library.application.write.install import ApplyResult, apply_install, plan_install
 
-__all__ = ["plan_install"]
+__all__ = ["ApplyResult", "apply_install", "plan_install"]

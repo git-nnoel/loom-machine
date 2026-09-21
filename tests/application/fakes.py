@@ -19,10 +19,11 @@ result.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
 
 from harness_library.domain.artifact import Artifact, ArtifactFile, ArtifactKind
+from harness_library.domain.backup import BackupRecord
 from harness_library.domain.hashing import content_hash_of_files, hash_bytes
 from harness_library.domain.identity import ArtifactType
 from harness_library.domain.manifest import Manifest, ManifestArtifact
@@ -33,6 +34,9 @@ from harness_library.domain.validation import ValidationCode, ValidationFinding
 
 UPDATED_AT = datetime(2026, 8, 31, 12, 0, tzinfo=UTC)
 """The instant every artifact is pinned to unless a test is about ordering by time."""
+
+TARGET_PATH = "/home/example/.claude"
+"""The install target every fake in this module names. Never a real `~/.claude` (F-9, L37)."""
 
 
 class FakeArtifactRepository:
@@ -172,17 +176,34 @@ class FakeTargetRepository:
     It collects evidence and renders no verdict (L29): `writes` and `deletes` are recordings, and
     every assertion about them lives in a test.
 
+    **It holds real bytes**, so "byte-identical after apply" is an assertion about content and
+    not about the recorder. The two are different claims and only one of them is the criterion:
+    a recorder can be empty because nothing was written *or* because nothing recorded it, and
+    F-9 and F-10 are about the file.
+
     Attributes:
-        writes: `(path, data)` in call order — what an apply would have changed.
+        writes: `(path, data)` in call order — what an apply actually changed.
         deletes: the paths `delete` was called on, in call order.
+        fail_write_after: how many writes to allow before the next one raises `OSError`. `None`
+            allows every write. This is how a mid-write failure is injected: the real repository
+            raises `OSError` from `write_bytes`, and a fake raising the project's own error would
+            make the translation untestable by pre-supplying its result (ruling R24).
     """
 
-    def __init__(self, files: Iterable[TargetFile] = ()) -> None:
+    def __init__(
+        self,
+        files: Iterable[TargetFile] = (),
+        *,
+        contents: Mapping[str, bytes] | None = None,
+        fail_write_after: int | None = None,
+    ) -> None:
         self._files = tuple(files)
         self._contents = {file.path: b"" for file in self._files}
+        self._contents.update(contents or {})
         self.writes: list[tuple[str, bytes]] = []
         self.deletes: list[str] = []
         self.scan_calls = 0
+        self.fail_write_after = fail_write_after
 
     def scan(self) -> tuple[TargetFile, ...]:
         self.scan_calls += 1
@@ -195,6 +216,8 @@ class FakeTargetRepository:
             raise FileNotFoundError(f"this target holds nothing at {path!r}") from error
 
     def write(self, path: str, data: bytes) -> None:
+        if self.fail_write_after is not None and len(self.writes) >= self.fail_write_after:
+            raise OSError(f"the injected failure refuses to write {path!r}")
         self.writes.append((path, data))
         self._contents[path] = data
 
@@ -204,6 +227,91 @@ class FakeTargetRepository:
 
     def exists(self, path: str) -> bool:
         return path in self._contents
+
+    def snapshot(self) -> dict[str, bytes]:
+        """Every path this target holds and its bytes. Evidence for a byte-identical assertion."""
+        return dict(self._contents)
+
+
+def target_holding(*entries: tuple[str, bytes]) -> FakeTargetRepository:
+    """A target holding exactly these paths, with digests that really describe the bytes.
+
+    Built here rather than in each test so the scan a plan is decided from and the content an
+    assertion reads can never disagree — two literals for one file is how a "byte-identical" test
+    ends up comparing a byte string to itself.
+    """
+    return FakeTargetRepository(
+        tuple(target_file(path, data) for path, data in entries), contents=dict(entries)
+    )
+
+
+class FakeBackupStore:
+    """Contract C-13 in memory. Records what it was asked to keep; keeps nothing.
+
+    **What this fake cannot prove.** It cannot prove that a backup survives a `git clean`, that it
+    lands outside the target, or that a restore puts real bytes back. Those are proven against
+    real files in `tests/infrastructure/test_backup.py`. What it *can* prove is the only thing
+    apply decides: that a backup is taken, that it covers every path the run will touch, and that
+    a failure to take one stops the run before anything is written.
+
+    Attributes:
+        created: the path tuples `create` was called with, in call order.
+        restored: the ids `restore` was called with, in call order.
+        fail: raise `OSError` from `create` instead of taking a backup. A builtin, because that is
+            what the real store raises (ruling R24).
+    """
+
+    def __init__(self, *, fail: bool = False, backup_id: str = "2026-09-21T14-29-00Z") -> None:
+        self.created: list[tuple[str, ...]] = []
+        self.restored: list[str] = []
+        self.fail = fail
+        self._backup_id = backup_id
+        self._records: list[BackupRecord] = []
+
+    def create(self, paths: tuple[str, ...]) -> str:
+        if self.fail:
+            raise OSError("the injected failure refuses to take a backup")
+        self.created.append(paths)
+        self._records.append(
+            BackupRecord(
+                backup_id=self._backup_id,
+                created_at=UPDATED_AT,
+                target_path=TARGET_PATH,
+                paths=paths,
+            )
+        )
+        return self._backup_id
+
+    def restore(self, backup_id: str) -> None:
+        self.restored.append(backup_id)
+
+    def list(self) -> tuple[BackupRecord, ...]:
+        return tuple(self._records)
+
+
+class FakeManifestStore:
+    """The `ManifestStore` seam in memory. Holds the last manifest written, and the count.
+
+    Attributes:
+        written: every manifest handed to `write`, in call order. **The evidence for ruling
+            R63**: a test that injects a failure into the first file write and then finds a
+            manifest here has proven the order, and one that finds none has proven it broken.
+        fail: raise `OSError` from `write`. A builtin, for the reason `FakeBackupStore.fail` is.
+    """
+
+    def __init__(self, *, fail: bool = False) -> None:
+        self.written: list[Manifest] = []
+        self.fail = fail
+
+    def write(self, manifest: Manifest) -> None:
+        if self.fail:
+            raise OSError("the injected failure refuses to write the manifest")
+        self.written.append(manifest)
+
+    @property
+    def latest(self) -> Manifest | None:
+        """The manifest on disk, or `None` when none was ever written."""
+        return self.written[-1] if self.written else None
 
 
 def target_file(path: str, content: bytes = b"body\n") -> TargetFile:
@@ -235,7 +343,7 @@ def manifest_artifact(artifact_id: str, files: tuple[ArtifactFile, ...]) -> Mani
 
 def manifest_of(
     *artifacts: ManifestArtifact,
-    target_path: str = "/home/example/.claude",
+    target_path: str = TARGET_PATH,
 ) -> Manifest:
     """A manifest recording exactly these artifacts. `installed_at` is pinned, never `now()`."""
     return Manifest(

@@ -9,15 +9,21 @@ added to `ErrorCode` before it is emitted**, never invented at a raise site.
 cannot then disagree about their code, and adding a new code means adding a new class — which is
 the moment the taxonomy is meant to be reviewed.
 
-**Four codes currently have no class, deliberately.** `TARGET_UNWRITABLE`, `BACKUP_FAILED`,
+**Two codes currently have no class, deliberately.** `TARGET_UNWRITABLE`, `BACKUP_FAILED`,
 `INCOMPLETE` and `LOCK_HELD` entered the enum in T-13 together with `MANIFEST_UNREADABLE`, because
 invariant I-8 makes `cli/exit_codes.py` total over `ErrorCode` and a code added later without its
 exit row turns the gate red in a task that looks nothing like the cause (ruling R26's recorded
 failure). What the *contract* fixes is the code and its status; what a class fixes is the fields a
 raise site carries — what a failed backup names, what a held lock names — and those belong to the
-tasks that raise them (T-16, T-17, T-22). So the sentence above still holds in the direction that
+tasks that raise them. T-16 brought two of the four their classes, `BACKUP_FAILED` and
+`TARGET_UNWRITABLE`, because it is the task that raises them; `INCOMPLETE` and `LOCK_HELD` are
+still waiting for theirs (T-17, T-22). So the sentence above still holds in the direction that
 matters: **no code is invented at a raise site.** A code may arrive before its class; a class may
 never arrive before its code.
+
+**`INCOMPLETE` may never get a class, and that is not an oversight.** It is not a failure — the
+run did everything it safely could — so it is carried by `ApplyResult` and turned into an exit
+status by the CLI, not raised. It is in the enum because C-14 maps it to a status like the others.
 
 **Placement.** This taxonomy is project-wide: `cli/` maps codes to exit codes and `api/` will map
 them to HTTP statuses. It lives in `domain/` because that is the only layer every other layer may
@@ -177,6 +183,25 @@ class ErrorCode(StrEnum):
 
     Charter §12: a single-writer lock, an `O_EXCL` sentinel beside the manifest, stale-broken by
     pid check. Its own code because "wait and retry" is a remedy no other code shares.
+    """
+
+    MANIFEST_UNWRITABLE = "MANIFEST_UNWRITABLE"
+    """The record of what an install is about to do could not be written, so it did not run.
+
+    Contract C-14 and **ruling R64**, which also fixes its exit status at 11. T-13 flagged the gap
+    the moment it appeared: the C-6 amendment gave `MANIFEST_UNREADABLE` for a manifest that
+    cannot be *read* and nothing at all for one that cannot be *written*, and `write_manifest` let
+    a bare `OSError` surface rather than borrow a code whose name says something else.
+
+    **Under ruling R63 this always means nothing happened.** The manifest is written after the
+    backup and before the first file, so a failure here aborts with the target untouched. That
+    ordering is what lets this code carry a guarantee instead of a question: were the manifest
+    written last, the same failure would leave a modified target with no record of what was put
+    there, every installed path reading `FOREIGN` — untouchable by install, unremovable by
+    uninstall, and recoverable by nothing this initiative ships.
+
+    Deliberately **not** `TARGET_UNWRITABLE`: the target is fine. The user must look at their
+    state directory, and a code naming the wrong directory sends them to the wrong place.
     """
 
 
@@ -383,6 +408,85 @@ class ManifestError(HarnessLibraryError):
         self.reason = reason
         located = reason if location is None else f"{location}: {reason}"
         super().__init__(_render(located, path=path, line=line, column=column))
+
+
+# -- The write path (initiative 02, T-16) --------------------------------------------------------
+#
+# Three classes over three codes that have been in the contract since T-13 — two of them waiting
+# for the task that raises them, and `MANIFEST_UNWRITABLE` arriving with its own row in
+# `cli/exit_codes.py` in this same edit (C-14, R64). Each carries the location a user has to go
+# and look at, because all three name a directory and they name three different ones.
+
+
+class BackupFailedError(HarnessLibraryError):
+    """The pre-install backup could not be taken, so nothing was written.
+
+    The refusal F-9 rests on. Install does not proceed unprotected: a write with no way back is
+    the failure mode this whole initiative exists to remove, and "the backup directory is broken"
+    is a problem a user can fix in a minute, while an overwritten harness is not.
+
+    Attributes:
+        code: always `ErrorCode.BACKUP_FAILED`.
+        reason: the human sentence, usually the underlying `OSError`'s. Not contract.
+    """
+
+    code = ErrorCode.BACKUP_FAILED
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+        super().__init__(
+            f"the backup could not be taken, so nothing was written: {reason}. Install refuses "
+            "to write a target it cannot put back"
+        )
+
+
+class ManifestWriteError(HarnessLibraryError):
+    """The manifest could not be written, so the install did not run.
+
+    The loud half of ruling R63's ordering. Because the manifest is written *before* the first
+    file, this error always means the target is untouched — see `ErrorCode.MANIFEST_UNWRITABLE`
+    for why the other ordering would make the same failure unrecoverable.
+
+    The sibling of `ManifestError`, which is the *read* failure and carries a location inside the
+    document. This one has no location inside anything: the document was never written.
+
+    Attributes:
+        code: always `ErrorCode.MANIFEST_UNWRITABLE`.
+        path: the manifest file that could not be written, as text, or `None` when the store does
+            not have one to name. Present-and-null, never omitted.
+        reason: the human sentence, usually the underlying `OSError`'s. Not contract.
+    """
+
+    code = ErrorCode.MANIFEST_UNWRITABLE
+
+    def __init__(self, reason: str, *, path: str | None = None) -> None:
+        self.path = path
+        self.reason = reason
+        located = reason if path is None else f"{path}: {reason}"
+        super().__init__(f"the manifest could not be written, so nothing was installed: {located}")
+
+
+class TargetUnwritableError(HarnessLibraryError):
+    """A path in the install target could not be written or removed.
+
+    Unlike its two siblings this one can be raised **part-way through**: the manifest is already
+    on disk and the files before this one are already written. That is ruling R63's accepted
+    cost — the manifest over-claims, and an over-claim is self-correcting, because every path it
+    names that was never written comes back `LOCAL_EDIT` or `CONFLICT` on the next `hl diff`
+    rather than disappearing into `FOREIGN`.
+
+    Attributes:
+        code: always `ErrorCode.TARGET_UNWRITABLE`.
+        path: the target-relative path that failed.
+        reason: the human sentence, usually the underlying `OSError`'s. Not contract.
+    """
+
+    code = ErrorCode.TARGET_UNWRITABLE
+
+    def __init__(self, path: str, reason: str) -> None:
+        self.path = path
+        self.reason = reason
+        super().__init__(f"{path} could not be written into the target: {reason}")
 
 
 def _render(reason: str, *, path: str, line: int | None, column: int | None) -> str:

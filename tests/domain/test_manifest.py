@@ -16,7 +16,7 @@ from datetime import UTC, datetime, timedelta, timezone
 import pytest
 
 from harness_library.domain.artifact import ArtifactFile
-from harness_library.domain.manifest import Manifest, ManifestArtifact
+from harness_library.domain.manifest import Manifest, ManifestArtifact, ManifestStore
 
 INSTALLED_AT = datetime(2026, 9, 21, 14, 30, tzinfo=UTC)
 
@@ -152,3 +152,53 @@ def test_an_empty_content_hash_is_refused() -> None:
     artifact as changed on the very next run."""
     with pytest.raises(ValueError, match="content_hash"):
         ManifestArtifact(artifact_id="skill/x", content_hash="")
+
+
+# -- Ruling R74, amending C-11: the id must be a <type>/<name> identity ---------------------------
+#
+# Added by T-16. The three tests above are untouched; an empty id is still refused by its own
+# rule, and these are about an id that is present and unusable.
+
+
+@pytest.mark.parametrize(
+    "artifact_id",
+    ["nonsense", "skill", "skill/", "/delivery-lead", "widget/thing", "skill/a/b"],
+)
+def test_an_artifact_id_that_is_not_an_identity_is_refused(artifact_id: str) -> None:
+    """**Ruling R74.** A manifest is machine-written but lives as plain JSON in a user's state
+    directory, and a hand-edited one can carry anything.
+
+    An id that does not parse has no artifact root, so the files it names cannot be located inside
+    the target: nothing prunes them, nothing uninstalls them, and the next scan reports every one
+    of them `FOREIGN` — orphaned by the record whose whole job is to make them removable.
+    """
+    with pytest.raises(ValueError, match="not a <type>/<name> identity"):
+        ManifestArtifact(artifact_id=artifact_id, content_hash="f" * 64)
+
+
+def test_a_well_formed_identity_is_accepted_for_every_type() -> None:
+    """The positive control. Without it, "rejects a bad id" and "rejects every id" look alike."""
+    for artifact_id in ("skill/delivery-lead", "agent/phase-reviewer"):
+        assert ManifestArtifact(artifact_id=artifact_id, content_hash="f" * 64).artifact_id == (
+            artifact_id
+        )
+
+
+def test_the_store_protocol_is_satisfied_structurally() -> None:
+    """`ManifestStore` is implemented, never inherited — the shape ruling R14 settled for C-4."""
+
+    class Store:
+        def write(self, manifest: Manifest) -> None:
+            return None
+
+    assert isinstance(Store(), ManifestStore)
+
+
+def test_an_object_that_cannot_write_is_not_a_manifest_store() -> None:
+    """The positive control for the check above."""
+
+    class NotAStore:
+        def read(self) -> None:
+            return None
+
+    assert not isinstance(NotAStore(), ManifestStore)

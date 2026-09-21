@@ -506,3 +506,180 @@ uv run ruff format --check . && uv run ruff check . && uv run mypy src tests && 
 ```
 
 Whole, every time (L2), exit code read without a pipe (L44). Baseline 584 passed.
+
+---
+
+# Backend task plan — T-16, the backup store and the apply
+
+Initiative 02 · phase 1 · base commit `011762f` · owner `backend-developer-specialist`.
+Realises contract **C-13** (`BackupStore`, `BackupRecord`) and `ApplyInstall`, and carries three
+corrections: **R73** (`target_path_of` moves to `domain/registry.py`), **R74** (the `<type>/<name>`
+guard onto `ManifestArtifact`) and **R75** (an ERROR finding makes an artifact `SKIPPED`).
+**Ruling R63 — back up, write the manifest, write the files — is the task.**
+
+## 1. Where the code goes
+
+| File | Why |
+|---|---|
+| `src/harness_library/domain/backup.py` | new. C-13's `BackupRecord` and `BackupStore`. A module of its own rather than a section of `manifest.py`: a backup is a *copy of a target*, a manifest is a *record of an install*, and T-18 restores one without reading the other. Costs one line in `tests/domain/test_purity.py` (L13, L18) |
+| `src/harness_library/domain/manifest.py` | **R74**'s guard on `ManifestArtifact.__post_init__`, and the **`ManifestStore` protocol** — see §3, it is the one seam no contract named |
+| `src/harness_library/domain/registry.py` | **R73**. `target_path_of` lands beside `root_path` and `entry_path`, the third answer in the same family |
+| `src/harness_library/domain/errors.py` | `MANIFEST_UNWRITABLE` (C-14, R64) and three classes for codes that have been in the contract since T-13: `BackupFailedError`, `TargetUnwritableError`, `ManifestWriteError` |
+| `src/harness_library/cli/exit_codes.py` | `MANIFEST_UNWRITABLE = 11` and its row. I-8 keeps the table total |
+| `src/harness_library/infrastructure/backup.py` | new. `FilesystemBackupStore` under the state root |
+| `src/harness_library/infrastructure/manifest_store.py` | `FilesystemManifestStore` — the protocol over the module functions already here |
+| `src/harness_library/application/write/install.py` | `apply_install`, `ApplyResult`, and R75's narrowing on `plan_install` |
+| `src/harness_library/application/read/drift.py` · `read/__init__.py` | R73's mirrors. This **deletes** a function |
+| `tests/domain/test_backup.py` · `tests/infrastructure/test_backup.py` | new |
+| `tests/application/fakes.py` | `FakeBackupStore`, `FakeManifestStore`, and real bytes behind `FakeTargetRepository` so "byte-identical" is an assertion over content and not over a recording |
+| `tests/domain/test_registry.py` · `test_manifest.py` · `test_purity.py` · `tests/infrastructure/test_manifest_store.py` · `tests/application/test_drift.py` · `test_install.py` · `tests/test_architecture.py` · `tests/cli/test_exit_codes.py` | the mirrors, each named in §7 |
+
+No dependency change; everything used is stdlib or already imported in `infrastructure/`.
+
+## 2. R63, as five steps and one rule
+
+```
+1  decide          which entries are written, which are deleted, which are left alone
+2  back up         every path step 1 will write or delete
+3  write manifest  composed from the library, the previous manifest and step 1
+4  write files     then delete the pruned ones
+5  report          ApplyResult, from which the caller exits INCOMPLETE
+```
+
+**The manifest is written before the first file and that is the whole ordering.** A crash between
+the two can only make the manifest *over*-claim, and over-claiming is self-correcting: a path the
+manifest names that was never written comes back `LOCAL_EDIT` or `CONFLICT` on the next `hl diff`,
+which is a decision the user is asked to make. The other order loses files: a crash after the last
+write and before the manifest leaves every installed path held by neither the library's record nor
+the manifest, so it reads `FOREIGN` — install will not touch it and uninstall cannot remove it, and
+nothing this initiative ships can recover it. Under this order `MANIFEST_UNWRITABLE` always means
+*nothing happened*.
+
+**No rollback.** A failure at file *k* leaves files 1…k−1 written and the manifest already on disk.
+That is the over-claim the ordering is designed around, and undoing it is T-18's rollback from the
+backup this task takes. The suite asserts the byte-identical case at the boundary the ordering
+actually guarantees: a failure injected into the **first** write.
+
+Per verdict: `CREATE` and `UPDATE` are written · `MANIFEST_REPAIR` changes the manifest and touches
+**no file** · `UNCHANGED` and `FOREIGN` are untouched · `LOCAL_EDIT`, `CONFLICT` and `SKIPPED` are
+left alone and named in `ApplyResult.left_alone` · `PRUNE` is deleted only when `prune=True`.
+
+## 3. What the contracts left open, and what I decided
+
+| Open point | Decision |
+|---|---|
+| **Apply must write the manifest and `application/` may not import `infrastructure/`** | a **`ManifestStore` protocol** on `domain/manifest.py`, one member, `write(manifest)`. The one seam no contract named — C-13 gave apply a backup store and C-12 a target, and left the manifest as module functions in `infrastructure/`. It is additive: C-11's entity is untouched. Beside `Manifest` rather than in a module of its own, mirroring `domain/target.py`'s `TargetFile` + `TargetRepository` |
+| Which paths are backed up | **every path the run will write or delete**, not only those the target already holds. A path the target does not hold is recorded in the backup and holds no bytes, so a restore *removes* it — which is what makes a first install undoable. `backup_id` is `None` only for a run that writes and deletes nothing. C-11's prose ("`None` when none was needed — a first install into an empty target overwrites nothing") reads the other way and is the narrower rule; flagged |
+| What `BackupStore.create` is given | **target-relative paths** (R21, C-12's vocabulary). The store knows its own target root |
+| How a restore tells "saved" from "was absent" | the presence of `files/<path>` inside the backup. Not a second list in `backup.json`, which would be a second source of truth for the same fact |
+| A damaged or half-written backup directory | skipped by `list()`. The opposite posture to `read_manifest`'s, deliberately: a half-written backup is exactly what a crashed `create` leaves, and restoring half a target is worse than not offering it. A damaged *manifest* read as empty destroys files; a backup omitted from a listing costs a rollback point |
+| Where R75's refusal belongs | **`plan_install`, not `diff_against_target`.** `write/install.py`'s own docstring already fixed it: "every narrowing that belongs to acting rather than to describing lands here and must not reach the report". A drift report describes what is there; refusing to install an invalid artifact is a decision to act. `force=True` is simply the narrowing not applied, so nothing is lost under it — including a `CONFLICT`'s reason |
+| Which of an invalid artifact's entries become `SKIPPED` | every entry the **library** holds for it. Not its `FOREIGN` neighbours: install never writes or removes a foreign path, and calling one `SKIPPED` would claim a decision is owed where none is. `PRUNE` is unreachable — an artifact the library no longer holds carries no findings |
+| What the new manifest records for a path that was **not** written | the digest the **previous** manifest recorded. Recording the library's digest for a conflicted path would turn a `CONFLICT` into a `LOCAL_EDIT` on the next run and lose the fact that three versions exist. A path with no previous record and no write is recorded nowhere |
+| `ManifestArtifact.content_hash` of a partly-applied artifact | `content_hash_of_files` over the files actually recorded, always — so the whole-artifact digest describes the file list beside it rather than an artifact state that is not installed anywhere |
+| Where the bytes to write come from | `library.read_bytes(artifact_id, file_path)`, keyed by re-deriving **the same forward join** `plan_install` used. There is no inverse join and there should not be one: `target_path_of` is one-way for `FILE` kind, and a second implementation of the layout is what R73 exists to prevent |
+| Whether apply re-scans the target | **no.** It acts on the plan it was given. A re-scan would be a second snapshot, and two snapshots disagreeing is how a path gets written on the strength of a verdict decided about a different file |
+
+## 4. R73, R74, R75 — the three corrections
+
+**R73** moves `target_path_of(artifact_type, name, file_path)` verbatim into `domain/registry.py`.
+Kept a module-level function rather than promoted to a `TypeSpec` method: the ruling says *move*,
+and a method would rename every call site's shape as well as its import. `application/read/` stops
+re-exporting it — R77 accepted that re-export when the function lived in `read/drift.py`, and a
+`domain/` function is reachable from every layer without one.
+
+**R74** puts `parse_artifact_id` on `ManifestArtifact.__post_init__`. `manifest_store._build`
+already turns a domain `ValueError` into a located `ManifestError` carrying `MANIFEST_UNREADABLE`,
+so the guard earns the right code, the right exit status and the field path for free.
+`drift._identity_of`'s raise stays: it is now unreachable through a constructed `Manifest`, which is
+the point, and `parse_artifact_id` still returns `str | None` so the narrowing is not dead code.
+
+**R75** is a plan-time narrowing with an apply-time consequence. `plan_install(..., force=False)`
+replaces the verdict of every library-held entry of an artifact carrying an ERROR finding with
+`SKIPPED`, whose `reason` names the codes that fired. A WARNING never refuses anything (R22).
+
+## 5. Tests
+
+`tests/application/` against fakes, zero disk. `tests/infrastructure/` against `tmp_path`.
+**Nothing anywhere writes to `~/.claude/`**; the real tree is hashed before and after this task and
+compared by content, never by mtime (L37).
+
+The fakes gain real bytes: `FakeTargetRepository` now holds a content map, so every "byte-identical"
+assertion in this task is made **on the file's content** and never on the write recorder. The
+recorder is still there and is what proves the negative — *apply never writes a path absent from the
+plan* — with the positive control in the same test.
+
+## 6. Mutation checks (L35 — read this if the session was interrupted)
+
+Three, each named in the dispatch and in the plan's §9. All three are one-line edits to
+`src/harness_library/application/write/install.py`, backed up first to
+`…/scratchpad/install.py.orig` and restored from that copy rather than from memory of the edit.
+
+**(a)** the manifest is written **after** the files instead of before.
+Must fail: `test_the_manifest_is_on_disk_before_the_first_file_is_written`.
+Must stay green: `test_a_complete_plan_writes_every_file_and_records_them_all`.
+
+**(b)** the backup is skipped when the plan has **more than one** entry.
+Must fail: `test_a_backup_of_every_path_the_run_touches_is_taken_before_any_write` (two entries).
+Must stay green: `test_apply_refuses_when_the_backup_cannot_be_taken` (one entry), so the mutation
+cannot take its own subject away.
+
+**(c)** the conflicted artifact is written along with the safe ones —
+`Verdict.CONFLICT` joins `WRITTEN_VERDICTS`.
+Must fail: `test_a_mixed_plan_writes_the_safe_entries_and_leaves_the_conflict_byte_identical`,
+asserted on the conflicted file's **bytes**.
+Must stay green: `test_a_complete_plan_writes_every_file_and_records_them_all`, the all-safe run.
+
+**Result — none of the three is applied; the module matches its backup by md5**
+(`7d2021712f7fe459f6fc758641df68b5`).
+
+Under **(a)**, `-k "manifest_is_on_disk_before_the_first_file or
+complete_plan_writes_every_file_and_records_them_all"` gave `1 failed, 1 passed`:
+`test_the_manifest_is_on_disk_before_the_first_file_is_written` failed on its own message —
+*"the manifest must already be on disk when the first file write happens (R63) … assert None is
+not None"* — and the happy-path apply **stayed green**, which is the half that matters: a run
+that does not fail cannot tell the two orders apart, so that control is the whole reason the
+failing test has to inject a failure at all. Restored: `2 passed`.
+
+Under **(b)**, `-k "backup_of_every_path_the_run_touches or refuses_when_the_backup_cannot_be_taken"`
+gave `1 failed, 1 passed`:
+`test_a_backup_of_every_path_the_run_touches_is_taken_before_any_write` failed with
+`assert [] == [('skills/delivery-lead/SKILL.md', 'skills/phase-reviewer/SKILL.md')]`, and
+`test_apply_refuses_when_the_backup_cannot_be_taken` **stayed green** — its plan has exactly one
+entry, so the mutation could not take its own subject away by skipping the backup there too.
+Restored: `2 passed`.
+
+Under **(c)**, `-k "mixed_plan_writes_the_safe_entries or
+complete_plan_writes_every_file_and_records_them_all"` gave `1 failed, 1 passed`:
+`test_a_mixed_plan_writes_the_safe_entries_and_leaves_the_conflict_byte_identical` failed on the
+conflicted file's **bytes** — `assert b'# the library has moved on\n' == b'# and then the user
+edited it\n'` — and the all-safe run **stayed green**. The failure is on content and not on the
+report, which is the point: a report saying "I left it alone" is exactly what the wrong
+implementation also says.
+
+One note for the next mutation check here: `test_a_complete_plan_writes_every_file_and_records_them_all`
+is the named control for **two** of the three mutations, and it can be, because neither (a) nor
+(c) changes what a complete, all-safe run does. Nothing else in `tests/application/test_install.py`
+asserts the manifest's position relative to the file writes — the ordering has exactly one
+witness, and it is the only test in the suite that injects a failure into the first write.
+
+## 7. Existing tests changed, and what each asserts now
+
+* `tests/application/test_drift.py::test_a_manifest_artifact_whose_id_is_not_an_identity_is_refused`
+  — same subject, one layer lower. Under R74 the refusal now fires in `ManifestArtifact`'s
+  constructor, before a plan can be built at all; the test says so and keeps its `match`.
+* `tests/application/test_drift.py` imports `target_path_of` from `domain.registry` (R73), and the
+  three tests that exercise the join move to `tests/domain/test_registry.py` with the function.
+* `tests/test_architecture.py` — `WRITE_USE_CASES` gains `apply_install`, and the
+  exports-exactly test gains a `WRITE_TYPES` tuple so `ApplyResult` is covered rather than
+  excepted. The guard is unchanged in kind: nothing leaves `application/write/` unchecked.
+* `tests/cli/test_exit_codes.py` — **added to, never altered**, as in T-13.
+
+## 8. Gate
+
+```
+export PATH="$HOME/.local/bin:$PATH"
+uv run ruff format --check . && uv run ruff check . && uv run mypy src tests && uv run lint-imports && uv run pytest
+```
+
+Whole, every time (L2), exit code read without a pipe (L44). Baseline 635 passed.

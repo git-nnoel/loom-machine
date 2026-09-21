@@ -15,6 +15,7 @@ from harness_library.cli.exit_codes import (
     LIBRARY_UNUSABLE,
     LOCK_HELD,
     MANIFEST_UNREADABLE,
+    MANIFEST_UNWRITABLE,
     NOT_FOUND,
     OK,
     TARGET_UNWRITABLE,
@@ -122,3 +123,44 @@ def test_no_install_status_reuses_a_read_path_status() -> None:
     install = {INCOMPLETE, TARGET_UNWRITABLE, MANIFEST_UNREADABLE, BACKUP_FAILED, LOCK_HELD}
 
     assert read_path.isdisjoint(install)
+
+
+# -- Contract C-14's sixth install status (T-16, ruling R64) --------------------------------------
+#
+# Added, not altered: every test above keeps the sets and the numbers it already asserted, and
+# `MANIFEST_UNWRITABLE` takes a status of its own like the five before it.
+
+
+def test_the_manifest_unwritable_status_is_the_number_r64_fixed() -> None:
+    """The integer itself, because a script branches on it. R64 fixes 11; the table does not
+    choose it."""
+    assert MANIFEST_UNWRITABLE == 11
+    assert exit_status_for(ErrorCode.MANIFEST_UNWRITABLE) == MANIFEST_UNWRITABLE
+
+
+def test_an_unwritable_manifest_is_told_apart_from_an_unreadable_one_and_from_the_target() -> None:
+    """Three directories, three remedies, three numbers.
+
+    `MANIFEST_UNREADABLE` says the record is damaged — delete it and reinstall.
+    `MANIFEST_UNWRITABLE` says it could not be written and, under ruling R63, that **nothing
+    happened** — fix the state directory. `TARGET_UNWRITABLE` says the install target will not
+    take a write. A user sent to the wrong one of the three looks in the wrong place.
+    """
+    statuses = {MANIFEST_UNREADABLE, MANIFEST_UNWRITABLE, TARGET_UNWRITABLE}
+
+    assert len(statuses) == 3
+
+
+def test_no_install_status_collides_with_another() -> None:
+    """The six together, as one set. A sixth code reusing a fifth's number would make a script
+    that already branches on 6..10 read this one as something it is not."""
+    install = {
+        ErrorCode.INCOMPLETE,
+        ErrorCode.TARGET_UNWRITABLE,
+        ErrorCode.MANIFEST_UNREADABLE,
+        ErrorCode.BACKUP_FAILED,
+        ErrorCode.LOCK_HELD,
+        ErrorCode.MANIFEST_UNWRITABLE,
+    }
+
+    assert len({exit_status_for(code) for code in install}) == len(install)

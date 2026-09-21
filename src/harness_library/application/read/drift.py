@@ -13,11 +13,12 @@ apply rewrites a file it did not need to touch while reporting someone else's fi
   the artifact inside the target;
 * the **target** (C-12) holds `TargetFile.path`, already relative to the target root.
 
-`target_path_of` is the join, and it reads `registry.TypeSpec`, which owns the layout. Nothing
-stores the prefix: once per file it would repeat the same string N times, and once per artifact it
-would be a second source of truth for something `TypeSpec` already answers — the two would disagree
-the first time a type's directory moved, and the disagreement would surface as install writing to
-one place and uninstall looking in another.
+`registry.target_path_of` is the join, and it lives in `domain/registry.py` beside `root_path` and
+`entry_path` — **ruling R73**, which moved it out of this module: all three answer where something
+lives and all three read one `TypeSpec`. Nothing stores the prefix: once per file it would repeat
+the same string N times, and once per artifact it would be a second source of truth for something
+`TypeSpec` already answers — the two would disagree the first time a type's directory moved, and
+the disagreement would surface as install writing to one place and uninstall looking in another.
 
 **Nothing here decides a verdict.** `domain/install_plan.py` owns that table and
 `plan_entry_for` is the only constructor used, because the four conflict shapes have four causes
@@ -36,11 +37,11 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import NamedTuple
 
-from harness_library.domain.artifact import Artifact, ArtifactKind
+from harness_library.domain.artifact import Artifact
 from harness_library.domain.identity import ArtifactType, parse_artifact_id
 from harness_library.domain.install_plan import InstallPlan, PlanEntry, plan_entry_for
 from harness_library.domain.manifest import Manifest
-from harness_library.domain.registry import spec_for
+from harness_library.domain.registry import spec_for, target_path_of
 from harness_library.domain.repository import ArtifactRepository
 from harness_library.domain.target import TargetFile, TargetRepository
 
@@ -57,28 +58,6 @@ So the path is reported as present, carrying a value no digest can equal. The ru
 the right answer and is now one somebody wrote down. The angle brackets are what make the collision
 impossible: `hash_bytes` returns lowercase hex and nothing else.
 """
-
-
-def target_path_of(artifact_type: ArtifactType, name: str, file_path: str) -> str:
-    """Where one of an artifact's files lands inside the target. **The join.**
-
-    `file_path` is relative to the artifact root, as C-1 defines it and as both the scanner and the
-    manifest record it. The result is relative to the target root, which is `PlanEntry.path` and
-    `TargetFile.path`, because install mirrors the library's layout into the target.
-
-    The two kinds differ and the difference is easy to get wrong:
-
-    * a `DIRECTORY` artifact has a root *containing* its files, so the join is `root/file`;
-    * a `FILE` artifact **is** its entry document. Its root path is `agents/<name>.md` and its one
-      file's path is `<name>.md`, so joining onto the root would give `agents/scribe.md/scribe.md`.
-      The prefix is the type's directory, and the result is exactly `root_path(name)` again.
-
-    Every part comes from `TypeSpec`; no caller builds `f"skills/{name}"` for itself.
-    """
-    spec = spec_for(artifact_type)
-    if spec.kind is ArtifactKind.DIRECTORY:
-        return f"{spec.root_path(name)}/{file_path}"
-    return f"{spec.directory}/{file_path}"
 
 
 def target_sha_of(file: TargetFile) -> str:
@@ -265,6 +244,5 @@ def _root_containing(path: str, roots: Mapping[str, str]) -> str | None:
 __all__ = [
     "UNHASHED_TARGET_SHA",
     "diff_against_target",
-    "target_path_of",
     "target_sha_of",
 ]

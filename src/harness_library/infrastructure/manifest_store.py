@@ -168,9 +168,11 @@ def write_manifest(manifest: Manifest, *, state_root: Path) -> Path:
     non-canonical spelling still lands where `read_manifest` will look for it.
 
     A failure to write is **not** translated into a `ManifestError`: that code says a manifest
-    could not be *read*, and contract C-6 carries no code for a manifest that could not be
-    written. The `OSError` surfaces to the caller, which is the same posture the read path took
-    before ruling R24 gave it codes. Flagged to the delivery lead by T-13.
+    could not be *read*. T-13 flagged the gap and **ruling R64 closed it** —
+    `MANIFEST_UNWRITABLE`, exit status 11 — but the translation still does not happen here. The
+    `OSError` surfaces, exactly as the read path's builtins do, and `application/write/install.py`
+    turns it into `ManifestWriteError`. Ruling R24's posture, kept: a store that raised the
+    project's own error would make that translation untestable by pre-supplying its result.
 
     Raises:
         OSError: the state directory could not be created, or the document could not be written.
@@ -483,10 +485,43 @@ def _describe(value: Any) -> str:
     return f"{value!r}"
 
 
+class FilesystemManifestStore:
+    """`ManifestStore` over the functions above, for one state root. Contract's seam, not C-11.
+
+    The protocol lives in `domain/manifest.py` and is satisfied structurally — this class does not
+    inherit it, the shape ruling R14 settled for C-4 and C-12 keeps.
+
+    It exists because `application/` may not import `infrastructure/` and ruling R63 makes writing
+    the manifest a step of apply rather than something the composition root does afterwards. The
+    functions stay the implementation; this is the object that carries the state root so that the
+    caller does not have to pass it through a use case that has no other use for it.
+
+    **Not a cache and not a reader.** `read_manifest` is called once by the composition root and
+    its result is handed to `plan_install` and `apply_install` as a value, so that both judge one
+    snapshot. An object that could read as well would invite a second read, and two reads of one
+    manifest is two answers about what is installed.
+    """
+
+    def __init__(self, state_root: Path) -> None:
+        """Bind the store to a state root. `default_state_root()` in production, `tmp_path`
+        in every test — nothing here reads the environment (charter §13)."""
+        self._state_root = state_root
+
+    def write(self, manifest: Manifest) -> None:
+        """Record `manifest`, atomically. See `write_manifest` for what atomically means here.
+
+        Raises:
+            OSError: the document could not be written. Left as a builtin on purpose; see
+                `write_manifest`.
+        """
+        write_manifest(manifest, state_root=self._state_root)
+
+
 __all__ = [
     "MANIFESTS_DIRECTORY_NAME",
     "SCHEMA_VERSION",
     "STATE_DIRECTORY_NAME",
+    "FilesystemManifestStore",
     "canonical_target_path",
     "default_state_root",
     "manifest_path_for",

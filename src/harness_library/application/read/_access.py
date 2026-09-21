@@ -47,6 +47,34 @@ def entry_path_of(artifact: Artifact) -> str:
     return spec_for(artifact.type).entry_path(artifact.name)
 
 
+def read_file_bytes(repository: ArtifactRepository, artifact_id: str, path: str) -> bytes:
+    """Raw bytes of one file, with every repository failure translated.
+
+    The same three translations as `read_file_text` and **not the fourth**: nothing decodes here,
+    so `UnicodeDecodeError` cannot arise and its place above `ValueError` is not needed. Said
+    rather than left out, because the ordering rule in the module docstring is load-bearing two
+    lines away and a reader comparing the two functions should not have to wonder.
+
+    Install reads through this rather than calling the repository directly: a torn read — a file
+    in the scan that is gone by the time apply asks for it — is a fault a caller must be able to
+    branch on, and a bare `FileNotFoundError` surfacing out of the write path is not one.
+
+    Raises:
+        ArtifactNotFoundError: no artifact with this id.
+        ArtifactFileNotFoundError: the artifact contains no file at this path.
+        InvalidFilePathError: the path is absolute, empty, climbs out of the root, or is a symlink
+            that ruling R6 never follows.
+    """
+    try:
+        return repository.read_bytes(artifact_id, path)
+    except KeyError as error:
+        raise ArtifactNotFoundError(artifact_id) from error
+    except FileNotFoundError as error:
+        raise ArtifactFileNotFoundError(artifact_id, path) from error
+    except ValueError as error:
+        raise InvalidFilePathError(artifact_id, path, str(error)) from error
+
+
 def read_file_text(repository: ArtifactRepository, artifact_id: str, path: str) -> str:
     """Decoded text of one file, with every repository failure translated.
 
@@ -70,4 +98,4 @@ def read_file_text(repository: ArtifactRepository, artifact_id: str, path: str) 
         raise InvalidFilePathError(artifact_id, path, str(error)) from error
 
 
-__all__ = ["entry_path_of", "read_file_text", "require_artifact"]
+__all__ = ["entry_path_of", "read_file_bytes", "read_file_text", "require_artifact"]

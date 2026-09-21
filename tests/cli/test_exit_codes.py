@@ -168,12 +168,19 @@ def test_no_install_status_collides_with_another() -> None:
     assert len({exit_status_for(code) for code in install}) == len(install)
 
 
-# -- Contract C-14's seventh install status (T-17, ruling R81) ------------------------------------
+# -- Contract C-14's seventh install status (T-17, ruling R81; emitted from T-21) -----------------
 #
-# Added, not altered, as in T-13 and T-16. **Nothing emits `TARGET_UNREADABLE`**: C-14 named the
-# integer, no `ErrorCode` carried it, and this table is required to be total over that enum, so
-# the code and its row exist here before any raise site — the direction charter §9 fixes, and the
-# fourth time this project has found a code living in a document instead of in the contract (R26).
+# Added in T-17, not altered since. `TARGET_UNREADABLE` arrived with its exit row and **no
+# emitter**: C-14 named the integer, no `ErrorCode` carried it, and this table is required to be
+# total over that enum, so the code existed before any raise site — the direction charter §9
+# fixes, and the fourth time this project found a code living in a document instead of in the
+# contract (R26).
+#
+# **T-21 is the task that needed it.** `resolve target` records what is on the target's disk, so
+# it has to read it, and that read can fail. `TargetUnreadableError` is the class;
+# `test_no_error_class_carries_target_unreadable_yet` said in its own docstring that it was meant
+# to be deleted by whichever task added one, and this is that deletion. It is not weakened into
+# something that still passes — the state it asserted is simply no longer true.
 
 
 def test_the_target_unreadable_status_is_the_number_c14_fixed() -> None:
@@ -205,17 +212,19 @@ def test_the_seven_install_statuses_are_seven_distinct_numbers() -> None:
     assert len({exit_status_for(code) for code in install}) == len(install) == 7
 
 
-def test_no_error_class_carries_target_unreadable_yet() -> None:
-    """The state R81 deliberately leaves, said as a fact rather than as a comment.
+def test_target_unreadable_now_has_a_class_that_carries_it() -> None:
+    """**`test_no_error_class_carries_target_unreadable_yet`, replaced rather than weakened.**
 
-    Charter §9 allows a code to arrive before its class and forbids the reverse. `T-14`'s scanner
-    propagates a bare `OSError` for a path it cannot read, and translating that belongs to
-    whichever task decides what a half-readable target does to a plan — so **this test is meant
-    to be deleted by that task**, and its failure is the reminder.
+    That test asserted the state R81 deliberately left — a code in the contract with no emitter —
+    and said in its own docstring that it was meant to be deleted by whichever task added one.
+    T-21 is that task: `resolve target` records what is on the target's disk, so it reads the
+    path, and a read that fails needs exactly the code C-14 already named. Replaced instead of
+    dropped so the fact stays asserted in both directions — an edit that removed
+    `TargetUnreadableError` would fail here rather than pass quietly.
 
-    The positive control is in the same test: the walk really does find codes that have classes,
-    so "not carried" cannot mean "nothing was looked at". It sees only the classes whose module
-    is imported, which for `domain/errors.py` is all of them.
+    The positive control is the sibling assertion: the walk really does find a code with **no**
+    class, so "carried" cannot mean "everything looks carried". It sees only the classes whose
+    module is imported, which for `domain/errors.py` is all of them.
     """
     carried = {
         subclass.code
@@ -223,8 +232,8 @@ def test_no_error_class_carries_target_unreadable_yet() -> None:
         if getattr(subclass, "code", None) is not None
     }
 
-    assert ErrorCode.LOCK_HELD in carried
-    assert ErrorCode.TARGET_UNREADABLE not in carried
+    assert ErrorCode.INCOMPLETE not in carried
+    assert ErrorCode.TARGET_UNREADABLE in carried
 
 
 # -- Contract C-14's eighth install status (T-19, ruling R90) -------------------------------------
@@ -272,11 +281,14 @@ def test_the_eight_install_statuses_are_eight_distinct_numbers() -> None:
 
 
 def test_record_stale_has_a_class_that_carries_it() -> None:
-    """Unlike `TARGET_UNREADABLE`, this code arrives with its raise sites — charter §9 allows a
-    code before its class and forbids the reverse, and R90 named both in one ruling.
+    """Unlike `TARGET_UNREADABLE`, this code arrived **with** its raise sites — charter §9 allows
+    a code before its class and forbids the reverse, and R90 named both in one ruling.
 
     The positive control is the sibling assertion: the walk really does find a code that has no
-    class, so "carried" cannot mean "everything looks carried".
+    class, so "carried" cannot mean "everything looks carried". It used to be
+    `TARGET_UNREADABLE`, which T-21 gave a class; it is now `INCOMPLETE`, which `errors.py`
+    argues may never get one — it is not a failure and is never raised, so it is the one member
+    of the enum this control can rely on.
     """
     carried = {
         subclass.code
@@ -284,5 +296,5 @@ def test_record_stale_has_a_class_that_carries_it() -> None:
         if getattr(subclass, "code", None) is not None
     }
 
-    assert ErrorCode.TARGET_UNREADABLE not in carried
+    assert ErrorCode.INCOMPLETE not in carried
     assert ErrorCode.RECORD_STALE in carried

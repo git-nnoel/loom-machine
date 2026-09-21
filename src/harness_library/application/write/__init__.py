@@ -16,31 +16,50 @@ belongs: `prune_target` for what the library dropped, and `clean_foreign` for wh
 library nor the manifest ever claimed. One module each rather than six functions in `install.py`:
 apply reads a library and builds nothing else, rollback reads a backup and never a library,
 uninstall reads neither, prune reads a plan and no library, and clean reads a plan and removes
-files nothing in this project has any other record of.
+files nothing in this project has any other record of. T-21 adds the two that settle a refusal —
+`resolve_conflict`, which takes one side of one artifact's conflict, and `compare_versions`, which
+shows both and decides nothing.
 
 Two things every one of them shares: the lock (C-16, R82), and the rule that decides which end of
 the run the record goes at (charter §13b, R86). Apply's goes first because apply makes files
-appear; the other four make files disappear and record last.
+appear, and so does `resolve library`'s; the four that make files disappear record last;
+`resolve target` moves no file at all, so the record is its whole run and there is no end to
+choose — see `resolve.py`, which argues it.
+
+**`compare_versions` mutates nothing and is here anyway.** This package is the mechanism behind
+"an MCP session cannot mutate the user's harness", and that contract is a statement about a
+*package*: launching a subprocess editor on the user's machine is not something a read-only
+session should be able to reach, whatever it does afterwards.
 """
 
 from harness_library.application.write.clean import CleanResult, clean_foreign, foreign_entries
 from harness_library.application.write.install import ApplyResult, apply_install, plan_install
 from harness_library.application.write.prune import PruneResult, prune_target, pruned_entries
+from harness_library.application.write.resolve import (
+    ComparisonResult,
+    ResolveResult,
+    compare_versions,
+    resolve_conflict,
+)
 from harness_library.application.write.rollback import RollbackResult, rollback_install
 from harness_library.application.write.uninstall import UninstallResult, uninstall_artifact
 
 __all__ = [
     "ApplyResult",
     "CleanResult",
+    "ComparisonResult",
     "PruneResult",
+    "ResolveResult",
     "RollbackResult",
     "UninstallResult",
     "apply_install",
     "clean_foreign",
+    "compare_versions",
     "foreign_entries",
     "plan_install",
     "prune_target",
     "pruned_entries",
+    "resolve_conflict",
     "rollback_install",
     "uninstall_artifact",
 ]

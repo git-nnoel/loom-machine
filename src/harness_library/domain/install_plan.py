@@ -90,6 +90,22 @@ verdict whose artifact install deliberately leaves alone: two await a human deci
 never readable.
 """
 
+RESOLVABLE_VERDICTS: frozenset[Verdict] = frozenset({Verdict.LOCAL_EDIT, Verdict.CONFLICT})
+"""The verdicts `--resolve` can act on — `BLOCKING_VERDICTS` without `SKIPPED`. **Ruling R99.**
+
+A refused path is resolvable when two versions of it exist and the user can prefer one. That is
+true of a `LOCAL_EDIT` and of all four `CONFLICT` shapes, and it is false of a `SKIPPED` artifact:
+its root is a symlink the scan never followed (V11, R6, R46), so the library holds no bytes for it
+and there is nothing to choose between. `--resolve` therefore does not lift V11, exactly as
+`--force` does not (R99) — and for the same reason, which is that the only two things "resolving"
+it could mean are following the link or destroying it.
+
+Spelled out rather than derived as `BLOCKING_VERDICTS - {Verdict.SKIPPED}`: a tenth verdict joining
+the blocking set would silently become resolvable, and whether a newly refused path has two
+versions to choose between is a judgement, not a subtraction. `tests/domain/test_install_plan.py`
+pins the relationship between the two registers so they cannot drift apart unnoticed.
+"""
+
 EXPLAINED_VERDICTS: frozenset[Verdict] = frozenset({Verdict.SKIPPED, Verdict.CONFLICT})
 """The verdicts C-10 requires a `reason` on, so a plan explains itself without a second lookup.
 

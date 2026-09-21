@@ -14,21 +14,23 @@ a class does not need a code of its own. `BACKUP_FAILED` and `TARGET_UNWRITABLE`
 classes, because what a class fixes is *the fields a raise site carries* and rollback's two
 failures name a backup where apply's named a path. Two remedies would have been two codes; these
 are one remedy each — go and look at where backups live, go and look at the target — reached from
-two directions.
+two directions. T-21 adds a third instance: `ARTIFACT_NOT_FOUND` now carries
+`NothingToResolveError` beside `ArtifactNotFoundError`, because "this library has no such
+artifact" and "this plan refuses nothing about that artifact" send a user to the same listing and
+name two different things in it.
 
-**Two codes currently have no class, deliberately.** `TARGET_UNWRITABLE`, `BACKUP_FAILED`,
+**One code currently has no class, deliberately.** `TARGET_UNWRITABLE`, `BACKUP_FAILED`,
 `INCOMPLETE` and `LOCK_HELD` entered the enum in T-13 together with `MANIFEST_UNREADABLE`, because
 invariant I-8 makes `cli/exit_codes.py` total over `ErrorCode` and a code added later without its
 exit row turns the gate red in a task that looks nothing like the cause (ruling R26's recorded
 failure). What the *contract* fixes is the code and its status; what a class fixes is the fields a
 raise site carries — what a failed backup names, what a held lock names — and those belong to the
 tasks that raise them. T-16 brought two of the four their classes, `BACKUP_FAILED` and
-`TARGET_UNWRITABLE`, and T-17 brought `LOCK_HELD` its own, each in the task that raises it. The
-two still without one are `INCOMPLETE`, which is argued below, and **`TARGET_UNREADABLE`**, which
-T-17 added to the enum under ruling R81 because C-14 named the integer and no enum carried it:
-**nothing emits it yet.** `infrastructure/target.py`'s scan propagates a bare `OSError` for a path
-it cannot read, and giving that failure this code is the work of whichever task decides what a
-half-readable target does to a plan. So the sentence above still holds in the direction that
+`TARGET_UNWRITABLE`, and T-17 brought `LOCK_HELD` its own, each in the task that raises it.
+**`TARGET_UNREADABLE`** entered the enum in T-17 under ruling R81 — C-14 named the integer and no
+enum carried it — and went four tasks with no emitter; **T-21 is the task that needed it**, because
+`resolve target` records what is on the target's disk and so has to read it. The one still without
+a class is `INCOMPLETE`, which is argued below. So the sentence above holds in the direction that
 matters: **no code is invented at a raise site.** A code may arrive before its class; a class may
 never arrive before its code.
 
@@ -542,6 +544,39 @@ class TargetUnwritableError(HarnessLibraryError):
         super().__init__(f"{path} could not be written into the target: {reason}")
 
 
+class TargetUnreadableError(HarnessLibraryError):
+    """A path the install target holds could not be read.
+
+    **The class ruling R81 left for the task that first needed it**, which is T-21's
+    `resolve target`: keeping what is on disk means recording what is on disk, so the bytes are
+    read at resolve time and the read can fail. Charter §9 allows a code to arrive before its
+    class and forbids the reverse; `TARGET_UNREADABLE` entered the enum in T-17 with its exit row
+    and no emitter, and this is the emitter.
+
+    Its own class rather than `TargetUnwritableError`'s because the two send a user to two
+    different problems with the same directory — a permission on one path against a directory
+    that will not take a write — and `ErrorCode.TARGET_UNREADABLE` already has its own status for
+    exactly that reason. It is **not** raised by `scan()`: a scan that cannot list a directory
+    still propagates a bare `OSError` through `infrastructure/target.py`, and translating that is
+    the work of whichever task decides what a half-readable target does to a plan.
+
+    **Nothing was written.** Every read this code covers happens before the run changes anything:
+    `resolve target` writes no file at all, and `compare_versions` writes nothing anywhere.
+
+    Attributes:
+        code: always `ErrorCode.TARGET_UNREADABLE`.
+        path: the target-relative path that could not be read.
+        reason: the human sentence, usually the underlying `OSError`'s. Not contract.
+    """
+
+    code = ErrorCode.TARGET_UNREADABLE
+
+    def __init__(self, path: str, reason: str) -> None:
+        self.path = path
+        self.reason = reason
+        super().__init__(f"{path} could not be read from the target: {reason}")
+
+
 # -- The single writer (initiative 02, T-17, ruling R50) -----------------------------------------
 
 
@@ -688,6 +723,45 @@ class RecordStaleError(HarnessLibraryError):
             "was lost and nothing is unreachable — the manifest still names the files that went, "
             f"so they report as missing until it catches up. Fix this and run the {operation} "
             "again"
+        )
+
+
+# -- Resolving a refusal (initiative 02, T-21, ruling R54) ---------------------------------------
+
+
+class NothingToResolveError(HarnessLibraryError):
+    """`--resolve` was pointed at an artifact this plan refuses nothing about.
+
+    **A new class over an existing code**, the shape T-16, T-17 and T-18 all used, and the code is
+    `ARTIFACT_NOT_FOUND` because the remedy is already that code's: the thing you asked to act on
+    is not here, go and look at what is. `hl diff` is the listing, exit 3 is the status, and no
+    row moves in `cli/exit_codes.py`.
+
+    Loud rather than a quiet no-op, which is charter §13's posture throughout. A resolve that
+    silently did nothing would be indistinguishable from one that resolved everything, and the
+    user asking for it has just been told by an `INCOMPLETE = 6` run that something needs
+    deciding — so "there was nothing to decide" is news, not an empty result.
+
+    **A `SKIPPED` artifact never reaches here.** Ruling R99 says `--resolve` does not lift V11, and
+    the honest way to say that is the way apply already says it: the entry comes back in
+    `left_alone` carrying its V11 reason and the run is incomplete. Calling a symlinked root "not
+    found" would be false — it is right there in the plan, named, and refused for a reason the
+    user can act on.
+
+    Attributes:
+        code: always `ErrorCode.ARTIFACT_NOT_FOUND`.
+        artifact_id: the artifact that was to be resolved.
+        reason: the human sentence. Not contract.
+    """
+
+    code = ErrorCode.ARTIFACT_NOT_FOUND
+
+    def __init__(self, artifact_id: str, reason: str) -> None:
+        self.artifact_id = artifact_id
+        self.reason = reason
+        super().__init__(
+            f"there is nothing to resolve for {artifact_id}: {reason}. Run hl diff to see which "
+            "paths this target refuses and why"
         )
 
 

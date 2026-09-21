@@ -88,8 +88,10 @@ READ_PACKAGE = "harness_library.application.read"
 WRITE_USE_CASES = (
     "apply_install",
     "clean_foreign",
+    "compare_versions",
     "plan_install",
     "prune_target",
+    "resolve_conflict",
     "rollback_install",
     "uninstall_artifact",
 )
@@ -105,13 +107,15 @@ the only thing that fails.
 WRITE_TYPES = (
     "ApplyResult",
     "CleanResult",
+    "ComparisonResult",
     "PruneResult",
+    "ResolveResult",
     "RollbackResult",
     "UninstallResult",
     "foreign_entries",
     "pruned_entries",
 )
-"""Every non-use-case name `application/write/` exports — five result types and two selectors.
+"""Every non-use-case name `application/write/` exports — seven result types and two selectors.
 
 Listed separately from the use cases so the definition-site guard above keeps meaning "a use case
 is where the contract can see it" rather than quietly widening to any exported name, and listed
@@ -124,13 +128,24 @@ each is one comprehension over a plan's verdicts, and they are exported because 
 that drifted into `application/read/` would be the first half of the use case following it.
 """
 
-READ_USE_CASES = ("diff_against_target", "list_artifacts", "search_artifacts", "validate_library")
-"""A sample of `application/read/`'s surface, including T-15's drift report.
+READ_USE_CASES = (
+    "diff_against_target",
+    "export_collection",
+    "list_artifacts",
+    "search_artifacts",
+    "validate_library",
+)
+"""A sample of `application/read/`'s surface, including T-15's drift report and T-21's export.
 
 `diff_against_target` in particular must stay on the read side: it is what `mcp/` reaches, and a
 read use case that drifted into `write/` would break the contract loudly — which is the opposite
 failure and the one that does not need a test. This assertion's job is to make the pair symmetric,
 so the write-side one cannot be read as an arbitrary rule about one function.
+
+**`export_collection` is here because nothing else can see where it lives** (F-16, R45). Spec §5
+puts it on the read side; an export defined in `application/write/` would keep `mypy`, `ruff` and
+`lint-imports` green while being unreachable from the one adapter that should have it, which is
+the same blindness T-15's mutation demonstrated from the other direction.
 """
 
 

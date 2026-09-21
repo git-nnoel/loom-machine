@@ -6,8 +6,10 @@ did not put there and must never touch. So this protocol has no notion of an art
 a type, and no rule about what a path means. It reports what is on disk and it writes what it is
 told to write; every judgement about a path belongs to `install_plan.py`, one layer over.
 
-That division is what makes apply testable without a disk: a fake implementing these five members
-is the whole of the filesystem as far as T-15's plan and T-16's apply can see.
+That division is what makes apply testable without a disk: a fake implementing these members is
+the whole of the filesystem as far as T-15's plan and T-16's apply can see. There are **seven**
+since ruling R97 — five that judge and move bytes, and `read_link` / `write_link`, which exist
+because a link's content is its destination and R6 forbids reaching it any other way.
 
 **Symlinks are recorded, never followed** (ruling R6, charter §7). `is_symlink` is a field rather
 than a reason to omit the entry, because the library scanner's posture — skip it and report it —
@@ -25,11 +27,16 @@ two `hl` processes apart, and nothing keeps a user's editor out.
 `/` as the separator. `PlanEntry.path` is the same vocabulary, so the two join without a
 conversion. This layer performs no I/O; `tests/domain/test_purity.py` bars `pathlib` from it.
 
-**There is no `is_text`.** C-12 gives `TargetFile` four fields and none of the five members needs a
-fifth: content in a target is hashed, written and read as bytes, never searched and never diffed
-here. Where a consumer does need the decision — T-21's `$EDITOR` diff — it is
-`infrastructure.scanner.is_text` over the bytes `read_bytes` returns. Charter §7 wants one
-implementation of that rule, and this module does not add a second.
+**There is no `is_text`.** C-12 gives `TargetFile` four fields and no member needs a fifth: content
+in a target is hashed, written and read as bytes, never searched and never diffed here. Charter §7
+keeps one implementation of that rule — `infrastructure.scanner.is_text` over real bytes — and this
+module does not add a second.
+
+T-21 met the question twice and needed the field neither time. `$EDITOR` is handed bytes and lets
+the editor decide what they are; `resolve target`, which has to put an `ArtifactFile` in the
+manifest, **carries** the flag from whichever side already decided it — the previous record, or the
+library's own `ArtifactFile` — because `application/` may not import `infrastructure/` and a third
+answer to "is this text" is exactly what charter §7 forbids.
 """
 
 from __future__ import annotations
@@ -95,8 +102,13 @@ class TargetFile:
 class TargetRepository(Protocol):
     """Read and write access to one install target. Contract C-12.
 
-    Five members, and no sixth: this is the seam a fake replaces, and every member a fake has to
-    implement is a member T-15 and T-16 can get wrong in two places.
+    **Seven members since ruling R97**, and the count is not incidental: this is the seam a fake
+    replaces, and every member a fake has to implement is a member two tasks can get wrong in two
+    places. Five of them are the original contract; `read_link` and `write_link` arrived on
+    `FilesystemTargetRepository` alone in T-20, because a backup that could not put a symlink back
+    made `clean --foreign` un-undoable for one (R94) and amending a contract is a plan-level
+    decision. R97 is that decision — a ruling that amends a contract in prose and is carried into
+    no protocol is R23's recorded failure, and the seam is only a seam where the protocol says so.
     """
 
     def scan(self) -> tuple[TargetFile, ...]:
@@ -170,6 +182,49 @@ class TargetRepository(Protocol):
             ValueError: the path is empty, absolute, climbs out with `..`, or passes through a
                 symlinked directory. A malformed path is a mistake to report, not an absence to
                 answer `False` to.
+        """
+        ...
+
+    def read_link(self, path: str) -> str:
+        """The raw destination a symlink at this target-relative path names, unresolved.
+
+        **Contract C-12 since ruling R97.** A link's content is not bytes — R6 forbids reading
+        through it, so `read_bytes` refuses one outright and `scan` reports it with no digest.
+        Its content is the text it points at, and this is the only member that answers with it.
+
+        `readlink` and never `resolve`: the destination is wanted as text rather than as a place,
+        a relative destination keeps the `..` components that are the whole diagnosis, and
+        resolving would both follow the link and turn a dangling one — which a backup must still
+        be able to put back — into an error.
+
+        Raises:
+            ValueError: the path is empty, absolute, climbs out with `..`, passes through a
+                symlinked directory, or **is not a symlink at all**. A caller asking a regular
+                file for its destination has confused two kinds of path, and answering would
+                invent one.
+            FileNotFoundError: the target holds nothing at that path.
+        """
+        ...
+
+    def write_link(self, path: str, destination: str) -> None:
+        """Create a symlink at this target-relative path naming `destination`, replacing whatever
+        is there.
+
+        **Contract C-12 since ruling R97**, and the inverse of `read_link` rather than a variant
+        of `write`: `write` puts bytes at a path and refuses to do it through a link, while this
+        one puts a link at the path itself.
+
+        The destination is written **verbatim** and is never resolved, joined or checked. It is
+        the text the link carried when it was recorded, and a restore that "corrected" it would
+        put back a different link from the one it removed. Where it points is not this seam's
+        business — nothing here follows it, and a dangling link is restored as a dangling link,
+        which is what was there.
+
+        Raises:
+            ValueError: the path is empty, absolute, climbs out with `..`, passes through a
+                symlinked directory, or `destination` is empty — a link's destination is its
+                whole content.
+            OSError: the link could not be created.
         """
         ...
 

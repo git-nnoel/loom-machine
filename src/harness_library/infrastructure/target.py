@@ -13,8 +13,9 @@ assembler to turn into V6. None of that belongs here:
   changes is that install has to be able to see that the path it was about to write is a link
   pointing somewhere else. That is the whole difference between reporting a library and reporting
   a place you are about to write into. Since ruling R94 a link can also be **read as a link and
-  written back as one** — `read_link` and `write_link`, which are not C-12 members and exist
-  because a backup that could not put a link back made `clean --foreign` un-undoable for one.
+  written back as one** — `read_link` and `write_link`, which exist because a backup that could
+  not put a link back made `clean --foreign` un-undoable for one, and which **ruling R97 made
+  C-12's sixth and seventh members**.
 
 **What this layer is blind to.** It cannot see whether any path it reports belongs to an artifact,
 was installed by this tool, or has drifted. Those are the verdict rule's (C-9, C-10) and the
@@ -155,14 +156,13 @@ class FilesystemTargetRepository:
         """Whether anything is at this target-relative path, a dangling symlink included."""
         return os.path.lexists(self._locate(path))
 
-    # -- Beyond contract C-12, for the backup store (ruling R94) ---------------------------------
+    # -- Contract C-12's sixth and seventh members (rulings R94, R97) ----------------------------
     #
-    # C-12's protocol has five members "and no sixth", because every member a fake implements is
-    # a member two tasks can get wrong in two places. These two are **not** in it: nothing that
-    # plans or applies an install needs them, and the only caller is `FilesystemBackupStore`,
-    # which already holds this concrete class. That is the shape `library_findings()` had on the
-    # artifact repository before ruling R23 moved it into C-4, and it is flagged the same way:
-    # **C-12 wants these two, and that is a plan-level decision.**
+    # A link's content is its destination, and R6 forbids reaching it any other way — which is
+    # what made a backup unable to put one back (R94) and `clean --foreign` un-undoable for a
+    # foreign link. T-20 added both here alone and flagged that C-12 wanted them, exactly as
+    # `library_findings()` was flagged before R23; **ruling R97 is that decision**, and the
+    # protocol now says so, so a fake is a substitute for the whole surface again.
 
     def read_link(self, path: str) -> str:
         """The raw destination a symlink at this target-relative path names, unresolved.

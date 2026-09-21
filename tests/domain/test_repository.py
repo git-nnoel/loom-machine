@@ -12,12 +12,18 @@ from datetime import UTC, datetime
 from harness_library.domain.artifact import Artifact, ArtifactKind
 from harness_library.domain.identity import ArtifactType
 from harness_library.domain.metadata import Collection
+from harness_library.domain.raw import SymlinkedRoot
 from harness_library.domain.repository import ArtifactRepository
 from harness_library.domain.validation import ValidationFinding
 
 
 class FakeRepository:
-    """The full surface, as the application layer's fakes will be written."""
+    """The full surface, as the application layer's fakes will be written.
+
+    **Seven members since ruling R97**, which put `symlinked_roots()` into C-4 — the journey
+    `library_findings()` made under R23, for the same reason and with the same cost: a member
+    added to a protocol is a member every hand-written implementation of it has to gain (L24).
+    """
 
     def __init__(self, artifacts: list[Artifact], collections: list[Collection]) -> None:
         self._artifacts = artifacts
@@ -40,6 +46,9 @@ class FakeRepository:
 
     def library_findings(self) -> list[ValidationFinding]:
         return []
+
+    def symlinked_roots(self) -> tuple[SymlinkedRoot, ...]:
+        return ()
 
 
 class ReadTextOnlyRepository:

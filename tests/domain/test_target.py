@@ -18,10 +18,17 @@ DIGEST = "a" * 64
 
 
 class FakeTarget:
-    """The full surface, as T-15's and T-16's fakes will be written."""
+    """The full surface, as T-15's and T-16's fakes are written.
+
+    **Seven members since ruling R97**, which put `read_link` and `write_link` into C-12 — T-20
+    added them to `FilesystemTargetRepository` alone and flagged that the contract wanted them.
+    The cost is L24's: a member added to a protocol is a member every hand-written implementation
+    has to gain, in every directory, including the ones a task's scope does not name.
+    """
 
     def __init__(self, files: dict[str, bytes]) -> None:
         self._files = dict(files)
+        self._links: dict[str, str] = {}
 
     def scan(self) -> tuple[TargetFile, ...]:
         return tuple(
@@ -36,10 +43,20 @@ class FakeTarget:
         self._files[path] = data
 
     def delete(self, path: str) -> None:
-        del self._files[path]
+        self._files.pop(path, None)
+        self._links.pop(path, None)
 
     def exists(self, path: str) -> bool:
-        return path in self._files
+        return path in self._files or path in self._links
+
+    def read_link(self, path: str) -> str:
+        return self._links[path]
+
+    def write_link(self, path: str, destination: str) -> None:
+        # A link holds no bytes (R6), so it replaces whatever content was there rather than
+        # sitting beside it — which is what `os.symlink` over an existing file does.
+        self._files.pop(path, None)
+        self._links[path] = destination
 
 
 class ReadOnlyTarget:
@@ -70,7 +87,7 @@ def test_a_target_that_cannot_be_written_does_not_satisfy_it() -> None:
 
 
 def test_a_fake_round_trips_a_write_through_the_protocol() -> None:
-    """The five members compose: what `write` put there, `exists` sees and `read_bytes` returns,
+    """The byte members compose: what `write` put there, `exists` sees and `read_bytes` returns,
     and `delete` takes away. Asserted on a fake because that is the substitutability C-12 is
     frozen for — apply must be testable without a disk."""
     target: TargetRepository = FakeTarget({})
@@ -81,6 +98,28 @@ def test_a_fake_round_trips_a_write_through_the_protocol() -> None:
 
     target.delete("skills/delivery-lead/SKILL.md")
     assert not target.exists("skills/delivery-lead/SKILL.md")
+
+
+def test_a_fake_round_trips_a_link_through_the_protocol() -> None:
+    """**Ruling R97's two members, composed the way the byte members are.**
+
+    A link's content is its destination, and the round trip is what makes that usable: what
+    `write_link` put there, `exists` sees and `read_link` returns **verbatim**, and `delete`
+    unlinks as itself. The destination is deliberately one that climbs out of the target — R6
+    never follows it, so a fake that resolved it would be modelling the escape rather than the
+    contract.
+    """
+    target: TargetRepository = FakeTarget({})
+    target.write_link("skills/delivery-lead/references/elsewhere.md", "../../../outside/leak.md")
+
+    assert target.exists("skills/delivery-lead/references/elsewhere.md")
+    assert (
+        target.read_link("skills/delivery-lead/references/elsewhere.md")
+        == "../../../outside/leak.md"
+    )
+
+    target.delete("skills/delivery-lead/references/elsewhere.md")
+    assert not target.exists("skills/delivery-lead/references/elsewhere.md")
 
 
 # -------------------------------------------------------------------------------------------

@@ -1480,3 +1480,260 @@ exit 0** after this task, read with `… > gate.log 2>&1; echo $?`.
 | **A symlinked root whose destination is another skill in the same library** | both answers stand and neither disturbs the other: the real skill is scanned once under its own name, the alias is reported and skipped. Different target paths, different names, so nothing is written twice and V8 has nothing to say. Pinned in `test_a_skill_symlinked_to_another_skill_in_the_same_library_is_reported_once` |
 | **Where `read_link` / `write_link` live** | on the concrete `FilesystemTargetRepository` and **not** in C-12, whose protocol says five members and no sixth. Nothing that plans or applies needs them; the backup store already holds the concrete class. **Flagged: C-12 wants them** |
 | A version-2 backup after R94 | not offered, as R92 decided for version 1. Reading one with `links = {}` would be true and would be a second code path through the document whose job is to be trustworthy |
+
+---
+
+# Backend task plan — T-21, `--resolve`, export, and two contract corrections
+
+Initiative 02 · phase 1 · base commit `cf517d1` · owner `backend-developer-specialist`.
+Realises **F-15** (`--resolve`, ruling R54) and **F-16** (export as a plain zip, ruling R45), and
+carries **R97**'s two contract corrections: `symlinked_roots()` into **C-4** and
+`read_link`/`write_link` into **C-12**. Rulings **R6**, **R44**, **R54**, **R45**, **R63**, **R64**,
+**R72**, **R82**, **R86**, **R88**, **R90**, **R97**, **R99** bind.
+
+## 1. Where the code goes
+
+| File | Why |
+|---|---|
+| `src/harness_library/domain/resolution.py` | new. `Resolution` (which side), `ConflictVersions` (what a comparison shows) and the `ConflictEditor` protocol. A module of its own rather than a section of `install_plan.py`: the plan is a *judgement* and this is a *decision the user makes about one*, and the seam belongs beside the vocabulary it carries, exactly as `TargetRepository` sits beside `TargetFile`. Costs one line in `tests/domain/test_purity.py` (L13, L18) |
+| `src/harness_library/domain/install_plan.py` | **one register.** `RESOLVABLE_VERDICTS`, beside `BLOCKING_VERDICTS`. Additive; C-9 and C-10 are untouched |
+| `src/harness_library/domain/repository.py` | **C-4 amended (R97).** `symlinked_roots()` becomes the seventh member |
+| `src/harness_library/domain/target.py` | **C-12 amended (R97).** `read_link` and `write_link` become the sixth and seventh members |
+| `src/harness_library/domain/errors.py` | **two classes, no new code.** `NothingToResolveError` over `ARTIFACT_NOT_FOUND`, and **`TargetUnreadableError` over `TARGET_UNREADABLE`** — R81 put that code in the contract in T-17 with no emitter, and `resolve target` is the emitter: keeping what is on disk means reading it. `cli/exit_codes.py` is **untouched**, because no `ErrorCode` member is added and I-8 stays total on its own |
+| `src/harness_library/application/write/resolve.py` | new. `resolve_conflict` / `ResolveResult` and `compare_versions` / `ComparisonResult` |
+| `src/harness_library/application/read/export.py` | new. `export_collection` / `ExportedCollection`. **`read/`, per spec §5** — and `mcp-is-read-only` cannot see the difference, so `tests/test_architecture.py` is the only guard (T-15's mutation proved it) |
+| `src/harness_library/application/write/__init__.py` · `read/__init__.py` | the re-exports |
+| `src/harness_library/infrastructure/repository.py` · `target.py` | the three members stop being "additive, flagged" and become contract |
+| `src/harness_library/infrastructure/editor.py` | new. `SubprocessConflictEditor` — materialises both versions and launches the editor command. **The command is a constructor parameter**: charter §13 keeps `os.environ` in `cli/settings.py`, which is outside this task's territory, so T-22 reads `$EDITOR` and passes it |
+| `tests/application/test_resolve.py` · `test_export.py` | new. Fakes only, zero disk |
+| `tests/test_export.py` | new, cross-layer by necessity — §6 |
+| `tests/domain/test_resolution.py` | new |
+| `tests/infrastructure/test_editor.py` | new. Real files under `tmp_path`, **no process launched** |
+| `tests/application/fakes.py` | `FakeConflictEditor`; the two protocol members on `FakeTargetRepository`; `symlinked_roots()` on `FakeArtifactRepository` |
+| `tests/domain/test_repository.py` · `test_target.py` · `test_purity.py` · `test_install_plan.py` · `tests/test_single_writer.py` · `tests/test_architecture.py` | L24's multi-file cost, each named in §8 |
+
+No dependency change: `zipfile`, `io` and `subprocess` are stdlib, and `subprocess` is already used
+in `infrastructure/timestamps.py`. No CLI command, no flag spelling.
+
+## 2. `--resolve` is two use cases, not three modes
+
+R54 gives three ways to resolve one artifact. Two of them end in a record and one ends in nothing
+changing, so they are two functions with two result types — the same split `prune`, `clean` and
+`uninstall` already are, and for the same reason: a function whose return shape is *"I wrote a file
+and a record"* **or** *"I showed you two blobs"* has two return shapes.
+
+* `resolve_conflict(..., resolution: Resolution)` — `Resolution.LIBRARY` or `Resolution.TARGET`.
+* `compare_versions(..., editor: ConflictEditor)` — `$EDITOR` with both versions. **No merge**, and
+  nothing is read back from the editor: R54's phrase is *so the user can decide*, and the decision
+  is then expressed by re-running with `library` or `target`. Writing back whatever the user left
+  in the buffer would be a third version neither side holds, recorded as if this tool had installed
+  it — a larger claim than `resolve target`'s and one nobody asked for.
+
+**Both live in `application/write/`.** `compare_versions` mutates nothing, and it still belongs
+there: `mcp-is-read-only` is what stops an MCP session launching a subprocess editor on the user's
+machine, and that contract is a statement about a *package*.
+
+**Both take the lock** (R82, C-16), required and keyword-only. For `compare_versions` that is not
+ceremony: while the user is looking at two versions of a path, no apply may move it underneath
+them. The cost is that the lock is held for as long as the editor runs, so a concurrent
+`hl install` exits `LOCK_HELD = 10` — correct, and flagged.
+
+**Resolution is per artifact.** The entries acted on are exactly those whose `artifact_id` is the
+one named and whose verdict is in `RESOLVABLE_VERDICTS`. Another artifact's conflict is not in the
+list, is not written, and is not recorded — which is mutation (a).
+
+## 3. What each side means, per conflict shape
+
+`RESOLVABLE_VERDICTS = {LOCAL_EDIT, CONFLICT}` — `BLOCKING_VERDICTS` minus `SKIPPED`, which is
+**R99**: a `SKIPPED` artifact was never scanned, so it has no two versions to choose between.
+`--resolve` does not lift V11 any more than `--force` does. A `SKIPPED` entry is reported in
+`left_alone` carrying its V11 reason and the run comes back incomplete — the same answer apply
+gives, which is the point.
+
+| Presence (library, manifest, target) | `resolve library` | `resolve target` |
+|---|---|---|
+| all three, or `LOCAL_EDIT` | write the library's bytes; record the library's digest | write nothing; record the target's digest |
+| `(True, False, True)` — no manifest ever recorded it | write; record the library's | record the target's, under the library's artifact-root-relative path |
+| `(True, True, False)` — the target lost it | write; record the library's | **drop the path from the record** — what is on disk is nothing |
+| `(False, True, True)` — the library dropped it | **refused**, with a reason | record the target's digest; the path becomes `PRUNE`, which `--prune` removes under its own record-last ordering |
+| `target_sha` is `UNHASHED_TARGET_SHA` (R72) | **refused** | **refused** |
+
+**Why `resolve library` refuses a path the library no longer holds.** Taking the library's side
+there could only mean *deleting an edited file*, which would make this one function both create and
+destroy files and so force it to hold two record orderings at once (charter §13b) — exactly what
+R63's position in `apply_install` exists to make impossible. It is not a dead end: `resolve target`
+resolves that shape, and the reason on the entry says so.
+
+**Why `UNHASHED_TARGET_SHA` is refused by both sides** (R72). A symlink sits at the path. The
+library side would write *through* it — C-12 refuses that outright and R6 is why. The target side
+would have to record a digest of content nobody read; `<unhashed>` is a plan-time sentinel and not
+a digest, and putting it into `ArtifactFile.sha256` would make the manifest claim a digest nothing
+has (the rule `rollback._manifest_after_rollback` already keeps). `compare_versions` **does** show
+such a path: the library's version, and the target side named unreadable rather than absent — which
+is the distinction `UNHASHED_TARGET_SHA` exists to carry.
+
+**What `resolve target` records as the digest: the target's current bytes.** The path's bytes are
+read through C-12 at resolve time and both `sha256` and `size` come from them, so the record is
+internally consistent and describes what is actually there — which is the whole content of the
+user's instruction. `is_text` is **carried**, from the previous record if there is one and from the
+library's `ArtifactFile` otherwise: charter §7 wants one implementation of that decision,
+`infrastructure.scanner.is_text` is it, and `application/` may not import `infrastructure/`.
+
+## 4. The record ordering (R86), for each of the two
+
+**`resolve library` makes files appear, so the record goes first** — apply's ordering exactly, and
+for apply's reason. A crash between them leaves the record over-claiming, which returns as
+`LOCAL_EDIT` on the next diff and is a decision the user is asked about; the other order would
+leave a written file claimed by nobody. `MANIFEST_UNWRITABLE = 11` therefore keeps its promise here:
+nothing happened. There is **no** `RecordStaleError` anywhere in this module, because no path in it
+records after a file has moved.
+
+**`resolve target` moves no file at all, and that is what the ordering question needs.** Charter
+§13b constrains the *interval* between the record and the file movement — a record must never
+disown a file that is still on disk. With no file movement there is no interval and no end of the
+run to choose between: the record is the whole run. A crash before it leaves the path conflicted,
+exactly as it was; a crash after it is the completed operation. The one thing it does that looks
+like disowning — dropping a path the target no longer holds — disowns nothing, because there is
+nothing on disk to disown.
+
+**The backup (R88).** `resolve library` takes one, of exactly the paths it will write, and refuses
+to run without it. Against: the user named this artifact and this side, so the overwrite is
+deliberate. For: this is the only operation in the project that destroys a user's *edit* — apply
+refuses precisely these paths for that reason — and `hl uninstall` is just as deliberate and takes
+one anyway. F-9's sentence applies without modification, so it takes one.
+`resolve target` takes **none**: it writes no file, so there is no target path to copy, and the only
+thing that changes is a record no backup in this project describes.
+
+## 5. Export (F-16, R45) — a plain zip, in `application/read/`
+
+`export_collection(repository, key) -> ExportedCollection`, holding the archive's `data`, its
+`entries` and the collection's `unresolved_member_ids`.
+
+* **the entries are target-relative paths** — `registry.target_path_of`, the same forward join
+  install writes through (R73), so the archive unzips over a harness. Never an inverse;
+* **exactly the collection's artifacts' files and nothing else.** No `library.yaml`, no manifest,
+  no metadata sidecar — the criterion is a path list and an extra entry fails it;
+* **no plugin format** (R45): `zipfile`, `ZIP_DEFLATED`, stdlib;
+* **deterministic.** Members in declaration order, files in the artifact's scan order, and each
+  entry's `date_time` taken from the artifact's `updated_at`, so two exports of one library are
+  byte-identical. A member that resolves to nothing is reported and contributes nothing;
+* **a read use case, so no lock** (R85, R82's converse). It reads a library and writes nothing —
+  `mcp/` may reach it, and should.
+
+## 6. Tests, and why one module is cross-layer
+
+`tests/application/` is fakes only and zero disk (charter §10). What they cannot see: that a real
+binary file survives the round trip, that a real `readlink` is what `read_link` returns, and that
+`$EDITOR`'s argv reaches a real process. The first is `tests/test_export.py`, the fifth cross-layer
+module in this suite: the fixture library's `housekeeping` collection holds `skill/messy`, whose
+`references/diagram.png` is a real committed binary, and only a real `FilesystemArtifactRepository`
+can show that those bytes reach the archive unchanged. It asserts that one file's bytes and the
+collection's path list, **not** a golden over the whole fixture (L59).
+
+`tests/infrastructure/test_editor.py` drives `SubprocessConflictEditor` against `tmp_path` with an
+**injected runner**, so the argv and the materialised files are asserted and **no process is
+launched** — the constraint is absolute, and a test that spawned `$EDITOR` would hang CI.
+
+Nothing writes to `~/.claude/`; every state root is `tmp_path`.
+
+## 7. Mutation checks (L35 — read this if the session was interrupted)
+
+Two, each run alone with `-k` (L42). `src/harness_library/application/write/resolve.py` is copied
+to `…/scratchpad/resolve.py.t21.orig` before it is mutated and restored from that copy rather than
+from memory of the edit. **If this session was interrupted, that is the file that was under
+mutation; compare it against its `.t21.orig` copy.**
+
+**(a)** `--resolve` applies to every conflicted artifact rather than the named one —
+the `entry.artifact_id == artifact_id` clause dropped from the entry selection.
+Must fail: `tests/application/test_resolve.py::test_resolving_one_conflict_leaves_the_other_refused_and_byte_identical`,
+on the **other** artifact's bytes.
+Must stay green: `tests/application/test_resolve.py::test_resolve_library_writes_the_librarys_version_and_records_it`,
+whose plan holds **exactly one** blocking entry, so the widened filter selects the same entry and
+the mutation cannot pass by resolving nothing.
+
+**(b)** `resolve target` writes the library's bytes instead of only repairing the record.
+Must fail: `tests/application/test_resolve.py::test_resolve_target_leaves_the_file_byte_identical_and_repairs_the_record`,
+on the file's **bytes**.
+Must stay green: the same `resolve library` test, which must still write.
+
+**L57, walked before the run.** The single-conflict `resolve library` test is the named control for
+both, and it can be, because neither mutation changes what it does: (a) widens a filter over a plan
+with one blocking entry, and (b) touches the `TARGET` branch only. Its assertions are the written
+file's bytes, the record's digest and `result.written` — every one of them a fact about the
+`LIBRARY` branch over one artifact. It asserts **nothing** about other artifacts and nothing about
+what `resolve target` does, which is what keeps it a control for (a) rather than a second subject.
+(a)'s must-fail test uses `resolve library` deliberately, so it does not redden under (b) either.
+
+**Result — neither mutation is applied; the module matches its backup by md5**
+(`c15c353b4827abe74d645c382792f395`). If this session was interrupted, that is the file that was
+under mutation; compare it against `…/scratchpad/resolve.py.t21.orig`.
+
+Under **(a)**, `-k "resolving_one_conflict_leaves_the_other_refused or
+resolve_library_writes_the_librarys_version_and_records_it"` gave `1 failed, 1 passed`. The
+per-artifact test failed on **the other artifact's bytes** — `assert b'# the library has moved
+on\n' == b'# and then the user edited it\n'`, at
+`assert target.snapshot()[INSTALLED_OTHER] == EDITED_BYTES` — and the single-conflict control
+**stayed green**, which is the half that matters: with one blocking entry the widened filter
+selects the same entry, so the mutation cannot pass here by resolving nothing. Restored:
+`2 passed`.
+
+Under **(b)**, `-k "resolve_target_leaves_the_file_byte_identical or
+resolve_library_writes_the_librarys_version_and_records_it"` gave `1 failed, 1 passed`: the target
+test failed on the file's **bytes**, the same assertion text from the other side, and the
+`resolve library` control **stayed green** — it must still write, so "wrote nothing" and "wrote
+the wrong thing" stay distinguishable. Restored: `2 passed`.
+
+**(a) cost a cycle and the repair is worth the next reader's attention.** The first attempt at it
+did not mis-behave, it **crashed**: `_library_files_of` and `_recorded_files_of` were computed once
+from the run's `artifact_id`, so a widened filter fed `_reference_file` an entry of an artifact
+those two maps knew nothing about and it raised `ValueError` before writing a byte. The test failed,
+which looks like a passing mutation check and is not one — the *named* assertion never ran, so the
+check proved only that the code crashes when its own invariant is broken.
+
+The repair is a design improvement and is why `_Decided` carries `artifact_id`: **every step after
+`_refused_entries` reads the owner off the entry**, so the per-artifact rule is stated exactly once,
+at the one line a mutation has to change, and nothing downstream can disagree with it. The lesson
+generalises — *a mutation that crashes is a mutation aimed at a place that re-states the rule
+instead of reading it*.
+
+## 8. Existing tests changed, and what each asserts now
+
+L24's cost, paid in six files. Every one is a hand-written implementation of C-4 or C-12 that must
+gain the members R97 adds, and none of them changes what it asserts:
+
+* `tests/domain/test_repository.py::FakeRepository` — gains `symlinked_roots()`. The negative
+  control, `ReadTextOnlyRepository`, still fails the protocol and still fails it for the reason it
+  always did;
+* `tests/domain/test_target.py::FakeTarget` — gains `read_link`/`write_link`, and the round-trip
+  test gains a link round trip beside its byte round trip. `ReadOnlyTarget` is untouched;
+* `tests/application/fakes.py` — `FakeArtifactRepository.symlinked_roots()`, and
+  `FakeTargetRepository` models links honestly rather than raising: a dictionary of destinations
+  beside the dictionary of bytes;
+* `tests/test_single_writer.py` — both delegating wrappers gain the two members. Added to, never
+  altered;
+* `tests/domain/test_purity.py` — `EXPECTED_MODULES` gains `"resolution"`;
+* `tests/test_architecture.py` — `WRITE_USE_CASES` gains `resolve_conflict` and `compare_versions`,
+  `WRITE_TYPES` gains `ResolveResult` and `ComparisonResult`, `READ_USE_CASES` gains
+  `export_collection`. Added to, never altered.
+
+Two in `tests/cli/test_exit_codes.py` change what they assert, and both because
+`TARGET_UNREADABLE` now has a class:
+
+* **`test_no_error_class_carries_target_unreadable_yet` → `test_target_unreadable_now_has_a_class_that_carries_it`.**
+  That test said in its own docstring that it was meant to be deleted by whichever task gave the
+  code an emitter. It is **replaced rather than dropped**, so the fact stays asserted in both
+  directions and an edit that removed `TargetUnreadableError` fails here instead of passing;
+* **`test_record_stale_has_a_class_that_carries_it`** used `TARGET_UNREADABLE` as its positive
+  control — *the walk really does find a code with no class*. That control had to move, and it
+  moves to `INCOMPLETE`, which `errors.py` argues may never get a class: it is not a failure and
+  is never raised. **L51 in its third shape** — a control has to assert the fact it controls, and
+  when the fact it borrowed stops being true the control has to be re-pointed rather than deleted.
+
+## 9. Gate
+
+```
+export PATH="$HOME/.local/bin:$PATH"
+uv run ruff format --check . && uv run ruff check . && uv run mypy src tests && uv run lint-imports && uv run pytest
+```
+
+Whole, every time (L2), exit code read without a pipe (L44). Baseline 899 passed.

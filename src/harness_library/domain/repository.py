@@ -20,6 +20,7 @@ from typing import Protocol, runtime_checkable
 
 from harness_library.domain.artifact import Artifact
 from harness_library.domain.metadata import Collection
+from harness_library.domain.raw import SymlinkedRoot
 from harness_library.domain.validation import ValidationFinding
 
 
@@ -62,5 +63,29 @@ class ArtifactRepository(Protocol):
         because ruling R23 made this method part of contract C-4: without it the validate use
         case cannot reach any of the three, and three rows of charter §8's register are
         decorative — a rule that cannot reach a report can never be acted on.
+        """
+        ...
+
+    def symlinked_roots(self) -> tuple[SymlinkedRoot, ...]:
+        """Every artifact root the scan found to be a symlink and therefore never walked. **V11.**
+
+        **Part of contract C-4 since ruling R97**, which is the same journey `library_findings()`
+        made under R23 and is here for the same reason it was. T-20 added this to
+        `FilesystemArtifactRepository` alone, because amending a contract is a plan-level decision
+        and the contracts were outside that task's scope; a ruling that amends a contract in prose
+        and is carried into no protocol is R23's recorded failure, and it becomes unimplementable
+        under `mypy --strict` two tasks later when the composition root has to reach the member
+        off a concrete class it was handed as an interface.
+
+        **Values, and never the V11 finding.** `plan_install` refuses each of these roots as
+        `SKIPPED` (R46, R53) and must not reach them through `library_findings()`: the warning and
+        the refusal are two facts about one root, and a refusal wired through the report would
+        vanish the moment the report did. Each half is separately falsifiable only because each
+        half has its own source, which is what T-20's mutation table demanded.
+
+        Returns:
+            One value per symlinked root, from the same walk `list_all()` describes — a
+            point-in-time snapshot, like every other member here. `()` is the ordinary case and
+            means the library holds no symlinked artifact root.
         """
         ...

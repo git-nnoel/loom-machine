@@ -14,6 +14,7 @@ import pytest
 from harness_library.domain.install_plan import (
     BLOCKING_VERDICTS,
     EXPLAINED_VERDICTS,
+    RESOLVABLE_VERDICTS,
     VERDICT_BY_EQUALITY,
     InstallPlan,
     PlanEntry,
@@ -106,6 +107,38 @@ def test_the_blocking_register_is_exactly_the_three_c10_names() -> None:
 
 def test_the_verdicts_that_must_explain_themselves_are_conflict_and_skipped() -> None:
     assert {Verdict.CONFLICT, Verdict.SKIPPED} == EXPLAINED_VERDICTS
+
+
+def test_the_resolvable_register_is_the_blocking_one_without_skipped() -> None:
+    """**Ruling R99, as a relationship between two registers rather than as a second list.**
+
+    `--resolve` can act on a refused path when two versions of it exist and the user can prefer
+    one. That is true of a `LOCAL_EDIT` and of every `CONFLICT` shape, and false of a `SKIPPED`
+    artifact: its root is a symlink the scan never followed, so the library holds no bytes for it
+    and there is nothing to choose between. `--resolve` therefore does not lift V11, exactly as
+    `--force` does not.
+
+    Asserted as the *difference* between the two sets and not merely as a literal, so that a
+    tenth verdict joining `BLOCKING_VERDICTS` fails here and is judged rather than inherited —
+    whether a newly refused path has two versions is a decision, not a subtraction.
+    """
+    assert {Verdict.LOCAL_EDIT, Verdict.CONFLICT} == RESOLVABLE_VERDICTS
+    assert Verdict.SKIPPED not in RESOLVABLE_VERDICTS
+    assert RESOLVABLE_VERDICTS | {Verdict.SKIPPED} == BLOCKING_VERDICTS
+
+
+def test_nothing_that_install_applies_is_resolvable() -> None:
+    """The positive control for the assertion above: the register really does exclude things, so
+    "`SKIPPED` is not in it" cannot mean "nothing is in it" or "everything is".
+
+    A verdict apply acts on needs no resolution — there is nothing the user has been asked to
+    decide — so a `--resolve` that reached one would be overwriting a file on its own initiative.
+    """
+    assert set(Verdict) > RESOLVABLE_VERDICTS
+    for applied in (Verdict.UNCHANGED, Verdict.UPDATE, Verdict.CREATE, Verdict.PRUNE):
+        assert applied not in RESOLVABLE_VERDICTS
+    assert Verdict.FOREIGN not in RESOLVABLE_VERDICTS
+    assert Verdict.MANIFEST_REPAIR not in RESOLVABLE_VERDICTS
 
 
 # ---------------------------------------------------------------------------------------------

@@ -47,6 +47,7 @@ from harness_library.application.read.dtos import (
     SkippedFile,
     ValidationReport,
 )
+from harness_library.application.read.export import ExportedCollection, export_collection
 from harness_library.application.read.queries import NO_FILTER, ArtifactFilter, SortKey
 from harness_library.application.read.search import SEARCH_RESULT_LIMIT, search_artifacts
 from harness_library.application.read.validation import validate_library
@@ -63,6 +64,7 @@ __all__ = [
     "CollectionDetail",
     "CollectionListPayload",
     "CollectionSummary",
+    "ExportedCollection",
     "FileContent",
     "FilePayload",
     "FindingPayload",
@@ -74,6 +76,7 @@ __all__ = [
     "SortKey",
     "ValidationReport",
     "diff_against_target",
+    "export_collection",
     "get_artifact",
     "get_artifact_file",
     "get_collection",

@@ -117,8 +117,6 @@ class FilesystemArtifactRepository:
         assert self._metadata is not None
         return list(self._metadata.collections)
 
-    # -- Additive, and not part of C-4 -----------------------------------------------------------
-
     def library_findings(self) -> list[ValidationFinding]:
         """The findings that belong to no single artifact — V7, V9 and, since R46, **V11**.
 
@@ -133,12 +131,14 @@ class FilesystemArtifactRepository:
     def symlinked_roots(self) -> tuple[SymlinkedRoot, ...]:
         """Every artifact root the scan found to be a symlink and therefore never walked. **V11.**
 
-        Beyond contract C-4, which is untouched — the shape `library_findings()` had before
-        ruling R23 put it in the contract, and flagged here for the same decision. `plan_install`
-        needs these values to refuse the artifact (R46, R53), and it must not reach them through
-        a `ValidationFinding`: the warning and the refusal are two facts, and a refusal that read
-        the report would vanish the moment the report did. **Flagged to the delivery lead: C-4
-        wants a seventh member, which is a plan-level decision.**
+        **Contract C-4's seventh member since ruling R97.** T-20 added it here alone and flagged
+        that the contract wanted it, exactly as `library_findings()` was flagged before R23; R97
+        is that decision, and until it landed the composition root had to reach this off the
+        concrete class while holding an interface.
+
+        `plan_install` needs these values to refuse the artifact (R46, R53), and it must not
+        reach them through a `ValidationFinding`: the warning and the refusal are two facts, and
+        a refusal that read the report would vanish the moment the report did.
 
         The snapshot is taken on first use, exactly as `list_all()` takes it, so a listing and
         this answer always describe one walk of one library.

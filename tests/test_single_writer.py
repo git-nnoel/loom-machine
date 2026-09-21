@@ -221,6 +221,14 @@ class TargetCallingBackOnItsFirstWrite:
     def exists(self, path: str) -> bool:
         return self._inner.exists(path)
 
+    # C-12's sixth and seventh members since ruling R97. Delegated like the rest: this wrapper
+    # exists to hook one call, and every other member must behave exactly as the real one does.
+    def read_link(self, path: str) -> str:
+        return self._inner.read_link(path)
+
+    def write_link(self, path: str, destination: str) -> None:
+        self._inner.write_link(path, destination)
+
 
 @dataclass
 class SecondRun:
@@ -466,6 +474,13 @@ class TargetCallingBackOnItsFirstDelete:
 
     def exists(self, path: str) -> bool:
         return self._inner.exists(path)
+
+    # C-12's sixth and seventh members since ruling R97. Delegated, as above.
+    def read_link(self, path: str) -> str:
+        return self._inner.read_link(path)
+
+    def write_link(self, path: str, destination: str) -> None:
+        self._inner.write_link(path, destination)
 
 
 class BackupStoreCallingBackOnRestore:

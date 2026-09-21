@@ -36,7 +36,9 @@ from harness_library.domain.hashing import content_hash_of_files, hash_bytes
 from harness_library.domain.identity import ArtifactType
 from harness_library.domain.manifest import Manifest, ManifestArtifact
 from harness_library.domain.metadata import Collection
+from harness_library.domain.raw import SymlinkedRoot
 from harness_library.domain.registry import spec_for
+from harness_library.domain.resolution import ConflictVersions
 from harness_library.domain.target import TargetFile
 from harness_library.domain.validation import ValidationCode, ValidationFinding
 
@@ -51,6 +53,13 @@ SENTINEL_PATH = "/home/example/.local/state/harness-library/manifests/0123abcd.l
 
 HOLDER_PID = 4242
 """The pid a refusing `FakeWriteLock` names. Never this process's, and never looked up."""
+
+DEFAULT_LINK_DESTINATION = "../../../outside/escape.md"
+"""Where a fake symlink points unless a test says otherwise.
+
+Out of the target and relative, which is the shape R6 exists to refuse — so a test that starts
+following links produces something visibly wrong rather than something plausible.
+"""
 
 
 class FakeArtifactRepository:
@@ -69,11 +78,13 @@ class FakeArtifactRepository:
         contents: dict[tuple[str, str], bytes] | None = None,
         collections: list[Collection] | None = None,
         library_findings: list[ValidationFinding] | None = None,
+        symlinked_roots: tuple[SymlinkedRoot, ...] = (),
     ) -> None:
         self._artifacts = list(artifacts or [])
         self.contents = dict(contents or {})
         self._collections = list(collections or [])
         self._library_findings = list(library_findings or [])
+        self._symlinked_roots = symlinked_roots
         self.read_calls: list[tuple[str, str]] = []
 
     def list_all(self) -> list[Artifact]:
@@ -101,6 +112,16 @@ class FakeArtifactRepository:
 
     def library_findings(self) -> list[ValidationFinding]:
         return list(self._library_findings)
+
+    def symlinked_roots(self) -> tuple[SymlinkedRoot, ...]:
+        """C-4's seventh member since ruling R97. `()` unless a test supplies one.
+
+        A dictionary has no symlinks, so what this can prove is what the *use cases* do with the
+        values — that `plan_install` refuses each root and that `--resolve` will not lift the
+        refusal (R99). That a real scan produces them at all is proven against the committed
+        link in `tests/test_symlinked_root.py`.
+        """
+        return self._symlinked_roots
 
 
 def make_file(path: str, content: bytes = b"body\n", *, is_text: bool = True) -> ArtifactFile:
@@ -218,13 +239,26 @@ class FakeTargetRepository:
         files: Iterable[TargetFile] = (),
         *,
         contents: Mapping[str, bytes] | None = None,
+        links: Mapping[str, str] | None = None,
         fail_write_after: int | None = None,
     ) -> None:
         self._files = {file.path: file for file in files}
         self._contents = {path: b"" for path in self._files}
         self._contents.update(contents or {})
+        destinations = dict(links or {})
+        self._links = {
+            file.path: destinations.get(file.path, DEFAULT_LINK_DESTINATION)
+            for file in self._files.values()
+            if file.is_symlink
+        }
+        for path in self._links:
+            # R6: a link is never read through, so it holds no bytes here either. Without this a
+            # fake link would answer `read_bytes` with `b""`, which is content, and the very
+            # refusal `UNHASHED_TARGET_SHA` exists to carry would be untestable at this layer.
+            self._contents.pop(path, None)
         self.writes: list[tuple[str, bytes]] = []
         self.deletes: list[str] = []
+        self.links_written: list[tuple[str, str]] = []
         self.scan_calls = 0
         self.fail_write_after = fail_write_after
 
@@ -251,11 +285,46 @@ class FakeTargetRepository:
         self._files.pop(path, None)
 
     def exists(self, path: str) -> bool:
-        return path in self._contents
+        return path in self._contents or path in self._links
+
+    def read_link(self, path: str) -> str:
+        """C-12's sixth member since ruling R97. The raw destination, never resolved.
+
+        Modelled honestly rather than raised on: a fake that refused a member of the contract
+        would make every caller of it untestable at this layer, and the two states this has to
+        keep apart — *not a link* and *no such path* — are the two C-12 spells out.
+        """
+        destination = self._links.get(path)
+        if destination is None:
+            if path in self._contents:
+                raise ValueError(f"{path!r} is not a symlink, so it names no destination")
+            raise FileNotFoundError(f"this target holds nothing at {path!r}")
+        return destination
+
+    def write_link(self, path: str, destination: str) -> None:
+        """C-12's seventh member since ruling R97. Replaces whatever is at `path`.
+
+        A link holds no bytes (R6), so writing one **removes** any content this fake held there
+        and turns the entry into a symlink — which is what a real `os.symlink` over an existing
+        file does, and what keeps a later `scan()` honest about it.
+        """
+        if not destination:
+            raise ValueError(f"a symlink at {path!r} cannot name an empty destination")
+        self.links_written.append((path, destination))
+        self._contents.pop(path, None)
+        self._links[path] = destination
+        self._files[path] = target_symlink(path, destination=destination)
 
     def snapshot(self) -> dict[str, bytes]:
-        """Every path this target holds and its bytes. Evidence for a byte-identical assertion."""
+        """Every path this target holds and its bytes. Evidence for a byte-identical assertion.
+
+        A symlink is **not** here, because it holds no bytes (R6). `links` is where it is.
+        """
         return dict(self._contents)
+
+    def links(self) -> dict[str, str]:
+        """Every symlink this target holds and where it points. The other half of `snapshot`."""
+        return dict(self._links)
 
 
 def target_holding(*entries: tuple[str, bytes]) -> FakeTargetRepository:
@@ -419,6 +488,46 @@ class FakeWriteLock:
             self.events.append("released")
 
 
+class FakeConflictEditor:
+    """The `ConflictEditor` seam in memory. Keeps what it was shown, and shows it to nobody.
+
+    **The whole reason this exists is that no test in this project may launch `$EDITOR`.** A test
+    that spawned one would hang CI on a buffer nobody closes, and the real implementation is
+    `infrastructure/editor.py`, proven against `tmp_path` with an injected runner that spawns
+    nothing either.
+
+    **What this fake cannot prove.** It cannot prove that two versions reach two real files, that
+    the argument vector is what an editor expects, or that a binary version survives being
+    written out. Those are `tests/infrastructure/test_editor.py`'s. What it *can* prove is the
+    only thing the use case decides: which paths are shown, which side of each is available, and
+    that showing them changes nothing.
+
+    It collects evidence and renders no verdict (L29): `calls` is a recording, and every
+    assertion about it lives in a test.
+
+    Attributes:
+        calls: every tuple `compare` was handed, in call order. A list of lists, not a flattened
+            one: the protocol takes an artifact's paths **together**, and a test that could not
+            tell one session from two could not assert that.
+        fail: raise `OSError` from `compare`, as an editor that will not start does. A builtin,
+            because that is what the real seam raises (ruling R24).
+    """
+
+    def __init__(self, *, fail: bool = False) -> None:
+        self.calls: list[tuple[ConflictVersions, ...]] = []
+        self.fail = fail
+
+    def compare(self, versions: tuple[ConflictVersions, ...]) -> None:
+        if self.fail:
+            raise OSError("the injected failure refuses to start an editor")
+        self.calls.append(versions)
+
+    @property
+    def shown(self) -> tuple[ConflictVersions, ...]:
+        """The versions of the last session, or `()` when there was none."""
+        return self.calls[-1] if self.calls else ()
+
+
 class FakeManifestStore:
     """The `ManifestStore` seam in memory. Holds the last manifest written, and the count.
 
@@ -449,7 +558,7 @@ def target_file(path: str, content: bytes = b"body\n") -> TargetFile:
     return TargetFile(path=path, sha256=hash_bytes(content), size=len(content), is_symlink=False)
 
 
-def target_symlink(path: str, *, destination: str = "../../../outside/escape.md") -> TargetFile:
+def target_symlink(path: str, *, destination: str = DEFAULT_LINK_DESTINATION) -> TargetFile:
     """One symlink entry. R6: never followed, never hashed, so it carries no content digest.
 
     `sha256` is `None` and cannot be anything else: ruling R68 made that the spelling of "no

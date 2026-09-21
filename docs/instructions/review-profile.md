@@ -128,6 +128,18 @@ Every rule a design or plan may silently break. Each anchored, each checkable re
 | I-12 | An absence assertion carries a positive control | charter §10 | read the test |
 | I-13 | Plans carry **no code** — signatures and file-level guidance only | `plan-formats.md` §1 | `grep -c '```' <plan>` |
 
+## 6b. The bounded-exception test (R41)
+
+A change touching a frozen contract or a prior decision is **bounded** only when all three hold:
+
+1. the human agreed explicitly, with alternatives and costs in front of them;
+2. the contract change is **additive**, with no existing consumer;
+3. it **extends** a prior ruling's own stated reasoning rather than contradicting it.
+
+Any one failing → architectural: design record, design gate, then the plan. A reviewer finding a
+change sized as bounded should check it against these three and report which part fails, rather than
+reporting "no design record" on its own.
+
 ## 7. UI authorities
 
 **None yet.** No frontend territory, no brand reference, no mockups. Initiative 04 opens a React/TS

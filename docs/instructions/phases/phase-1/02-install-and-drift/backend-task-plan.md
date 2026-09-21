@@ -683,3 +683,148 @@ uv run ruff format --check . && uv run ruff check . && uv run mypy src tests && 
 ```
 
 Whole, every time (L2), exit code read without a pipe (L44). Baseline 635 passed.
+
+---
+
+# Backend task plan — T-17, the single-writer advisory lock
+
+Initiative 02 · phase 1 · base commit `3f980dc` · owner `backend-developer-specialist`.
+Realises charter §12 / ruling **R50** — an `O_EXCL` sentinel beside the manifest, held for the
+duration of an apply, released on exit, stale-broken by a pid check — and adds
+**`TARGET_UNREADABLE`**'s `ErrorCode` member and exit row (**R81**, C-14).
+
+## 1. Where the code goes
+
+| File | Why |
+|---|---|
+| `src/harness_library/domain/lock.py` | new. The `WriteLock` protocol, one member. A module of its own rather than a section of `manifest.py`: the lock is *not* the record, and T-18's rollback will take it without reading a manifest. Costs one line in `tests/domain/test_purity.py` (L13, L18) |
+| `src/harness_library/domain/errors.py` | `TARGET_UNREADABLE` (R81) and the `LockHeldError` class over the `LOCK_HELD` code T-13 put in the contract |
+| `src/harness_library/cli/exit_codes.py` | `TARGET_UNREADABLE = 12` and its row. I-8 keeps the table total |
+| `src/harness_library/infrastructure/lock.py` | new. `FilesystemWriteLock` — the sentinel, the pid check, the release |
+| `src/harness_library/application/write/install.py` | `apply_install` gains a required keyword-only `lock` and wraps its whole body in it |
+| `tests/domain/test_lock.py` · `tests/infrastructure/test_lock.py` · `tests/test_single_writer.py` | new |
+| `tests/application/fakes.py` · `tests/application/test_install.py` · `tests/domain/test_purity.py` · `tests/cli/test_exit_codes.py` | the mirrors, each named in §7 |
+
+No dependency change: `os`, `json`, `socket` and `contextlib` are stdlib.
+
+## 2. The mechanism, exactly as R50 fixes it
+
+```
+acquire   os.open(<state_root>/manifests/<key>.lock, O_CREAT|O_EXCL|O_WRONLY)
+          → writes {schema_version, pid, hostname, created_at}; keeps the inode
+held      the whole of apply — the backup, the manifest and every file
+release   finally: unlink, but only if the inode is still the one we created
+refused   a sentinel whose pid is alive → LockHeldError (LOCK_HELD = 10), nothing written
+broken    a sentinel whose pid is gone, or whose document names no pid at all → unlinked, one
+          retry; if that retry also collides, someone won the race and this run is refused
+```
+
+**Keyed per target (R43), by the manifest's own key** — `manifest_path_for(...).with_suffix(".lock")`.
+Not a second derivation of the key: two spellings of "which target is this" is exactly what
+`canonical_target_path` exists to prevent, and `.with_suffix` is what makes "beside the manifest"
+a fact rather than a comment. Two targets therefore have two sentinels and never block each other.
+
+**Where the error is raised, and why this one is not a builtin.** `manifest_store.write_manifest`
+and `FilesystemBackupStore.create` let an `OSError` out and `application/` gives it a code
+(ruling R24), because the *application* is what interprets an I/O fault. A held lock is not an
+I/O fault: only the lock can tell "held by a live process" from "stale, break it" from "the state
+directory is broken", and a `FileExistsError` arriving at `apply_install` could not be
+re-interpreted into any of the three. So `FilesystemWriteLock` raises `LockHeldError` itself —
+`read_manifest`'s posture, which raises `ManifestError` for the same reason: it is a judgement
+about content, not a failed syscall passed along. There is no translation for a fake to
+pre-supply.
+
+## 3. What the contracts left open, and what I decided
+
+| Open point | Decision |
+|---|---|
+| **Who takes the lock** | `apply_install`, as a required **keyword-only** parameter with no default, wrapping its entire body. Not the composition root: T-22 has not been written, T-18 adds two more write use cases, and a lock a caller may forget is a lock that is not there. A default would make running unlocked a typo rather than a decision — the same argument `manifest` already carries, asserted the same way |
+| Where the protocol lives | `domain/lock.py`, satisfied structurally like C-4, C-12, C-13 and C-15 (R14) |
+| What `hold()` returns | an `AbstractContextManager[None]`. A context manager and not `acquire`/`release`: the release has to happen on **every** exit, and a pair of methods is a pair a caller can half-use |
+| A sentinel that does not parse, or names no pid | **stale, break it.** An empty sentinel is exactly what a crash between `O_EXCL` and the first `write` leaves, and a document that cannot name a holder cannot claim one is alive |
+| A sentinel naming *this* process | **held, refused.** The lock is per target, not per process; two threads in one process interleaving two applies is the failure it exists to prevent |
+| Whether release may remove someone else's sentinel | no. The inode captured at acquire is compared before the unlink, so a run whose sentinel was broken as stale cannot delete the sentinel of the run that broke it |
+| pid reuse | fails **safe**: a reused pid reads as alive, so the lock is refused rather than broken. The remedy is the one `LOCK_HELD` already documents — wait and run again |
+| `hostname` | recorded, and deliberately **not** part of the decision. R50 says pid check, and a pid compared across two hosts is meaningless either way; the field is there so a human reading a wedged sentinel can see it came from another machine. Flagged to the delivery lead |
+| `TARGET_UNREADABLE`'s class | **none.** Nothing emits it: T-14's scanner propagates a bare `OSError` and translating that is not this task. The code and its row exist so I-8 has something to hold, which is the direction charter §9 fixes — a code may arrive before its class, never the reverse |
+
+## 4. Tests
+
+`tests/domain/` — the protocol is satisfied structurally, with its positive control.
+`tests/infrastructure/test_lock.py` — real sentinels under `tmp_path`: the path is beside the
+manifest, the file appears and disappears, a live holder is refused, a dead one is broken, an
+empty one is broken, a release does not take a sentinel it did not create, two targets are held
+at once.
+`tests/application/test_install.py` — apply's control flow against a fake lock: the lock is taken
+**before the backup**, released on success, and released on each of T-16's three failure paths.
+`tests/test_single_writer.py` — **the one cross-layer module in the suite**, and it has to be:
+the exclusion is infrastructure and the thing it protects is an application use case, so neither
+layer alone can witness it. A real `FilesystemWriteLock`, a real `FilesystemTargetRepository` and
+a real `apply_install`, with the second apply fired from inside the first apply's first write.
+
+Nothing writes to `~/.claude/`; `default_state_root()` stays uncalled outside the composition
+root, and every state root in this task is `tmp_path`.
+
+## 5. Mutation checks (L35 — read this if the session was interrupted)
+
+Two. Each is a one-line edit backed up first to `…/scratchpad/<name>.orig` and restored from that
+copy. **No file is mutated as this plan is written**, and both modules match their backup by md5: `install.py` `9c16d304baf905f385f526d5e9a5c532`, `lock.py` `7349edd749eebb0c3e7f4b86e9f15678`.
+
+**(a)** the plan's named row — the lock is released **before** the write instead of after
+(`src/harness_library/application/write/install.py`: `with lock.hold(): pass` and the body after
+it). Must fail: `test_a_second_apply_against_a_held_lock_writes_nothing`, on the target's hash
+set *and* on the status. Must stay green: `test_a_single_apply_writes_every_file_and_leaves_no_sentinel` —
+without it, "the lock is never taken" and "the lock is released too early" look the same.
+
+**(b)** mine — the pid check never breaks a sentinel
+(`src/harness_library/infrastructure/lock.py`: `_is_running` returns `True` unconditionally).
+Must fail: `test_a_stale_sentinel_whose_process_is_gone_is_broken_and_the_apply_proceeds`. Named
+precisely, because the shape matters: under this mutation the dead holder reads as alive, so the
+apply is **refused** with `LockHeldError` where it should have proceeded — the failure is at the
+`run_apply` call and the installed file's bytes are never written, which is the claim. Must stay green: `test_a_second_apply_against_a_held_lock_writes_nothing` —
+a mutation that merely deleted the lock would redden it, so the pair separates "never breaks" from
+"never locks".
+
+**Result — neither is applied; both modules match their backup by md5.**
+
+Under **(a)**, `-k "a_second_apply_against_a_held_lock_writes_nothing or
+a_single_apply_writes_every_file_and_leaves_no_sentinel"` gave `1 failed, 1 passed`:
+`test_a_second_apply_against_a_held_lock_writes_nothing` failed on its own message — *"the second
+apply was not refused: while one apply holds this target's lock, another must exit LOCK_HELD
+rather than interleaving its writes with the first's (R50)"*, `assert False … isinstance(None,
+LockHeldError)` — and the `SecondRun` in that failure shows the other half of the criterion too:
+`before` holds one path and `after` holds three, so the second apply had written both files. The
+single-apply control **stayed green**, which is the half that matters: without it, "the lock is
+never taken" and "the lock is released too early" produce the same one failing test.
+Restored: `2 passed`.
+
+Under **(b)**, `-k "a_stale_sentinel_whose_process_is_gone_is_broken_and_the_apply_proceeds or
+a_second_apply_against_a_held_lock_writes_nothing"` gave `1 failed, 1 passed`: the stale-sentinel
+test failed with `LockHeldError: …<key>.lock is held by process 571841` raised out of
+`_acquire` — a pid that had already exited, read as alive, so the apply was refused where it
+should have proceeded and the target was never written. The second-apply test **stayed green**,
+which separates "never breaks a sentinel" from "never locks at all": a mutation that simply
+removed the lock would have reddened it instead. Restored: `2 passed`.
+
+One note for the next mutation check here: `test_a_second_apply_against_a_held_lock_writes_nothing`
+is the must-fail of (a) and the must-stay-green of (b), which it can be because the two mutations
+move in opposite directions — one releases the lock too early, the other never releases a stale
+one. It is also the only test in the suite that runs two applies at once, so if it is ever
+deleted the lock has no witness at all.
+
+## 6. Existing tests changed, and what each asserts now
+
+* `tests/application/test_install.py` — the module's `apply()` helper passes a `FakeWriteLock`.
+  Every existing test keeps its subject and its assertions; what changes is that each now runs
+  under a lock, which is the point.
+* `tests/domain/test_purity.py` — `EXPECTED_MODULES` gains `"lock"`. L13's two-edit cost, paid.
+* `tests/cli/test_exit_codes.py` — **added to, never altered**, as in T-13 and T-16.
+
+## 7. Gate
+
+```
+export PATH="$HOME/.local/bin:$PATH"
+uv run ruff format --check . && uv run ruff check . && uv run mypy src tests && uv run lint-imports && uv run pytest
+```
+
+Whole, every time (L2), exit code read without a pipe (L44). Baseline 707 passed.

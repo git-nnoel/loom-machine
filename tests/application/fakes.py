@@ -15,15 +15,23 @@ The failures are injected as *builtins* — `KeyError`, `FileNotFoundError`, `Va
 `UnicodeDecodeError` — because that is exactly what the real repository raises (ruling R24). A fake
 that raised the project's own errors would make the translation untestable by pre-supplying its
 result.
+
+**`FakeWriteLock` is the one exception, and it is not an exception to the rule.** The real lock
+raises `LockHeldError` itself, because "held by a live process" is a judgement only the sentinel's
+holder check can make and no `FileExistsError` arriving in `application/` could be turned back
+into it — `domain/lock.py` argues it in full. There is no translation here for this fake to
+pre-supply, so it raises what the real one raises.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
+from contextlib import contextmanager
 from datetime import UTC, datetime
 
 from harness_library.domain.artifact import Artifact, ArtifactFile, ArtifactKind
 from harness_library.domain.backup import BackupRecord
+from harness_library.domain.errors import LockHeldError
 from harness_library.domain.hashing import content_hash_of_files, hash_bytes
 from harness_library.domain.identity import ArtifactType
 from harness_library.domain.manifest import Manifest, ManifestArtifact
@@ -37,6 +45,12 @@ UPDATED_AT = datetime(2026, 8, 31, 12, 0, tzinfo=UTC)
 
 TARGET_PATH = "/home/example/.claude"
 """The install target every fake in this module names. Never a real `~/.claude` (F-9, L37)."""
+
+SENTINEL_PATH = "/home/example/.local/state/harness-library/manifests/0123abcd.lock"
+"""What `FakeWriteLock` calls its sentinel. A plausible shape, and a path nothing ever touches."""
+
+HOLDER_PID = 4242
+"""The pid a refusing `FakeWriteLock` names. Never this process's, and never looked up."""
 
 
 class FakeArtifactRepository:
@@ -287,6 +301,47 @@ class FakeBackupStore:
 
     def list(self) -> tuple[BackupRecord, ...]:
         return tuple(self._records)
+
+
+class FakeWriteLock:
+    """The `WriteLock` seam in memory. Records every acquire and release, in order.
+
+    **What this fake cannot prove.** It cannot prove that anything is excluded — that is a
+    sentinel file, and `tests/infrastructure/test_lock.py` and `tests/test_single_writer.py` prove
+    it against real ones. What it *can* prove is the only thing apply decides: that the lock is
+    taken before the first thing the run does to a disk, and that it is released however the run
+    ends — including on each of the three paths on which apply fails.
+
+    It collects evidence and renders no verdict (L29): `events` is a recording, and every
+    assertion about it lives in a test.
+
+    Attributes:
+        events: `"acquired"` and `"released"` in call order. A test that puts its own marks in
+            this list is how the *order* of the lock against the backup is asserted.
+        held: whether the lock is held right now. `False` after a release, whatever ended it.
+        held_by_another: refuse every acquire with `LockHeldError`, as a lock another process
+            holds does. This is how "a second apply writes nothing" is asserted at this layer.
+    """
+
+    def __init__(self, *, held_by_another: bool = False) -> None:
+        self.events: list[str] = []
+        self.held = False
+        self.held_by_another = held_by_another
+
+    @contextmanager
+    def hold(self) -> Iterator[None]:
+        """Take the lock, or refuse. A **re-entrant** acquire is refused like any other: the lock
+        is per target and not per process, so one process running two applies at once is the same
+        corruption as two processes doing it."""
+        if self.held_by_another or self.held:
+            raise LockHeldError(SENTINEL_PATH, pid=HOLDER_PID)
+        self.held = True
+        self.events.append("acquired")
+        try:
+            yield
+        finally:
+            self.held = False
+            self.events.append("released")
 
 
 class FakeManifestStore:

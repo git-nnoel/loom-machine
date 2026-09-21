@@ -29,6 +29,7 @@ from harness_library.application.write import ApplyResult, apply_install, plan_i
 from harness_library.domain.errors import (
     BackupFailedError,
     ErrorCode,
+    LockHeldError,
     ManifestWriteError,
     TargetUnwritableError,
 )
@@ -41,6 +42,7 @@ from tests.application.fakes import (
     FakeBackupStore,
     FakeManifestStore,
     FakeTargetRepository,
+    FakeWriteLock,
     finding,
     make_artifact,
     make_file,
@@ -81,6 +83,7 @@ def apply(
     *,
     backups: FakeBackupStore | None = None,
     manifests: FakeManifestStore | None = None,
+    lock: FakeWriteLock | None = None,
     manifest: Manifest | None = None,
     prune: bool = False,
 ) -> ApplyResult:
@@ -88,6 +91,10 @@ def apply(
 
     Plumbing only: it passes arguments and returns the result. It asserts nothing and decides
     nothing (L29) — every verdict about what happened is made in a test.
+
+    A fresh `FakeWriteLock` unless one is given, so **every apply in this module runs under a
+    lock** (R50) — which is the point, and which is why the helper supplies one rather than
+    letting each test decide whether this run is the locked kind.
     """
     return apply_install(
         plan,
@@ -95,6 +102,7 @@ def apply(
         target,
         backups if backups is not None else FakeBackupStore(),
         manifests if manifests is not None else FakeManifestStore(),
+        lock=lock if lock is not None else FakeWriteLock(),
         manifest=manifest,
         target_path=TARGET_PATH,
         installed_at=INSTALLED_AT,
@@ -904,3 +912,160 @@ def test_the_result_is_incomplete_exactly_when_the_plan_was(blocking: Verdict) -
     assert blocked_result.is_complete is blocked.is_complete
     assert not blocked_result.is_complete
     assert complete_result.is_complete
+
+
+# -------------------------------------------------------------------------------------------
+# Ruling R50 — the single-writer lock, and apply's half of it
+# -------------------------------------------------------------------------------------------
+#
+# What this layer decides is *control flow*: that the lock is taken before the first thing the
+# run does to a disk, and released however the run ends. That it actually excludes a second
+# process is a sentinel file, proven in `tests/infrastructure/test_lock.py`, and that the two
+# together keep a second apply from writing is proven in `tests/test_single_writer.py`.
+
+
+class _BackupStoreMarkingTheLock(FakeBackupStore):
+    """A `FakeBackupStore` that leaves a mark in the lock's own event list when it is called.
+
+    One list holding both facts is what makes the *order* of the lock against the backup a single
+    assertion rather than two that could each pass while the pair was wrong.
+    """
+
+    def __init__(self, lock: FakeWriteLock) -> None:
+        super().__init__()
+        self._lock = lock
+
+    def create(self, paths: tuple[str, ...]) -> str:
+        self._lock.events.append("backup")
+        return super().create(paths)
+
+
+def _one_create() -> InstallPlan:
+    """A plan with one thing to write, so there is always a backup and always a file."""
+    return InstallPlan(entries=(entry(INSTALLED_ENTRY, Verdict.CREATE, library_sha="a" * 64),))
+
+
+def test_apply_requires_a_lock_and_gives_it_no_default() -> None:
+    """Charter §12 and R50. The same argument `manifest` carries, and for the same reason: an
+    unlocked apply must be a decision somebody wrote down, not a parameter somebody forgot.
+
+    T-18 adds two more write use cases and T-22 the composition root; a default here is how one
+    of them ends up running unprotected with every gate green.
+    """
+    parameter = inspect.signature(apply_install).parameters["lock"]
+
+    assert parameter.kind is inspect.Parameter.KEYWORD_ONLY
+    assert parameter.default is inspect.Parameter.empty
+
+
+def test_the_lock_is_taken_before_the_backup_and_released_on_success() -> None:
+    """The backup is the first thing apply does to a disk, so the lock has to precede it.
+
+    Asserted as one ordered list: a lock taken after the backup would still be "taken" and still
+    be "released", and only the order says the copy was made under it.
+    """
+    lock = FakeWriteLock()
+    backups = _BackupStoreMarkingTheLock(lock)
+
+    apply(_one_create(), a_library(SKILL_NAME), FakeTargetRepository(), backups=backups, lock=lock)
+
+    assert lock.events == ["acquired", "backup", "released"]
+    assert lock.held is False
+
+
+def test_apply_writes_nothing_when_the_lock_is_held() -> None:
+    """**F-14 at this layer.** A run that cannot take the lock does not back up, does not record
+    and does not write — the refusal is before all three, so `LOCK_HELD` carries the same "nothing
+    happened" guarantee `MANIFEST_UNWRITABLE` does.
+
+    The positive control is in the same test: the identical plan under a free lock does all three,
+    so the three empty lists cannot be empty because the plan was.
+    """
+    library = a_library(SKILL_NAME)
+    target = target_holding((FOREIGN, FOREIGN_BYTES))
+    backups = FakeBackupStore()
+    manifests = FakeManifestStore()
+    before = target.snapshot()
+
+    with pytest.raises(LockHeldError) as raised:
+        apply(
+            _one_create(),
+            library,
+            target,
+            backups=backups,
+            manifests=manifests,
+            lock=FakeWriteLock(held_by_another=True),
+        )
+
+    assert raised.value.code is ErrorCode.LOCK_HELD
+    assert backups.created == []
+    assert manifests.written == []
+    assert target.writes == []
+    assert target.snapshot() == before
+
+    apply(_one_create(), library, target, backups=backups, manifests=manifests)
+
+    assert backups.created != []
+    assert manifests.written != []
+    assert target.writes != []
+
+
+def test_the_lock_is_released_when_the_backup_cannot_be_taken() -> None:
+    """The first of apply's three failure paths. A lock leaked here would wedge the target on the
+    one run that already told the user something is wrong with their state directory."""
+    lock = FakeWriteLock()
+
+    with pytest.raises(BackupFailedError):
+        apply(
+            _one_create(),
+            a_library(SKILL_NAME),
+            FakeTargetRepository(),
+            backups=FakeBackupStore(fail=True),
+            lock=lock,
+        )
+
+    assert lock.events == ["acquired", "released"]
+    assert lock.held is False
+
+
+def test_the_lock_is_released_when_the_manifest_cannot_be_written() -> None:
+    """The second. Under R63 nothing has been written at this point, so a wedged lock would be
+    the only trace a run that changed nothing left behind."""
+    lock = FakeWriteLock()
+
+    with pytest.raises(ManifestWriteError):
+        apply(
+            _one_create(),
+            a_library(SKILL_NAME),
+            FakeTargetRepository(),
+            manifests=FakeManifestStore(fail=True),
+            lock=lock,
+        )
+
+    assert lock.events == ["acquired", "released"]
+    assert lock.held is False
+
+
+def test_the_lock_is_released_when_a_file_write_fails_part_way_through() -> None:
+    """The third, and the one that matters most: this is the run that leaves the target modified
+    and the manifest over-claiming, so it is the run whose user most needs to be able to try
+    again — or to roll back (T-18) — without deleting a lock file by hand.
+
+    The failure is injected into the **second** write, so the run really is part-way through:
+    one file is on disk, asserted, and the lock is still released.
+    """
+    lock = FakeWriteLock()
+    target = FakeTargetRepository(fail_write_after=1)
+    plan = InstallPlan(
+        entries=(
+            entry(INSTALLED_ENTRY, Verdict.CREATE, library_sha="a" * 64),
+            entry(INSTALLED_OTHER, Verdict.CREATE, artifact_id=OTHER_ID, library_sha="b" * 64),
+        )
+    )
+
+    with pytest.raises(TargetUnwritableError):
+        apply(plan, a_library(SKILL_NAME, OTHER_NAME), target, lock=lock)
+
+    assert [path for path, _ in target.writes] == [INSTALLED_ENTRY]
+    assert lock.events == ["acquired", "released"]
+    assert lock.held is False

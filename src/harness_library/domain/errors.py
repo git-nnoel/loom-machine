@@ -16,8 +16,12 @@ exit row turns the gate red in a task that looks nothing like the cause (ruling 
 failure). What the *contract* fixes is the code and its status; what a class fixes is the fields a
 raise site carries — what a failed backup names, what a held lock names — and those belong to the
 tasks that raise them. T-16 brought two of the four their classes, `BACKUP_FAILED` and
-`TARGET_UNWRITABLE`, because it is the task that raises them; `INCOMPLETE` and `LOCK_HELD` are
-still waiting for theirs (T-17, T-22). So the sentence above still holds in the direction that
+`TARGET_UNWRITABLE`, and T-17 brought `LOCK_HELD` its own, each in the task that raises it. The
+two still without one are `INCOMPLETE`, which is argued below, and **`TARGET_UNREADABLE`**, which
+T-17 added to the enum under ruling R81 because C-14 named the integer and no enum carried it:
+**nothing emits it yet.** `infrastructure/target.py`'s scan propagates a bare `OSError` for a path
+it cannot read, and giving that failure this code is the work of whichever task decides what a
+half-readable target does to a plan. So the sentence above still holds in the direction that
 matters: **no code is invented at a raise site.** A code may arrive before its class; a class may
 never arrive before its code.
 
@@ -202,6 +206,24 @@ class ErrorCode(StrEnum):
 
     Deliberately **not** `TARGET_UNWRITABLE`: the target is fine. The user must look at their
     state directory, and a code naming the wrong directory sends them to the wrong place.
+    """
+
+    TARGET_UNREADABLE = "TARGET_UNREADABLE"
+    """A path the install target holds could not be read, so the target is not fully known.
+
+    Contract C-14 and **ruling R81**, which fixes its exit status at 12. **Nothing emits it yet**,
+    and the module docstring says why that is deliberate rather than an omission: C-14 named the
+    integer, no enum carried it, and I-8 makes `cli/exit_codes.py` total over this enum — so a
+    code living in a document and not in the contract is the shape ruling R26 recorded and this
+    entry closes. The fourth time this project has found it.
+
+    The counterpart of `TARGET_UNWRITABLE`, and not the same fact. That one says the destination
+    will not take a write, before anything is attempted. This one says the destination could not
+    be *described*: `infrastructure/target.py`'s scan refuses to answer an unreadable path with
+    "the target does not hold it", because a path missing from a scan is judged `CREATE` and
+    written straight over on the next apply. Today the scan propagates a bare `OSError` for it and
+    whichever task decides what a half-readable target does to a plan is the one that gives that
+    failure this code and a class to carry the path.
     """
 
 
@@ -487,6 +509,45 @@ class TargetUnwritableError(HarnessLibraryError):
         self.path = path
         self.reason = reason
         super().__init__(f"{path} could not be written into the target: {reason}")
+
+
+# -- The single writer (initiative 02, T-17, ruling R50) -----------------------------------------
+
+
+class LockHeldError(HarnessLibraryError):
+    """Another writer holds this target's advisory lock, so this run wrote nothing.
+
+    Charter §12 and **ruling R50**: one writer per target at a time, enforced by an `O_EXCL`
+    sentinel beside the manifest and broken automatically when the process that left it is gone.
+    Two applies interleaving against one target can write half of each plan's files and leave a
+    manifest describing neither — a state no verdict in C-9 can express and nothing in this
+    initiative can repair.
+
+    **Nothing was written, and nothing was backed up.** The lock is taken before the first of
+    apply's three steps, so this error carries the same guarantee `ManifestWriteError` does: the
+    target is exactly as it was. Its own code because the remedy is one no other code shares —
+    wait for the other run to finish and try again.
+
+    Attributes:
+        code: always `ErrorCode.LOCK_HELD`.
+        path: the sentinel file that is held, as text. Where a user looks, and — if a machine
+            really has gone down mid-install — what they would remove by hand.
+        pid: the process the sentinel names, when it could be read, and `None` when the lock was
+            lost to another run in the moment between breaking a stale sentinel and replacing it.
+            A pid is a diagnosis and never a contract: it may already have exited by the time it
+            is printed, and it is the holder's, not this process's.
+    """
+
+    code = ErrorCode.LOCK_HELD
+
+    def __init__(self, path: str, *, pid: int | None = None) -> None:
+        self.path = path
+        self.pid = pid
+        holder = "another process" if pid is None else f"process {pid}"
+        super().__init__(
+            f"{path} is held by {holder}: another install is writing to this target, so this run "
+            "wrote nothing. Wait for it to finish and run again"
+        )
 
 
 def _render(reason: str, *, path: str, line: int | None, column: int | None) -> str:

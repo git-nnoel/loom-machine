@@ -51,6 +51,22 @@ rollback, from the backup this module refuses to run without.
 recorded** — never the library's digest. Writing the library's digest for a conflicted path would
 claim this tool installed something it did not, turning a three-way `CONFLICT` into a
 two-way `LOCAL_EDIT` on the next run and losing the very fact the user has to resolve.
+
+## Ruling R50 — one writer per target, and the lock wraps all of it
+
+`apply_install` takes a `WriteLock` and holds it around **every** one of the five steps above,
+the failures included. Two applies interleaving against one target can write half of each plan's
+files and leave a manifest describing neither: a state no verdict in C-9 can express and no
+command in this initiative can repair. The realistic case is `hl install` in two terminals.
+
+The lock is a **required keyword-only parameter with no default**, for the reason `manifest` is:
+a default would make running unlocked a typo rather than a decision, and the composition root is
+not where this can live — T-18 adds two more write use cases and a lock a caller may forget is a
+lock that is not there.
+
+It is taken **before the backup**, which is the first thing this function does to a disk, and
+released in a `finally` inside the lock's own context manager. A lock leaked on the error path is
+worse than no lock, because it only bites after something has already gone wrong.
 """
 
 from __future__ import annotations
@@ -77,6 +93,7 @@ from harness_library.domain.install_plan import (
     PlanEntry,
     Verdict,
 )
+from harness_library.domain.lock import WriteLock
 from harness_library.domain.manifest import Manifest, ManifestArtifact, ManifestStore
 from harness_library.domain.registry import target_path_of
 from harness_library.domain.repository import ArtifactRepository
@@ -187,13 +204,14 @@ def apply_install(
     backups: BackupStore,
     manifests: ManifestStore,
     *,
+    lock: WriteLock,
     manifest: Manifest | None,
     target_path: str,
     installed_at: datetime,
     library_git_sha: str | None = None,
     prune: bool = False,
 ) -> ApplyResult:
-    """Execute `plan`. **Back up, write the manifest, write the files** — ruling R63.
+    """Execute `plan`, under this target's write lock. **Back up, manifest, files** — R63, R50.
 
     The module docstring argues the order at length; the short form is that a manifest written
     first can only over-claim and an over-claim is self-correcting, while a manifest written last
@@ -209,6 +227,10 @@ def apply_install(
             backup that cannot be taken stops the run before anything is touched (F-9).
         manifests: where the new record goes. The seam that exists because `application/` may not
             import `infrastructure/` and R63 makes the manifest write a step of this function.
+        lock: charter §12, ruling R50. Held around the whole run — the backup, the manifest and
+            every file — and released however the run ends. **Required, with no default**, for
+            the reason `manifest` is: a default would make an unlocked apply a typo rather than a
+            decision, and this is the one operation in the project that destroys data.
         manifest: contract C-11, what was last installed here, or `None` for a first install.
             **Required, with no default** — the same rule `plan_install` keeps, and for a sharper
             reason: this is what every path apply does *not* write keeps its digest from, so a
@@ -229,6 +251,8 @@ def apply_install(
         `ApplyResult`, whose `is_complete` is what a caller exits `INCOMPLETE = 6` from.
 
     Raises:
+        LockHeldError: another writer holds this target's lock. **Nothing was written and nothing
+            was backed up** — the lock is taken before the first of the three steps.
         BackupFailedError: the backup could not be taken. **Nothing was written.**
         ManifestWriteError: the manifest could not be written. **Nothing was written** — under
             R63 this failure always precedes the first file.
@@ -241,6 +265,40 @@ def apply_install(
             from a plan this library produced, and a bare `ValueError` for that reason: it means
             the plan and the library are from two different runs, which is a bug and not a user's
             mistake.
+    """
+    with lock.hold():
+        return _apply(
+            plan,
+            library,
+            target,
+            backups,
+            manifests,
+            manifest=manifest,
+            target_path=target_path,
+            installed_at=installed_at,
+            library_git_sha=library_git_sha,
+            prune=prune,
+        )
+
+
+def _apply(
+    plan: InstallPlan,
+    library: ArtifactRepository,
+    target: TargetRepository,
+    backups: BackupStore,
+    manifests: ManifestStore,
+    *,
+    manifest: Manifest | None,
+    target_path: str,
+    installed_at: datetime,
+    library_git_sha: str | None,
+    prune: bool,
+) -> ApplyResult:
+    """R63's five steps, with the lock already held. Split out so the lock wraps every one of them.
+
+    A separate function rather than an indented block, because the boundary is what is being
+    guaranteed: nothing this function does can be reached without going through `apply_install`'s
+    `with`, and a step added here is inside the lock by construction rather than by remembering.
     """
     written_entries = tuple(entry for entry in plan.entries if entry.verdict in WRITTEN_VERDICTS)
     deleted_entries = (

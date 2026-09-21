@@ -55,6 +55,7 @@ EXPECTED_MODULES = frozenset(
         "hashing",
         "identity",
         "install_plan",
+        "lock",
         "manifest",
         "metadata",
         "raw",

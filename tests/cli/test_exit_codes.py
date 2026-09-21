@@ -18,12 +18,13 @@ from harness_library.cli.exit_codes import (
     MANIFEST_UNWRITABLE,
     NOT_FOUND,
     OK,
+    TARGET_UNREADABLE,
     TARGET_UNWRITABLE,
     USAGE,
     VALIDATION_FAILED,
     exit_status_for,
 )
-from harness_library.domain.errors import ErrorCode
+from harness_library.domain.errors import ErrorCode, HarnessLibraryError
 
 
 def test_every_error_code_has_an_exit_status() -> None:
@@ -164,3 +165,62 @@ def test_no_install_status_collides_with_another() -> None:
     }
 
     assert len({exit_status_for(code) for code in install}) == len(install)
+
+
+# -- Contract C-14's seventh install status (T-17, ruling R81) ------------------------------------
+#
+# Added, not altered, as in T-13 and T-16. **Nothing emits `TARGET_UNREADABLE`**: C-14 named the
+# integer, no `ErrorCode` carried it, and this table is required to be total over that enum, so
+# the code and its row exist here before any raise site — the direction charter §9 fixes, and the
+# fourth time this project has found a code living in a document instead of in the contract (R26).
+
+
+def test_the_target_unreadable_status_is_the_number_c14_fixed() -> None:
+    """The integer itself, because a script branches on it. C-14 and R81 fix 12."""
+    assert TARGET_UNREADABLE == 12
+    assert exit_status_for(ErrorCode.TARGET_UNREADABLE) == TARGET_UNREADABLE
+
+
+def test_a_target_that_cannot_be_read_is_told_apart_from_one_that_cannot_be_written() -> None:
+    """Two facts about the same directory, two remedies, two numbers: a path whose permissions
+    hide it from the scan, against a directory that will not take a write at all. A user sent to
+    the wrong one of the two looks in the wrong place."""
+    assert TARGET_UNREADABLE != TARGET_UNWRITABLE
+
+
+def test_the_seven_install_statuses_are_seven_distinct_numbers() -> None:
+    """The seven together, as one set. A seventh code reusing a sixth's number would make a
+    script that already branches on 6..11 read this one as something it is not."""
+    install = {
+        ErrorCode.INCOMPLETE,
+        ErrorCode.TARGET_UNWRITABLE,
+        ErrorCode.MANIFEST_UNREADABLE,
+        ErrorCode.BACKUP_FAILED,
+        ErrorCode.LOCK_HELD,
+        ErrorCode.MANIFEST_UNWRITABLE,
+        ErrorCode.TARGET_UNREADABLE,
+    }
+
+    assert len({exit_status_for(code) for code in install}) == len(install) == 7
+
+
+def test_no_error_class_carries_target_unreadable_yet() -> None:
+    """The state R81 deliberately leaves, said as a fact rather than as a comment.
+
+    Charter §9 allows a code to arrive before its class and forbids the reverse. `T-14`'s scanner
+    propagates a bare `OSError` for a path it cannot read, and translating that belongs to
+    whichever task decides what a half-readable target does to a plan — so **this test is meant
+    to be deleted by that task**, and its failure is the reminder.
+
+    The positive control is in the same test: the walk really does find codes that have classes,
+    so "not carried" cannot mean "nothing was looked at". It sees only the classes whose module
+    is imported, which for `domain/errors.py` is all of them.
+    """
+    carried = {
+        subclass.code
+        for subclass in HarnessLibraryError.__subclasses__()
+        if getattr(subclass, "code", None) is not None
+    }
+
+    assert ErrorCode.LOCK_HELD in carried
+    assert ErrorCode.TARGET_UNREADABLE not in carried

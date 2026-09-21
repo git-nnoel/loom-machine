@@ -98,6 +98,21 @@ is exactly as it was. Its own number rather than `TARGET_UNWRITABLE`'s because t
 to two different directories, and the whole point of these statuses is telling them which.
 """
 
+TARGET_UNREADABLE = 12
+"""A path the install target holds could not be read. Contract C-14, ruling R81.
+
+**Nothing emits this yet**, and the row exists anyway: C-14 fixed the integer, no `ErrorCode`
+carried it, and invariant I-8 makes this table total over that enum — so a code named in a
+document and absent from the contract is the shape ruling R26 recorded, and a code added later
+without its status turns the gate red in a task that looks nothing like the cause. The code enters
+the contract first; the raise site follows. See `ErrorCode.TARGET_UNREADABLE`.
+
+Its own number rather than `TARGET_UNWRITABLE`'s even though both name the target directory: a
+target that cannot be *described* is a plan this tool refuses to trust, and a target that will not
+take a write is a plan it never got to run. The remedies differ — a permission on one path against
+a permission on the directory — and telling a user which is the whole point of these statuses.
+"""
+
 EXIT_STATUS: dict[ErrorCode, int] = {
     ErrorCode.LIBRARY_YAML_INVALID: LIBRARY_UNUSABLE,
     ErrorCode.ARTIFACT_NOT_FOUND: NOT_FOUND,
@@ -107,16 +122,17 @@ EXIT_STATUS: dict[ErrorCode, int] = {
     ErrorCode.FILE_NOT_TEXT: BAD_REQUEST,
     ErrorCode.INVALID_QUERY: BAD_REQUEST,
     ErrorCode.NOT_A_LIBRARY: LIBRARY_UNUSABLE,
-    # The install path. One status each, unlike the read path's groups: these six call for six
-    # different actions — decide, fix the target, delete the manifest, fix the backup directory,
-    # wait, fix the state directory — so grouping them would throw away the only thing a script
-    # wants from them.
+    # The install path. One status each, unlike the read path's groups: these seven call for
+    # seven different actions — decide, fix the target, delete the manifest, fix the backup
+    # directory, wait, fix the state directory, fix the unreadable path — so grouping them would
+    # throw away the only thing a script wants from them. The last has no emitter yet (R81).
     ErrorCode.INCOMPLETE: INCOMPLETE,
     ErrorCode.TARGET_UNWRITABLE: TARGET_UNWRITABLE,
     ErrorCode.MANIFEST_UNREADABLE: MANIFEST_UNREADABLE,
     ErrorCode.BACKUP_FAILED: BACKUP_FAILED,
     ErrorCode.LOCK_HELD: LOCK_HELD,
     ErrorCode.MANIFEST_UNWRITABLE: MANIFEST_UNWRITABLE,
+    ErrorCode.TARGET_UNREADABLE: TARGET_UNREADABLE,
 }
 """One entry per `ErrorCode`. A member without one fails `tests/cli/test_exit_codes.py`."""
 
@@ -137,6 +153,7 @@ __all__ = [
     "MANIFEST_UNWRITABLE",
     "NOT_FOUND",
     "OK",
+    "TARGET_UNREADABLE",
     "TARGET_UNWRITABLE",
     "USAGE",
     "VALIDATION_FAILED",

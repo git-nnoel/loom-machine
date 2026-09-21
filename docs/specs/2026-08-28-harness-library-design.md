@@ -474,14 +474,16 @@ a real Claude Code session. Both are verified by hand once, and recorded. `[GAP]
 
 ## 12. Open questions
 
-1. **Additional targets.** The design allows `--target PATH` for project-level `.claude/`
-   directories. Is that needed at v1, or is `~/.claude/` the only target? `[GAP]`
-2. **Plugin export.** Claude Code's plugin format bundles skills and agents. Should a collection
-   export as an installable plugin rather than a plain zip? This affects the `ExportArtifact`
-   shape. `[GAP]`
-3. **Non-Claude harness targets.** D2 says "other LLM sessions through different systems". MCP
-   covers reading. Is *installing* into a non-Claude harness (different directory conventions) in
-   scope, or does MCP fully cover that case? `[GAP]`
+1. ~~**Additional targets.**~~ **RESOLVED 2026-09-21 — ruling R43.** Yes: `--target PATH` accepts any
+   directory. The manifest is keyed by target path, so multiple targets are near-free. `[OBS]`
+2. ~~**Plugin export.**~~ **DEFERRED 2026-09-21 — ruling R45.** Out of initiative 02, which is about
+   writing safely into a target you control; the plugin bundle is a distribution question. Export
+   ships as a plain zip. Revisit as its own initiative when there is something to share. `[OBS]`
+3. ~~**Non-Claude harness targets.**~~ **RESOLVED 2026-09-21 — ruling R47.** MCP covers it. D2's
+   "other LLM sessions through different systems" is satisfied by the read-only server, which any
+   client consumes without the library knowing its layout. Install writes the Claude Code layout
+   only; a pluggable layout per tool would be one moving target apiece with no test signal when an
+   owner changes theirs. `[OBS]`
 7. ~~**Symlink policy.**~~ **RESOLVED 2026-08-28 — ruling R6.** Skipped, reported as a V6
    warning, excluded from the hash, never installed. `[OBS]`
 

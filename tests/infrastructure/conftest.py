@@ -24,6 +24,15 @@ from harness_library.infrastructure.timestamps import FixedTimestamps
 FIXTURE_LIBRARY = Path(__file__).resolve().parent.parent / "fixtures" / "library"
 """The committed fixture library. See `tests/fixtures/README.md`."""
 
+FIXTURE_TARGET = Path(__file__).resolve().parent.parent / "fixtures" / "target"
+"""The committed fixture install target — prerequisite P-3. See `tests/fixtures/README.md`.
+
+A second committed tree rather than a second use of the library one, because a target is shaped
+nothing like a library: it holds a foreign tree nobody here authored, a loose `settings.json`, an
+editor swap file the library scanner would refuse, and a symlink that resolves out of the target.
+Never written to by any test — the writes go to copies under `tmp_path`.
+"""
+
 SCANNED_AT = datetime(2026, 8, 31, 12, 0, tzinfo=UTC)
 """The instant every scan that is *not* about ruling R5 is pinned to."""
 
@@ -40,6 +49,16 @@ def fixture_library() -> Path:
         "regression suite for the reason this product exists and is never deleted."
     )
     return FIXTURE_LIBRARY
+
+
+@pytest.fixture
+def fixture_target() -> Path:
+    """The committed fixture install target's root. Read-only; nothing writes into it."""
+    assert FIXTURE_TARGET.is_dir(), (
+        f"the committed fixture target is missing from {FIXTURE_TARGET}. Charter §10: a fixture "
+        "this suite is written against is never deleted."
+    )
+    return FIXTURE_TARGET
 
 
 def git(repository: Path, *arguments: str, when: str | None = None) -> str:

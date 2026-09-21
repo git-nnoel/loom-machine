@@ -222,9 +222,12 @@ class PlanEntry:
     """Contract C-10. One path, its three digests and what install intends to do about it.
 
     Attributes:
-        artifact_id: the `<type>/<name>` the path belongs to. Not validated: a `FOREIGN` path may
-            sit outside every artifact root, in which case there is no id to give it and the empty
-            string is the honest answer.
+        artifact_id: the `<type>/<name>` the path belongs to, or `None` when the path belongs to
+            no artifact — **ruling R60**, and only for that case. A `FOREIGN` path such as
+            `settings.json` sits under no artifact root and has no `<type>/<name>` to give it.
+            `None` says that; the empty string this field first carried type-checks and means
+            nothing, which is exactly how an id nobody filled in reaches a consumer looking like
+            one somebody did.
         path: relative to the target root. A `str`, never a `Path` (R21).
         verdict: what install intends. The branchable value; `reason` is prose.
         library_sha: the library's digest of this path, or `None` when the library does not hold
@@ -241,7 +244,7 @@ class PlanEntry:
     returns a verdict for that input.
     """
 
-    artifact_id: str
+    artifact_id: str | None
     path: str
     verdict: Verdict
     library_sha: str | None = None
@@ -302,7 +305,7 @@ class InstallPlan:
 
 def plan_entry_for(
     *,
-    artifact_id: str,
+    artifact_id: str | None,
     path: str,
     library_sha: str | None,
     manifest_sha: str | None,

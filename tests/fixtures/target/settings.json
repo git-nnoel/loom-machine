@@ -1,0 +1,10 @@
+{
+  "model": "opus",
+  "permissions": {
+    "allow": ["Bash(git status:*)", "Read"]
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "~/.claude/statusline.sh"
+  }
+}

@@ -59,6 +59,7 @@ EXPECTED_MODULES = frozenset(
         "raw",
         "registry",
         "repository",
+        "target",
         "validation",
     }
 )

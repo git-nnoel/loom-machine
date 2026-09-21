@@ -286,12 +286,15 @@ def test_a_skipped_entry_may_hold_no_digest_at_all() -> None:
 
 
 def test_a_foreign_path_may_belong_to_no_artifact() -> None:
-    """`artifact_id` is required by C-10 and is not validated here. A foreign file outside every
-    artifact root belongs to no artifact, and refusing to represent it would push install into
-    inventing an id for a path it must not touch."""
-    entry = PlanEntry(artifact_id="", path="settings.json", verdict=Verdict.FOREIGN)
+    """**Ruling R60.** A foreign file outside every artifact root belongs to no artifact, and
+    `None` is the answer to "which artifact is this" for it. T-12 left the empty string
+    constructible and flagged the question; R60 closed it, because `""` type-checks and means
+    nothing, and an id nobody filled in must not reach a consumer looking like one somebody did.
+    Refusing to represent the path at all would push install into inventing an id for something it
+    must never touch."""
+    entry = PlanEntry(artifact_id=None, path="settings.json", verdict=Verdict.FOREIGN)
     assert entry.verdict is Verdict.FOREIGN
-    assert entry.artifact_id == ""
+    assert entry.artifact_id is None
 
 
 # ---------------------------------------------------------------------------------------------

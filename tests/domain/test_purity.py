@@ -53,6 +53,7 @@ EXPECTED_MODULES = frozenset(
         "errors",
         "hashing",
         "identity",
+        "install_plan",
         "metadata",
         "raw",
         "registry",

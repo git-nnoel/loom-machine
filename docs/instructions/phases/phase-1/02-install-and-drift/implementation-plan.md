@@ -1,10 +1,11 @@
 # Implementation plan — Install, backup, drift
 
-**Status:** Draft — cold read pending, then the user's review gate. **Not dispatchable.**
+**Status:** Draft — second cold read pending.
+**Reviewed:** 2026-09-21 · `phase-reviewer` · NOT READY · 9 blocking · all resolved in this revision; see the design record for the decisions behind them
 **Phase:** 1 · **Initiative:** 02-install-and-drift · **Owner:** delivery lead
 **Last updated:** 2026-09-21
-**Derived from:** `docs/specs/2026-08-28-harness-library-design.md` §8 · initiative 01's record (R6, R9, R34, R38, R43–R48)
-**Depends on:** initiative 01 — contracts C-1 (per-file hashes), C-4 (`read_bytes`), C-6 (error taxonomy), C-8 (root resolution). **Blocks:** 03-http-api
+**Derived from:** `docs/specs/2026-08-28-harness-library-design.md` §8 · initiative 01's record (R6, R9, R34, R38, R43–R48, R50–R54) · `2026-09-21-design.md` in this folder
+**Depends on:** initiative 01, **closed 2026-09-21 at 437 tests** — contracts C-1 (per-file hashes), C-4 (`read_bytes`), C-6 (error taxonomy), C-8 (root resolution). Nothing here touches C-5 or C-7. **Blocks:** 03-http-api
 **Independently deployable:** Yes — `hl install` replaces the manual `cp -a` on its own
 
 > This plan carries no code. Signatures in §6 are frozen shapes; bodies are the specialist's.
@@ -27,19 +28,20 @@ cleaning · `--target PATH` · V11, the symlinked artifact root · export as a p
 **Out.** Anything that reads only: the HTTP API (03), the SPA (04). Plugin-format export (R45).
 Installing into a non-Claude harness layout (R47, closed).
 
+**Concurrency is In**, not deferred: a single-writer advisory lock (R50), owned by T-17.
+
 **Deferred.**
 
 | Item | Where |
 |---|---|
 | Plugin-format export | Its own initiative, when there is something to share (R45) |
-| A three-way merge UI | Never — spec §8.5. Conflicts choose a side or open `$EDITOR` |
-| Concurrency and locking | Charter §12 says 01 is read-only and 02 revisits it. **F-7 below** |
+| A three-way merge beyond choose-a-side | Never — spec §8.5 |
 
 ## 3. Prerequisites & external dependencies
 
 | # | What | Owner | Blocking |
 |---|---|---|---|
-| P-1 | Initiative 01 closed, T-11 landed | delivery lead | **Yes** — C-5/C-7 settle in T-11 |
+| P-1 | Initiative 01 closed, T-11 landed | delivery lead | **Satisfied 2026-09-21** (`4167c44`). The dependency was never C-5/C-7 — nothing here touches search or the MCP DTOs — it was a **file** collision: T-11 edited `domain/assembly.py`, which T-20 also touches |
 | P-2 | A real `library.yaml` for the user's own skills and agents | **user**, with the lead's help | No for the code; **yes** for F-5's real-content proof (R39) |
 | P-3 | A target fixture tree, distinct from `~/.claude/` and from the library fixture | specialist, in T-3 | Yes — T-10 |
 
@@ -47,74 +49,92 @@ Installing into a non-Claude harness layout (R47, closed).
 
 | # | Capability | Spec |
 |---|---|---|
-| **F-1** | **See what would change.** A plan over every artifact and path, grouped by verdict, before anything is written. `hl diff` reports drift without proposing a write. | §8.1 |
-| **F-2** | **Install safely.** Apply the plan, backing up every path it will touch first, refusing on conflict. | §8.1, §8.3 |
-| **F-3** | **Never touch what we did not write.** Foreign paths are reported and left. Removing one is a deliberate, listed act. | §8.2 |
-| **F-4** | **Undo.** Restore a target to its state before any previous apply. | §8.3 |
-| **F-5** | **Remove cleanly.** Uninstall an artifact by the manifest; prune what left the library. | §8.4 |
-| **F-6** | **More than one target.** `--target PATH`, one manifest per target (R43). | §8.4, R43 |
-| **F-7** | **Two installs cannot corrupt each other.** 01 was read-only; this one writes. | charter §12 |
+| **F-8** | **See what would change.** A plan over every artifact and path, grouped by verdict, before anything is written. `hl diff` reports drift without proposing a write. | §8.1 |
+| **F-9** | **Install safely.** Apply the plan, backing up every path it will touch first, refusing on conflict. | §8.1, §8.3 |
+| **F-10** | **Never touch what we did not write.** Foreign paths are reported and left. Removing one is a deliberate, listed act. | §8.2 |
+| **F-11** | **Undo.** Restore a target to its state before any previous apply. | §8.3 |
+| **F-12** | **Remove cleanly.** Uninstall an artifact by the manifest; prune what left the library. | §8.4 |
+| **F-13** | **More than one target.** `--target PATH`, one manifest per target (R43). | §8.4, R43 |
+| **F-14** | **Two installs cannot corrupt each other.** A single-writer advisory lock, held for the duration of an apply (R50). | charter §12 |
+| **F-15** | **Resolve a refusal.** `--resolve library\|target` per artifact, or open both versions in `$EDITOR`. No merge UI. (R54) | §8.5 |
+| **F-16** | **Export a collection as a plain zip.** The `ExportArtifact` use case 01 deferred here; read-only, `application/read/`. (R45) | §7.1, §7.2 |
 
 ## 5. Decisions (DEC-N)
 
 | # | Decision | Why | Rejected | Affects |
 |---|---|---|---|---|
-| **DEC-10** | **The verdict function is pure, and written before anything reads a disk.** | DEC-1's lesson from 01, which removed two retrofit tasks: the task that computes is separated from the task that fetches. All eight hash combinations, including the three impossible ones, are table-tested with no I/O. | Computing verdicts inside the scanner — rejected: it is what made 01's V6 untestable above its fake. | T-1, T-4 |
+| **DEC-10** | **The verdict function is pure, and written before anything reads a disk.** | DEC-1's lesson from 01, which removed two retrofit tasks: the task that computes is separated from the task that fetches. All eight hash combinations, including the three impossible ones, are table-tested with no I/O. | Computing verdicts inside the scanner — rejected: it is what made 01's V6 untestable above its fake. | T-12, T-4 |
 | **DEC-11** | **Apply refuses on `LOCAL-EDIT` and `CONFLICT`; resolution is an explicit flag.** | Non-interactive and scriptable, and it cannot destroy an edit you forgot you made — the failure that started this project. Safe verdicts still write; the run stops with the plan printed. | Interactive prompting — rejected: hangs unattended and needs a second code path for CI. Back-up-and-overwrite — rejected: turns "I edited that" into a restore operation. R48. | T-5, T-8 |
-| **DEC-12** | **`skill/synced` needs no rule.** | Claude Code's sync bucket is in the target, unknown to library and manifest — which is precisely `FOREIGN`. A named exclusion would silently hide whatever else lands there. | Special-casing the name — rejected. Suppressing its V1 — rejected: V1 is true, and suppressing a true finding to tidy a report is the shape two cold reads just undid. R44. | T-3 |
+| **DEC-12** | **`skill/synced` needs no rule.** | Claude Code's sync bucket is in the target, unknown to library and manifest — which is precisely `FOREIGN`. A named exclusion would silently hide whatever else lands there. | Special-casing the name — rejected. Suppressing its V1 — rejected: V1 is true, and suppressing a true finding to tidy a report is the shape two cold reads just undid. R44. | T-14 |
 | **DEC-13** | **V11 covers both halves in one initiative.** | R38 deferred the symlinked root here precisely so the scan warning and the install refusal are decided together, rather than a warning in 01 and an unrelated policy in 02. | Warning only, install left alone — rejected: splits one question across two initiatives, which R38 existed to avoid. R46. | T-9 |
-| **DEC-14** | **The manifest lives outside every tree it describes.** | `~/.local/state/harness-library/manifests/<sha256 of target path>.json`. Inside the target it would be a file the harness must learn to ignore; inside the library it would be committed and would differ per machine. | Either tree — rejected for the reasons above. Spec §8.4. | T-2 |
+| **DEC-14** | **The manifest lives outside every tree it describes.** | `~/.local/state/harness-library/manifests/<sha256 of target path>.json`. Inside the target it would be a file the harness must learn to ignore; inside the library it would be committed and would differ per machine. | Either tree — rejected for the reasons above. Spec §8.4. | T-13 |
 
 ## 6. Contracts & interfaces (C-N)
 
-Continuing 01's series. C-1…C-8 are inherited unchanged.
+C-1…C-8 are inherited from initiative 01 unchanged. **Two of them are amended here**, each with its
+mirror target named, because a contract amended in a plan and nowhere else is R26's recorded failure.
 
 | # | Contract | Shape | Frozen because |
 |---|---|---|---|
-| **C-9** | `Verdict` | closed enum: `UNCHANGED` · `UPDATE` · `LOCAL_EDIT` · `CONFLICT` · `CREATE` · `PRUNE` · `FOREIGN` · `MANIFEST_REPAIR` | 03 renders a drift view from it; a rename would pass silently |
-| **C-10** | `PlanEntry` · `InstallPlan` | entry: `artifact_id`, `path`, `verdict`, `library_sha`, `manifest_sha`, `target_sha` (each `str \| None`). Plan: entries, plus counts by verdict and an `is_applicable` flag | the CLI, 03's API and the apply step all read it |
-| **C-11** | `Manifest` | `target_path`, `installed_at`, `library_git_sha`, `backup_dir`, and per artifact: `artifact_id`, `content_hash`, `files: tuple[ArtifactFile, ...]` reusing C-1 | it answers "which version is on this machine" across clones |
-| **C-12** | `TargetRepository` (protocol, `domain/`) | `scan() -> tuple[TargetFile, ...]` · `read_bytes(path)` · `write(path, bytes)` · `delete(path)` · `exists(path)` | the one seam a fake replaces so apply is testable without a disk |
-| **C-13** | `BackupStore` (protocol, `domain/`) | `create(paths) -> BackupId` · `restore(BackupId)` · `list() -> tuple[BackupRecord, ...]` | rollback is a first-class feature, not a directory convention |
-| **C-14** | install exit codes | extends C-6: a distinct status for *refused on conflict*, separate from *failed* | a script must tell "you must decide" from "it broke" |
+| **C-9** | `Verdict` | closed `StrEnum`, eight members: `UNCHANGED` · `UPDATE` · `LOCAL_EDIT` · `CONFLICT` · `CREATE` · `PRUNE` · `FOREIGN` · `MANIFEST_REPAIR`. Underscored spelling is canonical; the spec's hyphenated prose is the same value | 03 renders a drift view from it; a rename would pass silently |
+| **C-10** | `PlanEntry` · `InstallPlan` | `PlanEntry`: `artifact_id: str` · `path: str` · `verdict: Verdict` · `library_sha: str \| None` · `manifest_sha: str \| None` · `target_sha: str \| None`. **Only the three shas are optional**; a `None` means that side does not hold the path. `InstallPlan`: `entries: tuple[PlanEntry, ...]` · `counts: Mapping[Verdict, int]` · `is_applicable: bool`, **defined as: no entry carries `LOCAL_EDIT` or `CONFLICT`**. Named `PlanEntry`, superseding spec §5's `PlanAction` | the CLI, 03's API and apply all read it |
+| **C-11** | `Manifest` | `target_path: str` · `installed_at: datetime` · `library_git_sha: str \| None` · `backup_id: str \| None` · `artifacts: tuple[ManifestArtifact, ...]`, each `artifact_id: str` · `content_hash: str` · `files: tuple[ArtifactFile, ...]` reusing C-1 | it answers "which version is on this machine" across clones |
+| **C-12** | `TargetRepository` (protocol, `domain/`) | `scan() -> tuple[TargetFile, ...]` where `TargetFile` is `path: str` · `sha256: str` · `size: int` · `is_symlink: bool` · `read_bytes(path) -> bytes` · `write(path, data: bytes) -> None` · `delete(path) -> None` · `exists(path) -> bool` | the one seam a fake replaces so apply is testable without a disk |
+| **C-13** | `BackupStore` (protocol, `domain/`) | `create(paths: tuple[str, ...]) -> str` returning a backup id · `restore(backup_id: str) -> None` · `list() -> tuple[BackupRecord, ...]` where `BackupRecord` is `backup_id: str` · `created_at: datetime` · `target_path: str` · `paths: tuple[str, ...]` | rollback is a feature, not a directory convention |
+| **C-14** | install exit statuses | extends C-6's table with **`CONFLICT_REFUSED = 6`** and **`TARGET_UNWRITABLE = 7`**. There is no generic failure status today — 6 must be distinguishable from `LIBRARY_UNUSABLE = 5` and from a Python traceback, which is what "distinct from failure" means | a script must tell "you must decide" from "it broke" |
 
-**Amendment to C-6:** the error taxonomy gains codes for target-not-writable, manifest-unreadable,
-backup-failed and conflict-refused. Each enters the contract before it is emitted (charter §9).
+**Amendment to C-3 — `ValidationCode` gains `V11`.** Mirror targets: charter §8 (already carries it),
+spec §4 (amended 2026-09-21), `domain/validation.py`'s enum and its `SEVERITY_BY_CODE` row (WARNING),
+and `tests/domain/test_validation.py`'s register test. **Owned by T-20.**
+
+**Amendment to C-6 — four new error codes:** `TARGET_UNWRITABLE`, `MANIFEST_UNREADABLE`,
+`BACKUP_FAILED`, `CONFLICT_REFUSED`. Charter §9 requires a code to enter the contract before it is
+emitted, and **I-8 requires every `ErrorCode` to have a row in `cli/exit_codes.py` or the gate fails**.
+**All four codes and all four exit rows land in T-13**, the first task that emits one — not in T-19,
+which is three tasks later.
 
 ## 7. Work breakdown & dispatch (T-N)
 
 Owner `backend-developer-specialist`, territory `src/harness_library/**` and `tests/**`.
+**Ids are project-wide** (R51); initiative 01 used T-1…T-11 and F-1…F-7.
 
 | # | Deliverable | Layer | Depends on |
 |---|---|---|---|
-| **T-1** | The pure verdict function and `InstallPlan` (C-9, C-10). All eight hash combinations table-tested, the three impossible ones raising. Zero I/O. | domain | — |
-| **T-2** | The manifest: read, write, its location, and a corrupt-manifest path that fails loudly (C-11, DEC-14). | domain + infra | T-1 |
-| **T-3** | The target scanner and `TargetRepository` (C-12), plus the committed target fixture (P-3), including a foreign tree standing in for `synced/`. | infra | T-1 |
-| **T-4** | `PlanInstall` — compose library, manifest and target into a plan. Pure over the three protocols. | application | T-2, T-3 |
-| **T-5** | `BackupStore` (C-13) and `ApplyInstall`: back up before writing, all-or-nothing per invocation, refuse on conflict (DEC-11). | application + infra | T-4 |
-| **T-6** | Rollback and uninstall, both driven by the manifest and neither touching a foreign path. | application | T-5 |
-| **T-7** | Prune and `clean --foreign`, each listing before acting. | application | T-6 |
-| **T-8** | CLI: `install`, `diff`, `uninstall`, `rollback`, `clean`, `export`; `--target`, `--dry-run`, `--prune`, `--resolve`; exit codes (C-14). | cli | T-7 |
-| **T-9** | V11: the symlinked artifact root — warning on scan, refusal on install (DEC-13). Touches 01's assembler and this initiative's apply. | domain + application | T-5 |
-| **T-10** | Acceptance against the real library **and** the target fixture, including a real `library.yaml` authored with the user (P-2), which also gives 01's F-5 its real-content proof (R39). | — | T-8, T-9 |
+| **T-12** | The pure verdict function and `InstallPlan` (C-9, C-10). All eight hash combinations table-tested, the three impossible ones raising. **Settles whether a path crossing the domain boundary is `str` or `Path`** — R21 narrowed exactly this once, and `tests/domain/test_purity.py` bars `pathlib` from `domain/`. Zero I/O. | domain | — |
+| **T-13** | The manifest (C-11, DEC-14), **plus the whole C-6 amendment**: four error codes and their four `cli/exit_codes.py` rows, added before any is emitted. A corrupt manifest fails loudly and is not confused with an absent one. | domain + infra | T-12 |
+| **T-14** | The target scanner and `TargetRepository` (C-12), including `is_symlink` per entry, plus the committed target fixture (P-3) with a foreign tree standing in for `synced/`. | infra | T-13 |
+| **T-15** | `PlanInstall` in `application/write/` — compose library, manifest and target into a plan. Also `DiffAgainstTarget` in `application/read/`. **Spec §5 fixes which use case lands on which side; `mcp-is-read-only` (I-2) stays green either way, so the contract will not catch a mistake here.** | application | T-14 |
+| **T-16** | `BackupStore` (C-13) and `ApplyInstall`: back up before writing, refuse if the backup cannot be taken, **write every safe verdict and leave every `LOCAL_EDIT` / `CONFLICT` artifact untouched**, exit `CONFLICT_REFUSED` (DEC-11). Never writes a path absent from the plan. | application + infra | T-15 |
+| **T-17** | The single-writer advisory lock (R50): an `O_EXCL` sentinel beside the manifest, released on exit, stale-broken by pid check. Wraps every write path. | infra | T-16 |
+| **T-18** | Rollback and uninstall, manifest-driven, neither touching a foreign path. | application | T-17 |
+| **T-19** | Prune and `clean --foreign`, each listing before acting. | application | T-18 |
+| **T-20** | **V11** (C-3 amendment, R46, R53): detection in `infrastructure/scanner.py`, the finding on `AssembledLibrary.findings` like V7/V8/V9 — there is no `Artifact` to hang it on, because the root was never scanned — severity via `for_code()`, and the install refusal of **that artifact only**, not the run. | domain + infra + application | T-16 |
+| **T-21** | `--resolve library\|target` per artifact plus `$EDITOR` with both versions (F-15, R54), and `ExportArtifact` as a plain zip (F-16, R45). | application | T-20 |
+| **T-22** | CLI: `install`, `diff`, `uninstall`, `rollback`, `clean`, `export`; `--target`, `--dry-run`, `--prune`, `--resolve`. Exit statuses per C-14. | cli | T-21 |
+| **T-23** | Acceptance against the real library **and** the target fixture, including a real `library.yaml` authored with the user (P-2), which also gives initiative 01's **F-5** its real-content proof (R39). | — | T-22 |
 
-**Parallelism, graded per `cost-and-time.md` §2.** T-2 ∥ T-3 is the only pair: different layers,
-different files, both consuming only T-1's frozen types. Everything else shares a type or a file.
+**Parallelism: none.** T-13 and T-14 looked like a pair, but both are infrastructure and both depend on
+the `str`-versus-`Path` vocabulary T-12 settles — `cost-and-time.md` §2 grades a shared vocabulary
+sequential. Serial throughout.
 
 ## 8. Acceptance criteria
 
+Stated as **values**, per L39: a criterion naming a thing rather than a value is one no test can fail.
+
 | F | Criterion |
 |---|---|
-| **F-1** | Each of the five reachable verdicts is produced by a fixture built for it, asserted **as a verdict value**, not as the presence of a row. The three impossible hash combinations raise rather than defaulting. `hl diff` on an untouched target reports `UNCHANGED` for every path and exits 0. |
-| **F-2** | Apply writes every safe verdict and **refuses** the run when any `LOCAL_EDIT` or `CONFLICT` is present, printing the whole plan and exiting with the conflict-refused status — distinct from the failure status. A backup exists before the first byte is written; apply with an injected mid-write failure leaves the target byte-identical to its pre-apply state. |
-| **F-3** | A foreign path is **byte-identical** after apply, asserted on the file, not on the report. `clean --foreign` lists every path before removing any, and removes nothing the manifest knows. |
-| **F-4** | Rollback restores a target to its exact prior hash set, asserted per file. |
-| **F-5** | Uninstall removes exactly the manifest's files and nothing else; a foreign file in the same directory survives, asserted. `--prune` removes a manifest-known file that left the library, and only that. |
-| **F-6** | Two targets installed from one library keep separate manifests; installing into one leaves the other's manifest and files untouched, asserted. |
-| **F-7** | Two concurrent applies to the same target do not interleave writes. **The mechanism is the specialist's to choose and must be stated in their task plan before implementation.** |
-| **V11** | A symlinked artifact root produces a WARNING on scan and is named and refused in the plan. Neither the link nor its destination is written, asserted on both. |
+| **F-8** | Each of the **eight** `Verdict` members is produced by a fixture built for it and asserted **as a verdict value**. The three impossible hash combinations raise rather than defaulting. `CREATE` fires for a library artifact absent from manifest and target; `PRUNE` for a manifest path gone from the library; `MANIFEST_REPAIR` rewrites the manifest and leaves every file byte-identical, asserted on the files. `hl diff` on an untouched target reports `UNCHANGED` for every path and exits 0. |
+| **F-9** | A plan mixing safe and conflicted entries **writes every safe entry**, leaves every conflicted artifact byte-identical, and exits `CONFLICT_REFUSED = 6` — all three asserted in one test, because that combination is the ambiguity DEC-11 exists to settle. A backup exists before the first byte is written. Apply with an injected mid-write failure leaves the target byte-identical to its pre-apply state. **Apply never writes a path absent from the plan**, asserted by a write-recording fake. **Apply refuses when the backup cannot be written**, simulated by a read-only backup directory. |
+| **F-10** | A foreign path is **byte-identical** after apply, asserted on the file, not on the report. `clean --foreign` lists every path before removing any, and removes nothing the manifest knows. |
+| **F-11** | Rollback restores a target to its exact prior hash set, asserted per file. |
+| **F-12** | Uninstall removes exactly the manifest's files; a foreign file in the same directory survives, asserted. `--prune` removes a manifest-known file that left the library, and only that. |
+| **F-13** | Two targets installed from one library keep separate manifests; installing into one leaves the other's manifest and files untouched, asserted. |
+| **F-14** | A second apply against a target whose lock is held **exits without writing**, asserted on the target's hash set being unchanged and on the exit status. A stale sentinel whose pid is gone is broken and the apply proceeds. |
+| **F-15** | `--resolve library` writes the library's version; `--resolve target` leaves the target byte-identical and repairs the manifest; both exit 0. Resolution is per artifact, asserted by resolving one of two conflicts and finding the other still refused. |
+| **F-16** | Exporting a collection yields a zip whose entries are exactly the collection's artifacts' files, asserted as a path list; a binary file round-trips byte-identical. |
+| **V11** | A symlinked artifact root produces a **WARNING on `AssembledLibrary.findings`** and is named and skipped in the plan. The run still applies every other artifact — refusal is per artifact (R53). Neither the link nor its destination is written, asserted on both. |
 
-**Cross-cutting.** No test writes to `~/.claude/`. Asserted by content hash, never by mtime (L37).
+**Cross-cutting.** No test writes to `~/.claude/`. Asserted by content hash, never mtime (L37).
 
 ## 9. Verification
 
@@ -125,22 +145,32 @@ export PATH="$HOME/.local/bin:$PATH"
 uv run ruff format --check . && uv run ruff check . && uv run mypy src tests && uv run lint-imports && uv run pytest
 ```
 
-**Baseline at open:** initiative 01's final count, recorded in its record at close.
+**Baseline at open: `437 passed`, 3 contracts kept, exit 0, at commit `4167c44`** (initiative 01's
+close, re-run by the delivery lead).
+
+**Domain purity traps, named because T-12 meets them first.** `tests/domain/test_purity.py` holds
+`EXPECTED_MODULES` — a new `domain/` module not listed there fails the suite — and `FORBIDDEN_ROOTS`,
+which bars `pathlib`, `os`, `io` and `time` from `domain/`. **L13, L18 and L21 are pasted verbatim into
+T-12's dispatch.**
 
 **Mutation checks** — the assertion that must fail is named before the run, with a surviving control.
 
 | Task | Mutation | Must fail | Must stay green |
 |---|---|---|---|
-| T-1 | Collapse `MANIFEST_REPAIR` into `CONFLICT` | the manifest-stale table row, by verdict value | every other row |
-| T-2 | Return an empty manifest for a corrupt file | the corrupt-manifest test | the absent-manifest test — absent is not corrupt |
-| T-3 | Stop recording foreign paths | the foreign-file test **at repository level** | the domain-level verdict test, correctly blind |
-| T-5 | Skip the backup when the plan has one entry | the backup-exists test | the refuse-without-backup test |
-| T-5 | Apply the safe verdicts and ignore the conflict | the refusal test, **on exit code and on the file** | the all-safe-verdicts run, which must still write |
-| T-6 | Have uninstall remove the whole artifact directory | the foreign-file-survives test | uninstall's own removal test |
-| T-9 | Follow the symlink instead of refusing | the destination-untouched test | the warning test — warning and refusal are two facts |
+| T-12 | Collapse `MANIFEST_REPAIR` into `UNCHANGED` | the manifest-stale row, **by verdict value** | every other row |
+| T-13 | Return an empty manifest for a corrupt file | the corrupt-manifest test | the absent-manifest test — absent is not corrupt |
+| T-14 | Stop recording foreign paths | the foreign-file test **at repository level** | the domain-level verdict test, correctly blind |
+| T-15 | Put `PlanInstall` in `application/read/` | no test fails, and that is the finding — **assert the module path**, because `mcp-is-read-only` stays green either way | `lint-imports`, which cannot see this |
+| T-16 | Skip the backup when the plan has **more than one** entry | the backup-exists test, whose plan has two | the refuse-without-backup test, whose plan has one — so the mutation cannot take its subject away |
+| T-16 | Write the conflicted artifact along with the safe ones | the mixed-plan test, **on the conflicted file's bytes** | the all-safe run, which must still write |
+| T-17 | Release the lock before the write instead of after | the second-apply test | the single-apply test |
+| T-18 | Have uninstall remove the whole artifact directory | the foreign-file-survives test | uninstall's own removal test |
+| T-19 | Have `clean --foreign` act before listing | the list-before-acting test | the nothing-manifest-known test |
+| T-20 | Follow the symlink instead of refusing | the destination-untouched test | the warning test |
+| T-20 | Drop the V11 finding from `AssembledLibrary.findings` | the warning test **at repository level** — the half that went unwired last time | the refusal test |
+| T-21 | Have `--resolve target` overwrite instead of repairing the manifest | the target-byte-identical test | the `--resolve library` test |
 
-**Positive controls.** Every assertion of absence — "no file written", "foreign untouched", "nothing
-outside the target" — carries a sibling proving it can fail.
+**Positive controls.** Every assertion of absence carries a sibling proving it can fail.
 
 ## 10. Risks & mitigations
 

@@ -49,7 +49,9 @@ ruling that will close them, and delete the row when it closes.
 
 | Row | Divergence | Closes when |
 |---|---|---|
-| V10's suppression of V3 | charter §8 and spec §4 both state it; **the code does not implement it** | T-11 lands |
+| V11 (symlinked artifact root) | charter §8 and spec §4 both carry it; **`ValidationCode` does not** | T-20 lands |
+
+*(The V10/V3 row was deleted 2026-09-21 when T-11 landed, per R40.)*
 
 A specialist reads the **charter**, never the spec (L14). So a rule that exists only in the spec is
 unbuildable and unreportable by them — that asymmetry is what makes charter-versus-spec drift
@@ -78,13 +80,13 @@ log first: the spec is amended at the source, never patched from the instruction
 Computed, never recorded as a counter. As of 2026-09-20:
 
 ```
-R-N    rulings, implementation-record.md          high-water 34
-DEC-N  decisions, implementation-plan.md §5        high-water 9
-C-N    contracts, implementation-plan.md §6        high-water 8   (frozen)
-T-N    tasks, implementation-plan.md §7            high-water 10
-F-N    features, implementation-plan.md §4         high-water 6
-V-N    validation rules, backend-charter.md §8     high-water 10
-L-N    lessons, specialist-dispatch-lessons.md     high-water 37
+R-N    rulings, implementation-record.md          high-water 54
+DEC-N  decisions, implementation-plan.md §5        high-water 14
+C-N    contracts, implementation-plan.md §6        high-water 14
+T-N    tasks, implementation-plan.md §7            high-water 23  (project-wide, R51)
+F-N    features, implementation-plan.md §4         high-water 16  (project-wide, R51)
+V-N    validation rules, backend-charter.md §8     high-water 11
+L-N    lessons, specialist-dispatch-lessons.md     high-water 39
 ```
 
 Recompute, do not trust the numbers above:
@@ -102,8 +104,7 @@ export PATH="$HOME/.local/bin:$PATH"
 uv run ruff format --check . && uv run ruff check . && uv run mypy src tests && uv run lint-imports && uv run pytest
 ```
 
-**Newest baseline: 427 passed, 3 contracts kept, exit 0** — recorded in
-`phases/phase-1/01-store-and-read-path/implementation-record.md` under Evidence, at commit `12896e1`.
+**Newest baseline: 437 passed, 3 contracts kept, exit 0** — initiative 01's close, commit `4167c44`, re-run by the delivery lead.
 
 `uv` is not on the default PATH and env does not persist between calls (L9). A bare exit **137 is OOM,
 not a test failure** (L36).

@@ -189,9 +189,10 @@ Every rule below exists because the corresponding failure was observed on disk t
 | `V7` Every `library.yaml` entry, and every `collections[].members` id, must resolve to an artifact on disk | A rename that updates the tree but not the metadata, leaving a collection quietly one member short |
 | `V8` Two artifacts of one type whose names differ only by case | A case-insensitive install target silently merging two skills into one |
 | `V9` A duplicate key in `library.yaml` | Last-wins silently discarding the first block's tags |
+| `V11` An artifact root that is a symlink: not followed, not scanned, and therefore silently absent | A symlinked skill that loads perfectly being invisible to the library, with no diagnostic. **WARNING**; install additionally refuses that artifact (R46, R53) |
 | `V10` The entry document's frontmatter does not parse | A single unquoted colon making a working skill report every required key as missing |
 
-`V1`–`V5`, `V7`, `V8`, `V9` and `V10` are `ERROR`. `V6` is `WARNING` — it reports, never deletes, and never blocks install.
+`V1`–`V5`, `V7`, `V8`, `V9` and `V10` are `ERROR`. `V6` and `V11` are `WARNING` — it reports, never deletes, and never blocks install.
 
 **V10 suppresses V2, V3 and V5.** `[OBS: V2/V5 shipped]` `[GAP: V3 pending T-11]` When the frontmatter block did not parse, nothing is known
 about what it declares — so reporting a missing key, a name disagreement, or a lost `superseded_by`
@@ -343,14 +344,14 @@ target? library equals target?".
 |:--:|:--:|:--:|---|---|
 | ✓ | ✓ | ✓ | `UNCHANGED` | skip |
 | ✗ | ✓ | ✗ | `UPDATE` | target is what we installed; library moved ahead. Write. |
-| ✓ | ✗ | ✗ | `LOCAL-EDIT` | library and manifest agree; target edited out-of-band. Prompt. |
-| ✗ | ✗ | ✓ | `UNCHANGED` + manifest repair | library and target already agree; only the manifest is stale. Rewrite the manifest, touch no files. |
+| ✓ | ✗ | ✗ | `LOCAL_EDIT` | library and manifest agree; target edited out-of-band. **Refused, not prompted** — the artifact is named in the plan and left untouched, and the run exits with a status distinct from failure (R48). |
+| ✗ | ✗ | ✓ | `MANIFEST_REPAIR` | library and target already agree; only the manifest is stale. Rewrite the manifest, touch no files. **A distinct verdict rather than `UNCHANGED` plus an action** (R52), so the plan can report it and a consumer can count it. |
 | ✗ | ✗ | ✗ | `CONFLICT` | both moved independently; requires explicit resolution |
 | ✓ | ✓ | ✗ | *impossible* | violates transitivity — raise, never guess |
 | ✓ | ✗ | ✓ | *impossible* | as above |
 | ✗ | ✓ | ✓ | *impossible* | as above |
 
-The `UNCHANGED + manifest repair` row is the state left behind when the same content arrives by
+The `MANIFEST_REPAIR` row is the state left behind when the same content arrives by
 another path — a `git pull` on a second machine that already had the files, or a manual copy like
 the one performed by hand this session. Treating it as `CONFLICT` would demand a decision where
 there is no actual disagreement. `[INF]`
@@ -537,6 +538,11 @@ Corrections to this document after its first draft. Each names what changed the 
 | 2026-09-20 | §12.6 | Scan performance struck as resolved; real numbers recorded | Measured at T-9: 17 ms scan against a 1811 ms import, now 534 ms |
 | 2026-09-20 | §3.2 | `ValidationCode` corrected from `V1..V7` to `V1..V10` | Missed by the first amendment pass, which touched §4, §7.3, §12 and §14 and left the data model behind. §3.2 is what initiatives 03 and 04 read for the entity |
 | 2026-09-20 | — | **Five of these six rows are backfills** owed from 2026-08-28, found by a `phase-reviewer` cold read rather than by the delivery lead. The V10/V3 row is **not** a backfill — it is a forward requirement pending T-11 | The instruction tree had moved ahead of the spec in six places while the spec remained precedence 1 |
+
+| 2026-09-21 | §4 | V11 added — a symlinked artifact root, WARNING | Ruling R46. Charter §8 carried it and §4 did not, which the review profile rates a finding in its own right |
+| 2026-09-21 | §8.1 | `LOCAL-EDIT` changed from *Prompt* to *refused and named in the plan* | Ruling R48. Prompting hangs unattended and needs a second code path for CI; refusing is scriptable and cannot destroy an edit the user forgot |
+| 2026-09-21 | §8.1 | `UNCHANGED + manifest repair` becomes the distinct verdict `MANIFEST_REPAIR` | Ruling R52. A consumer must be able to count it, and initiative 03 renders verdicts as a drift view |
+| 2026-09-21 | — | Six rulings cited across §12 and the charter — R43 through R48 — **did not exist** when cited. Written into initiative 01's record on the same date | Found by a `phase-reviewer` cold read. The spec had closed three open questions on the authority of text nobody could read |
 
 **Not yet applied.** Review item S8 — the import-linter contract drafted in Plan 1 does not express
 §7.3's guarantee and separately permits `infrastructure → application`. §7.3's *statement* is correct;

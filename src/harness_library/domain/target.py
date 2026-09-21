@@ -50,11 +50,19 @@ class TargetFile:
 
     Attributes:
         path: relative to the target root, `/`-separated. Never absolute, never empty.
-        sha256: `hashing.hash_bytes` of the file's contents, lowercase hex — **and the empty string
-            for a symlink**, which is never read. See the invariant below.
+        sha256: `hashing.hash_bytes` of the file's contents, lowercase hex — and **`None` for a
+            symlink**, which is never read. Ruling R68 replaced T-14's empty-string sentinel:
+            `""` is a value that compares, sorts and renders like a digest while being none, and
+            `None` is the spelling every other optional field in C-10 and C-11 already uses.
         size: the file's size in bytes. For a symlink this is the link's own `lstat` size, the
             length of the path it names, and not the size of whatever it points at.
         is_symlink: whether this path is a symbolic link. The branchable fact; never followed.
+
+    **`None` is not "the target does not hold this path".** The entry exists, so the target holds
+    it; what is missing is only its content. A consumer that passed this straight through as
+    `PlanEntry.target_sha` would tell the verdict rule the path is absent, which is judged
+    `CREATE` and written straight through the link on the next apply.
+    `application.read.drift.target_sha_of` is where that is handled, once.
 
     **The one invariant, and it runs one way.** A symlink carries no content digest, because R6
     forbids reading through it and the alternative — hashing the destination — is the escape the
@@ -66,7 +74,7 @@ class TargetFile:
     """
 
     path: str
-    sha256: str
+    sha256: str | None
     size: int
     is_symlink: bool
 
@@ -75,7 +83,7 @@ class TargetFile:
             raise ValueError("TargetFile.path must not be empty")
         if self.size < 0:
             raise ValueError(f"TargetFile.size must not be negative: {self.size}")
-        if self.is_symlink and self.sha256:
+        if self.is_symlink and self.sha256 is not None:
             raise ValueError(
                 f"{self.path!r} is a symlink and carries the digest {self.sha256!r}: ruling R6 "
                 "says a link is never followed and never hashed as content, so a digest here "

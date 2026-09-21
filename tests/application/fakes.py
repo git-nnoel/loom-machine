@@ -1,4 +1,4 @@
-"""A hand-written contract C-4 repository, in memory. Charter §10.
+"""Hand-written contract C-4 and C-12 repositories, in memory. Charter §10.
 
 The application layer is tested against this and never against a disk. That is not merely faster:
 `application/` may not import `infrastructure/`, so a test that reached for the real repository
@@ -19,13 +19,16 @@ result.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import UTC, datetime
 
 from harness_library.domain.artifact import Artifact, ArtifactFile, ArtifactKind
 from harness_library.domain.hashing import content_hash_of_files, hash_bytes
 from harness_library.domain.identity import ArtifactType
+from harness_library.domain.manifest import Manifest, ManifestArtifact
 from harness_library.domain.metadata import Collection
 from harness_library.domain.registry import spec_for
+from harness_library.domain.target import TargetFile
 from harness_library.domain.validation import ValidationCode, ValidationFinding
 
 UPDATED_AT = datetime(2026, 8, 31, 12, 0, tzinfo=UTC)
@@ -154,3 +157,91 @@ def skill_with_entry(
 
 
 ARTIFACT_KINDS = (ArtifactKind.DIRECTORY, ArtifactKind.FILE)
+
+
+class FakeTargetRepository:
+    """Contract C-12 over dictionaries. The whole filesystem, as far as this layer can see.
+
+    **What this fake cannot prove.** It cannot prove that a real walk records a symlink, that
+    nothing is filtered out of a real scan, that a write lands at `0644`, or that a path climbing
+    out of the target is refused. Every one of those is proven against real files in
+    `tests/infrastructure/test_target.py`. What it *can* prove is the only thing this layer
+    decides: which target-relative path each of the three sources lines up on, which verdict comes
+    back for it, and whether anything was written.
+
+    It collects evidence and renders no verdict (L29): `writes` and `deletes` are recordings, and
+    every assertion about them lives in a test.
+
+    Attributes:
+        writes: `(path, data)` in call order — what an apply would have changed.
+        deletes: the paths `delete` was called on, in call order.
+    """
+
+    def __init__(self, files: Iterable[TargetFile] = ()) -> None:
+        self._files = tuple(files)
+        self._contents = {file.path: b"" for file in self._files}
+        self.writes: list[tuple[str, bytes]] = []
+        self.deletes: list[str] = []
+        self.scan_calls = 0
+
+    def scan(self) -> tuple[TargetFile, ...]:
+        self.scan_calls += 1
+        return self._files
+
+    def read_bytes(self, path: str) -> bytes:
+        try:
+            return self._contents[path]
+        except KeyError as error:
+            raise FileNotFoundError(f"this target holds nothing at {path!r}") from error
+
+    def write(self, path: str, data: bytes) -> None:
+        self.writes.append((path, data))
+        self._contents[path] = data
+
+    def delete(self, path: str) -> None:
+        self.deletes.append(path)
+        self._contents.pop(path, None)
+
+    def exists(self, path: str) -> bool:
+        return path in self._contents
+
+
+def target_file(path: str, content: bytes = b"body\n") -> TargetFile:
+    """One ordinary target entry whose digest and size really describe `content`."""
+    return TargetFile(path=path, sha256=hash_bytes(content), size=len(content), is_symlink=False)
+
+
+def target_symlink(path: str, *, destination: str = "../../../outside/escape.md") -> TargetFile:
+    """One symlink entry. R6: never followed, never hashed, so it carries no content digest.
+
+    `sha256` is `None` and cannot be anything else: ruling R68 made that the spelling of "no
+    digest", and `TargetFile` refuses a link carrying one. That the *rule* reading it survives a
+    change of sentinel is proven one level down, against `target_sha_of` over both spellings —
+    see `tests/application/test_drift.py`.
+
+    `size` is the link's own, the length of the path it names, never the destination's.
+    """
+    return TargetFile(path=path, sha256=None, size=len(destination), is_symlink=True)
+
+
+def manifest_artifact(artifact_id: str, files: tuple[ArtifactFile, ...]) -> ManifestArtifact:
+    """One manifest record, with a content hash that really describes `files`."""
+    return ManifestArtifact(
+        artifact_id=artifact_id,
+        content_hash=content_hash_of_files(files),
+        files=files,
+    )
+
+
+def manifest_of(
+    *artifacts: ManifestArtifact,
+    target_path: str = "/home/example/.claude",
+) -> Manifest:
+    """A manifest recording exactly these artifacts. `installed_at` is pinned, never `now()`."""
+    return Manifest(
+        target_path=target_path,
+        installed_at=UPDATED_AT,
+        library_git_sha=None,
+        backup_id=None,
+        artifacts=artifacts,
+    )

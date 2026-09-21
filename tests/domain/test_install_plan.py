@@ -297,6 +297,29 @@ def test_a_foreign_path_may_belong_to_no_artifact() -> None:
     assert entry.artifact_id is None
 
 
+def test_an_artifact_id_may_not_be_the_empty_string() -> None:
+    """**Ruling R69**, the half R60 left open. R60 gave `None` a meaning; `""` is the value it
+    retired and T-14 was authorised to widen the annotation and nothing else, so the empty string
+    stayed constructible and type-checking. One spelling of "no id", not two — an empty id renders
+    as nothing and reaches a consumer looking like one somebody filled in."""
+    with pytest.raises(ValueError, match="never the empty string"):
+        PlanEntry(artifact_id="", path="settings.json", verdict=Verdict.FOREIGN)
+
+
+def test_a_foreign_path_inside_an_artifact_root_still_names_its_artifact() -> None:
+    """R60 says `None` only for a path under **no** artifact root, so a foreign path that *is*
+    under one keeps the id. An editor swap file beside an installed `SKILL.md` is never written
+    and never removed by install, and a report that could not say whose directory it is in would
+    be less useful than the `ls` it replaces."""
+    entry = PlanEntry(
+        artifact_id="skill/example",
+        path="skills/example/SKILL.md.swp",
+        verdict=Verdict.FOREIGN,
+    )
+
+    assert entry.artifact_id == "skill/example"
+
+
 # ---------------------------------------------------------------------------------------------
 # plan_entry_for — the rule and the entry, built together
 # ---------------------------------------------------------------------------------------------

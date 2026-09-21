@@ -101,12 +101,25 @@ def test_an_ordinary_entry_carries_its_four_facts() -> None:
 
 def test_a_symlink_entry_carries_no_content_digest() -> None:
     """Ruling R6: a link is never followed and never hashed, so there is no content to digest.
-    Its `size` is still real — the length of the path it names, from `lstat`."""
-    entry = TargetFile(path="skills/x/elsewhere.md", sha256="", size=36, is_symlink=True)
+    Its `size` is still real — the length of the path it names, from `lstat`.
+
+    **Ruling R68** spells that absence `None`. T-14 wrote the empty string, which compares, sorts
+    and renders like a digest while being none; `None` is the spelling C-10 and C-11 already use
+    for every optional field, and it cannot be mistaken for content.
+    """
+    entry = TargetFile(path="skills/x/elsewhere.md", sha256=None, size=36, is_symlink=True)
 
     assert entry.is_symlink
-    assert entry.sha256 == ""
+    assert entry.sha256 is None
     assert entry.size == 36
+
+
+def test_a_symlink_entry_may_not_carry_the_retired_empty_string_either() -> None:
+    """R68 leaves one spelling of "no digest", not two. `""` on a link is refused with the same
+    message as a real digest is, because a consumer testing `sha256 is None` would otherwise read
+    an empty string as content and compare it against the library's."""
+    with pytest.raises(ValueError, match="never followed and never hashed"):
+        TargetFile(path="skills/x/elsewhere.md", sha256="", size=36, is_symlink=True)
 
 
 def test_a_symlink_entry_may_not_carry_a_digest() -> None:
@@ -127,9 +140,9 @@ def test_an_entry_that_is_not_a_link_may_be_built_without_a_digest() -> None:
     must-stay-green control would be buried. The rule worth having is the one about what must
     never be hashed.
     """
-    entry = TargetFile(path="skills/x/SKILL.md", sha256="", size=0, is_symlink=False)
+    entry = TargetFile(path="skills/x/SKILL.md", sha256=None, size=0, is_symlink=False)
 
-    assert entry.sha256 == ""
+    assert entry.sha256 is None
 
 
 def test_an_entry_has_a_path() -> None:

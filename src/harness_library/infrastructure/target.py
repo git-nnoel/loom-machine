@@ -44,11 +44,16 @@ normalising it here changes no digest and no verdict.
 DIRECTORY_MODE = 0o755
 """The mode every directory this repository creates ends up with. F-9, ruling R56."""
 
-NO_DIGEST = ""
+NO_DIGEST: str | None = None
 """What a symlink's `sha256` is: nothing, because nothing was read.
 
-A constant rather than a bare `""` at the call site so the absence is named where it is produced
+A constant rather than a bare `None` at the call site so the absence is named where it is produced
 and where it is asserted. `TargetFile` enforces that only a symlink may carry it.
+
+**Ruling R68 replaced T-14's empty string with `None`.** `""` compares, sorts and renders like a
+digest while being none, so an equality test against it silently answers "different" rather than
+"unknown"; `None` is the spelling C-10 and C-11 already use for every optional field, and it makes
+the absence impossible to mistake for content.
 """
 
 

@@ -8,6 +8,12 @@ each computed an ordering would be two answers to one question.
 Everything a caller needs is re-exported, so an adapter imports from `harness_library.application.
 read` and never has to know which module a name lives in — the module split is this package's
 business, not its callers'.
+
+**`mcp/` imports this package and no other use-case package.** That is what the `mcp-is-read-only`
+contract enforces, and it is why `drift.py` — which composes a library, a manifest and a target
+into an install plan — lives here rather than beside the use case that acts on the result: the
+contract follows indirect imports, so a `read → write` edge would break it through this file.
+Composing a plan writes nothing; `application/write/` owns the decision to act on one.
 """
 
 from harness_library.application.read.artifacts import (
@@ -18,6 +24,12 @@ from harness_library.application.read.artifacts import (
     sort_artifacts,
 )
 from harness_library.application.read.collections import get_collection, list_collections
+from harness_library.application.read.drift import (
+    UNHASHED_TARGET_SHA,
+    diff_against_target,
+    target_path_of,
+    target_sha_of,
+)
 from harness_library.application.read.dtos import (
     ArtifactDetail,
     ArtifactListPayload,
@@ -43,6 +55,7 @@ from harness_library.application.read.validation import validate_library
 __all__ = [
     "NO_FILTER",
     "SEARCH_RESULT_LIMIT",
+    "UNHASHED_TARGET_SHA",
     "ArtifactDetail",
     "ArtifactFilter",
     "ArtifactListPayload",
@@ -61,6 +74,7 @@ __all__ = [
     "SkippedFile",
     "SortKey",
     "ValidationReport",
+    "diff_against_target",
     "get_artifact",
     "get_artifact_file",
     "get_collection",
@@ -69,5 +83,7 @@ __all__ = [
     "search_artifacts",
     "select_artifacts",
     "sort_artifacts",
+    "target_path_of",
+    "target_sha_of",
     "validate_library",
 ]

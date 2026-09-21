@@ -13,6 +13,7 @@ Two invocation details are load-bearing:
 
 from __future__ import annotations
 
+import importlib
 import subprocess
 import sys
 from pathlib import Path
@@ -75,3 +76,69 @@ def test_contract_is_configured_and_kept(
     assert f"{contract_name} KEPT" in report, (
         f"contract {contract_name!r} was not reported as KEPT. Full report:\n{report}"
     )
+
+
+# ------------------------------------------------------------------------------------------------
+# Which package a use case is *defined* in — the guard `lint-imports` cannot be
+# ------------------------------------------------------------------------------------------------
+
+WRITE_PACKAGE = "harness_library.application.write"
+READ_PACKAGE = "harness_library.application.read"
+
+WRITE_USE_CASES = ("plan_install",)
+"""Every name `application/write/` exports. A new write use case is added here.
+
+The `mcp-is-read-only` contract forbids `mcp/` from reaching this package, which is the mechanism
+behind "an MCP session cannot mutate the user's harness". What the contract cannot tell is whether
+a *given* use case is in it: move one into `application/read/` and `mypy`, `ruff` and
+`lint-imports` all stay green while the guarantee quietly stops covering it. Naming them here is
+the only thing that fails.
+"""
+
+READ_USE_CASES = ("diff_against_target", "list_artifacts", "search_artifacts", "validate_library")
+"""A sample of `application/read/`'s surface, including T-15's drift report.
+
+`diff_against_target` in particular must stay on the read side: it is what `mcp/` reaches, and a
+read use case that drifted into `write/` would break the contract loudly — which is the opposite
+failure and the one that does not need a test. This assertion's job is to make the pair symmetric,
+so the write-side one cannot be read as an arbitrary rule about one function.
+"""
+
+
+@pytest.mark.parametrize("name", WRITE_USE_CASES)
+def test_every_write_use_case_is_defined_in_the_write_package(name: str) -> None:
+    """A write use case lives in `application/write/`, not merely re-exported from it.
+
+    `__module__` is the definition site, so a function defined in `application/read/` and imported
+    into `application/write/__init__.py` fails here — which is exactly the shape the mistake
+    takes, because that arrangement keeps every other gate green.
+    """
+    write_package = importlib.import_module(WRITE_PACKAGE)
+    function = getattr(write_package, name)
+
+    assert function.__module__.startswith(f"{WRITE_PACKAGE}."), (
+        f"{name} is exported from {WRITE_PACKAGE} but defined in {function.__module__}. "
+        "The mcp-is-read-only contract forbids a module path, not a re-export: a write use case "
+        "defined under application/read is reachable from the MCP server and no import contract "
+        "will say so."
+    )
+
+
+@pytest.mark.parametrize("name", READ_USE_CASES)
+def test_every_read_use_case_is_defined_in_the_read_package(name: str) -> None:
+    """The symmetric half. `mcp/` imports this package; nothing defined here may sit in `write/`."""
+    read_package = importlib.import_module(READ_PACKAGE)
+    function = getattr(read_package, name)
+
+    assert function.__module__.startswith(f"{READ_PACKAGE}."), (
+        f"{name} is exported from {READ_PACKAGE} but defined in {function.__module__}."
+    )
+
+
+def test_the_write_package_exports_exactly_the_use_cases_named_here() -> None:
+    """Discovery is not coverage. A write use case that was never added to `WRITE_USE_CASES`
+    would simply not be parametrised, and the guard above would pass having checked nothing
+    about it."""
+    write_package = importlib.import_module(WRITE_PACKAGE)
+
+    assert sorted(write_package.__all__) == sorted(WRITE_USE_CASES)

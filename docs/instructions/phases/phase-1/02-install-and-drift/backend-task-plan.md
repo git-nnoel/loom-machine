@@ -350,3 +350,159 @@ uv run ruff format --check . && uv run ruff check . && uv run mypy src tests && 
 ```
 
 Whole, every time. Baseline 536 passed.
+
+---
+
+# Backend task plan — T-15, the three-source join and the two use cases
+
+Initiative 02 · phase 1 · base commit `93e3549` · owner `backend-developer-specialist`.
+Builds `PlanInstall` (`application/write/`) and `DiffAgainstTarget` (`application/read/`) over
+contracts **C-4**, **C-9**, **C-10**, **C-11** and **C-12**. Also carries **R69** (`PlanEntry.
+artifact_id` rejects `""`) and **R68** (`TargetFile.sha256` becomes `str | None`).
+
+## 1. Where the code goes
+
+| File | Why |
+|---|---|
+| `src/harness_library/application/read/drift.py` | new. `diff_against_target`, and the join — `target_path_of`, `target_sha_of`, `UNHASHED_TARGET_SHA` |
+| `src/harness_library/application/read/__init__.py` | re-exports the four new names, per this package's rule that a caller never has to know which module a name lives in |
+| `src/harness_library/application/write/install.py` | new. `plan_install` — the first module in `application/write/` |
+| `src/harness_library/application/write/__init__.py` | re-exports `plan_install` |
+| `src/harness_library/domain/install_plan.py` | **one guard only**: `PlanEntry.__post_init__` rejects `artifact_id=""` (R69) |
+| `src/harness_library/domain/target.py` | **R68**: `sha256: str \| None`, the one-way invariant restated against `None` |
+| `src/harness_library/infrastructure/target.py` | **R68's third mirror.** `NO_DIGEST` becomes `None`. Outside the dispatch's constraint list and done anyway — see §3 |
+| `tests/application/fakes.py` | `FakeTargetRepository` (C-12) and the builders the drift tests read from |
+| `tests/application/test_drift.py` · `tests/application/test_install.py` | new |
+| `tests/test_architecture.py` | the module-path guard — the **only** thing that catches mutation (a) |
+| `tests/domain/test_install_plan.py` · `tests/domain/test_target.py` · `tests/infrastructure/test_target.py` | R69 and R68 |
+
+No new `domain/` module, so `tests/domain/test_purity.py` is untouched (L13, L18). No dependency
+change.
+
+## 2. The join — one key, three vocabularies
+
+The key is the **target-relative path**. Each source speaks a different one:
+
+| Source | What it holds | How it reaches the key |
+|---|---|---|
+| library (C-4) | `Artifact.files[].path`, relative to the **artifact root** | `target_path_of(type, name, file.path)` |
+| manifest (C-11) | `ManifestArtifact.files[].path`, also artifact-root-relative, with no root recorded anywhere in the document | `parse_artifact_id` → the same `target_path_of` |
+| target (C-12) | `TargetFile.path`, already relative to the **target root** | itself |
+
+`target_path_of` is `registry.TypeSpec`, never a literal:
+
+* `DIRECTORY` kind → `f"{spec.root_path(name)}/{file_path}"` — `skills/delivery-lead/SKILL.md`;
+* `FILE` kind → `f"{spec.directory}/{file_path}"` — the artifact root **is** the entry document, so
+  joining onto it would give `agents/scribe.md/scribe.md`. The result is `root_path(name)` exactly.
+
+Nothing stores the prefix. C-11 records no target-relative path on purpose: one copy per file would
+repeat the same string N times and one per artifact would be a second source of truth for a layout
+`TypeSpec` already owns, and the two would disagree the first time a type's directory moved.
+
+**A path that cannot be joined.** Only the manifest can produce one — an `artifact_id` that is not
+`<type>/<name>`, which `ManifestArtifact` accepts (it rejects only the empty string) and the store's
+reader does not check. `plan_install` **raises `ValueError`** naming the id. Skipping it silently is
+the worse failure: that artifact's installed files would then be held by neither the library nor the
+manifest, read `FOREIGN`, and become unprunable and ununinstallable — orphaned by the very record
+that exists to make them removable. Flagged: the guard belongs on `ManifestArtifact.__post_init__`,
+where `manifest_store._build` would render it as a located `ManifestError`, and C-11 is frozen.
+
+**Attribution of a target-only path.** R60 says `artifact_id` is `None` only for a path under **no**
+artifact root. So a foreign path is attributed to the artifact whose root contains it, where that
+root is one the library or the manifest actually holds — `skills/delivery-lead/SKILL.md.swp` carries
+`skill/delivery-lead`. A root nobody holds attributes nothing: `skills/synced/...` is not an artifact
+root just because it is shaped like one, so every path of that tree carries `None` (R44, no named
+exclusion anywhere in this module), and so does `settings.json`.
+
+**A target path with no digest is present, not absent.** `TargetFile.sha256` is absent for a symlink
+(R6 never hashes one). Passing that through as `target_sha=None` would tell the verdict rule the
+target does not hold the path — `CREATE`, and the next apply writes straight through the link. So
+`target_sha_of` answers `UNHASHED_TARGET_SHA`, a sentinel no digest can equal, and the rule reaches
+`LOCAL_EDIT` or `CONFLICT` by the ordinary table. It reads `file.sha256 or UNHASHED_TARGET_SHA` —
+**truth, not `is not None`** — so it is correct under T-14's `""` and under R68's `None` alike.
+
+## 3. The two decisions this task had to make outside its contracts
+
+**Where the composition lives.** In `read/drift.py`; `write/install.py` calls it. Not the other way
+round: `mcp/tools.py` imports the `application.read` package, `import-linter`'s forbidden contracts
+see **indirect** imports, so a `read → write` edge would make `mcp-is-read-only` fail the moment the
+name was re-exported. Composing a plan writes nothing, so the read side is where it belongs. What
+`write/` owns is the decision to act on it, and it is the place T-20's V11 refusal and T-21's
+`--resolve` narrowing land — which is why `plan_install` is a separate symbol rather than an alias.
+
+**R68's third mirror.** The dispatch authorises `domain/target.py` and says the symlink digest
+becomes `None`, "replacing T-14's enforced empty-string sentinel". `infrastructure/target.py` is the
+only producer of that sentinel and is not on the constraint list. Left alone, the change is either
+vacuous (the scanner still emits `""`) or red (the new invariant rejects `""` on a link and every
+scan of the fixture raises). One line — `NO_DIGEST = ""` → `NO_DIGEST: str | None = None` — plus its
+docstring. Reported prominently; revertible on its own.
+
+`manifest` is a **required** keyword argument on both use cases, with no `None` default. A caller
+that forgot it would judge every path `CREATE` and overwrite the whole target, which is the exact
+catastrophe the manifest exists to prevent.
+
+## 4. Tests
+
+`tests/application/**`, fakes only, zero disk (charter §10). `FakeTargetRepository` records writes
+and deletes and renders no verdict (L29).
+
+* every one of the eight producible verdicts, from three sources, **asserted as a verdict value**;
+* the sweep: `SKIPPED` is 0 in a plan that carries all eight, and each of the eight is ≥ 1 — the
+  eight are the positive control for the absence of the ninth;
+* the symlink over an installed path, parametrised over **both** spellings of "no digest", asserted
+  `LOCAL_EDIT` (and `CONFLICT` when the library has also moved on), never `UNCHANGED`, with the
+  regular-file sibling as the control and a test that its `target_sha` is not `None`;
+* the `synced/` tree, every path `FOREIGN` with `artifact_id is None`;
+* the `FILE`-kind join, which the `DIRECTORY` formula would have got wrong;
+* `diff_against_target` writes nothing — with the positive control that the fake does record a write;
+* the module-path guard in `tests/test_architecture.py`.
+
+## 5. Mutation checks (L35 — read this if the session was interrupted)
+
+Both are backed up to `…/scratchpad/<file>.orig` first and restored from that copy.
+**Neither is applied; the result is recorded below.**
+
+**(a) `PlanInstall` moved into `application/read/`.** `read/drift.py` grows the definition and
+`write/install.py` imports it, so `plan_install.__module__` becomes a read module.
+Must fail: `tests/test_architecture.py::test_every_write_use_case_is_defined_in_the_write_package`.
+Must stay green: `lint-imports` — deliberately, because it is blind to this.
+`-k "write_use_case_is_defined_in_the_write_package or import_contracts_are_kept"`.
+
+**(b) the library's paths left artifact-root-relative** — `_library_files` yields `file.path`
+instead of the joined path, dropping the `TypeSpec.root_path` join.
+Must fail: `tests/application/test_drift.py::test_a_library_file_and_its_identical_installed_copy_are_unchanged`.
+Must stay green: `tests/application/test_drift.py::test_the_foreign_synced_tree_is_foreign_whole`,
+so the mutation cannot pass by making everything foreign.
+`-k "identical_installed_copy_are_unchanged or foreign_synced_tree_is_foreign_whole"`.
+
+**Result — neither mutation is applied.** `write/install.py` matches its backup by md5
+(`03aaa6747e60f9fef09c441af3516a75`) and `read/drift.py` matches its own
+(`cbada6d3eca8bf004bdc1c38c812462e`).
+
+Under (a), the filter gave `1 failed, 4 passed`:
+`test_every_write_use_case_is_defined_in_the_write_package[plan_install]` failed with
+*"plan_install is exported from harness_library.application.write but defined in
+harness_library.application.read.drift"*, and `lint-imports` **stayed green** — run on its own it
+still reported `layered-architecture KEPT · mcp-is-read-only KEPT · domain-is-pure KEPT`, exit 0.
+That is the finding, not an accident: the contract forbids a module path and cannot see which
+functions are in it, so this one test is the whole guard. Restored: `5 passed`.
+
+Under (b), the filter gave `1 failed, 1 passed`:
+`test_a_library_file_and_its_identical_installed_copy_are_unchanged` failed with
+`assert <Verdict.PRUNE: 'prune'> is <Verdict.UNCHANGED: 'unchanged'>` — the library's `SKILL.md`
+stopped being the same path as its installed copy, so only the manifest and the target still held
+it. `test_the_foreign_synced_tree_is_foreign_whole` **stayed green**, which is what stops the
+mutation passing by making everything foreign. Restored: `2 passed`.
+
+Fifteen tests in `tests/application/` redden under (b) — every test whose subject *is* the join.
+They are kept out of the filter deliberately, the way T-14 kept its golden path list out of its
+own: the control that matters is the foreign one, and it is unaffected either way.
+
+## 6. Gate
+
+```
+export PATH="$HOME/.local/bin:$PATH"
+uv run ruff format --check . && uv run ruff check . && uv run mypy src tests && uv run lint-imports && uv run pytest
+```
+
+Whole, every time (L2), exit code read without a pipe (L44). Baseline 584 passed.

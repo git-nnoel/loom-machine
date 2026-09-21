@@ -237,7 +237,7 @@ def test_the_symlink_entry_carries_no_content_digest(
     entry = _entry(target.scan(), THE_LINK)
     destination = OUTSIDE / "target-escape.md"
 
-    assert entry.sha256 == ""
+    assert entry.sha256 is None
     assert entry.size == len("../../../../outside/target-escape.md")
     assert entry.size != destination.stat().st_size
 

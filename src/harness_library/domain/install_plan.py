@@ -227,7 +227,10 @@ class PlanEntry:
             `settings.json` sits under no artifact root and has no `<type>/<name>` to give it.
             `None` says that; the empty string this field first carried type-checks and means
             nothing, which is exactly how an id nobody filled in reaches a consumer looking like
-            one somebody did.
+            one somebody did — so **ruling R69 rejects it**, and the two spellings of "no id" are
+            now one. A foreign path that *does* sit under an artifact root keeps that artifact's
+            id: `skills/<name>/SKILL.md.swp` belongs to `skill/<name>` even though install will
+            never touch it.
         path: relative to the target root. A `str`, never a `Path` (R21).
         verdict: what install intends. The branchable value; `reason` is prose.
         library_sha: the library's digest of this path, or `None` when the library does not hold
@@ -255,6 +258,13 @@ class PlanEntry:
     def __post_init__(self) -> None:
         if not self.path:
             raise ValueError("PlanEntry.path must not be empty")
+        if self.artifact_id == "":
+            raise ValueError(
+                "PlanEntry.artifact_id must be a <type>/<name> identity or None, never the empty "
+                "string: ruling R60 gave None the meaning 'this path is under no artifact root', "
+                "and an empty id type-checks, renders as nothing and reaches a consumer looking "
+                "like an id somebody filled in"
+            )
         if self.verdict in EXPLAINED_VERDICTS and not self.reason:
             raise ValueError(
                 f"a {self.verdict.value} entry must carry a reason: contract C-10 makes a plan "

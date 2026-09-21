@@ -151,6 +151,23 @@ One settings object is the sole reader of the environment; no other module calls
 Library-root precedence: `--library` flag → `$HL_LIBRARY` → current directory. Resolution **fails loudly**
 on a directory that is not a library, rather than silently returning an empty list.
 
+## 13b. The record-ordering rule (R86)
+
+**The manifest must never disown a file that is still on disk.** A disowned path reads `FOREIGN`:
+install will not touch it, uninstall cannot remove it, nothing recovers it. An over-claim is the
+opposite and self-corrects — the path returns as `LOCAL_EDIT` on the next diff and the user is asked.
+
+So the record goes at whichever end of a run leaves only the over-claim possible:
+
+| The files | The record |
+|---|---|
+| appear (install) | **first** |
+| disappear (uninstall, prune) | **last** |
+| both (rollback) | **last** |
+
+Each ordering needs a witness that **injects a failure** — a run that does not fail cannot tell the
+two orders apart (L52).
+
 ## 14. Decisions log
 
 | Date | Decision |

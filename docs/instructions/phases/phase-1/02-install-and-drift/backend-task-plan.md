@@ -1940,3 +1940,127 @@ uv run ruff format --check . && uv run ruff check . && uv run mypy src tests && 
 ```
 
 Whole, every time (L2), exit code read without a pipe (L44). Baseline 984 passed.
+
+---
+
+# Backend task plan — T-23, acceptance
+
+Initiative 02 · phase 1 · base commit `211edda` · owner `backend-developer-specialist`.
+An **acceptance** task: it runs the finished software and records what honestly happens. No source
+file was changed, no test was added, and no dependency was touched. The deliverable is
+`2026-09-21-acceptance.md` in this folder; this section says how it was produced and what a reader
+of the plan needs to carry forward.
+
+## 1. Where the work went
+
+| File | Why |
+|---|---|
+| `docs/instructions/phases/phase-1/02-install-and-drift/2026-09-21-acceptance.md` | the report. Six deliverables, every criterion with a verdict and pasted output, two defects and seven observations |
+| this section | the plan's record of it |
+| `.claude/agent-memory/backend-developer-specialist/` | four memories: the two defects' root causes, the real library's V10, and the real-tree numbers |
+
+Nothing under `src/`, `tests/` or `~/.claude/` was touched. The gate is green at **1038 passed,
+3 contracts kept, exit 0**, unchanged from the base commit.
+
+## 2. Method, and why each claim is checkable
+
+Everything ran through `hl`, because the CLI is the only human surface there is. Three rules held
+throughout and are what make the report auditable:
+
+* **`$HOME` redirected on every single invocation** (L64). `default_target_root()` is
+  `~/.claude` and `default_state_root()` is `~/.local/state/harness-library`; one forgotten
+  `--target` reaches the real harness. §2.2 of the report deliberately runs *without* `--target`
+  to prove the default resolves inside the redirected home rather than outside it.
+* **Every claim about a file is a content hash of the whole tree**, before and after, never the
+  command's own report (R31). The helper records a symlink by its destination and a file by its
+  sha256, so a link that became a regular file would show as a changed line.
+* **The real harness was copied, never used.** `~/.claude` (144 MB, 1382 paths) was `cp -a`'d
+  twice — once as the target, once as the library — and the narrowed manifest (L47) of
+  `skills/ agents/ plugins/ commands/ settings*` is quoted before and after: 926 paths, same
+  sha256, identical.
+
+## 3. What the acceptance found
+
+**The promise holds, with one exception.** Installing is inspectable (the scan reported 1382 of
+1382 real paths, omitting none), reversible (144 MB and 1345 paths destroyed by
+`clean --foreign --remove` and restored byte-identical by `hl rollback`, symlink included), and
+incapable of destroying a file it did not put there (an install over real drift in a 1382-path
+harness changed exactly two files, both library files with a safe verdict).
+
+Two defects, neither of which loses data, and **both needing a contract amendment rather than a
+patch** — which is why T-23 reports them instead of fixing them:
+
+* **D-1** — `FilesystemWriteLock._acquire` is the only disk step of a write run with no
+  `OSError` translation. An unwritable or full state root gives a raw traceback and **exit 1**,
+  outside C-14's table, on `install`, `uninstall`, `rollback` and `clean` alike. Nothing is
+  written when it happens. Needs a C-6 code and a C-14 row; no existing code fits.
+* **D-2** — a restored file comes back at `0644`. On the real harness that is **149 private files
+  made world-readable** (`.credentials.json`, `history.jsonl`, `daemon/control.key`) and **56
+  executables disarmed**, by the *recovery* path. The mode is lost in
+  `FilesystemBackupStore.create`, not in restore — `BackupRecord` has no mode field and the saved
+  copy under `files/` is already 644 — so this is a **C-13 amendment**, and a fix aimed at
+  `rollback.py` or at `FilesystemTargetRepository.write` alone cannot work.
+
+Seven observations (O-1 … O-7) are in §8 of the report. The two that bear on initiative 03: a real
+harness's drift view is **97 % `foreign` rows**, and `clean --foreign`'s listing — R96's whole
+safety model — is 1345 lines long against real content.
+
+## 4. T-22's two warnings, ruled on
+
+Both **confirmed**, with the behaviour observed rather than reasoned about.
+
+* `hl install` over the committed fixture library is `INCOMPLETE = 6` **by design and forever**:
+  six artifacts carry ERROR findings (R75), a seventh root is a symlink (R46, which `--force`
+  does not lift, R99), and charter §10 forbids deleting the fixtures. Any future criterion
+  wanting exit 0 through the CLI needs a different library; this task built a small clean one.
+* `--resolve target` settles the refusal and does not pin the file: the kept copy was **observed**
+  being overwritten by the next plain install, `4e1fcd0b… → 630f349e…`. Both the resolve's `note`
+  and the intervening `hl diff` said so first. The observation worth carrying is the direction:
+  resolving moves a path from `local_edit` (never touched) to `update` (written without asking),
+  so the safest state for a user's edit is the unresolved one.
+
+## 5. P-2, and initiative 01's F-5
+
+A real `library.yaml` was authored for the user's nine artifacts — five collections, two
+`superseded_by` declarations — in the scratch library copy, and is reproduced in full in §3 of the
+report for adoption. It took `hl validate` on the real tree from **8 errors to 1**: L5's seven V3
+findings are exactly the seven the two redirect stubs produce, and declaring their supersession
+clears all seven through charter §8's V3 exemption.
+
+**R39 is discharged.** F-5's criterion — *`hl list --collection <key>` returns exactly the
+declared members* — now has its real-content proof, over real artifacts with real tags and real
+supersession, with no unresolved member and therefore no V7.
+
+The eighth error is **not** a false positive and L5 does not predict it:
+`skills/frontend-system-pattern/SKILL.md` is **V10**, its `description:` an unquoted YAML scalar
+containing `: `. Claude Code's own loader accepts the file; PyYAML does not. Under R75 that means
+the user's first real install leaves **9 of 37 paths unwritten**. `hl` is behaving exactly as
+specified; whether it should is a product question (O-3).
+
+## 6. R108 — the gap, reported and not fixed
+
+`library_git_sha` is `null` in every manifest this report produced, because `apply_install`
+defaults it to `None` and no caller supplies one. Two machines holding two versions of one library
+have manifests indistinguishable on the field C-11 says answers *which version is on this
+machine*. Recorded with evidence in §5 of the report; acceptance adds no features.
+
+## 7. Measurements
+
+Method, numbers and interpretation are §7 of the report. The one thing a future task should carry:
+**the process floor is 833 ms** (interpreter + imports, MCP already deferred), and it is the
+largest single term in every command except `clean --foreign --remove`. `hl diff` over a 145 MB /
+1382-path target is 1294 ms, so the scan-and-join itself is ~460 ms. Optimise against 833 ms, not
+against zero. `clean --foreign --remove` is 10.0 s and its rollback 6.7 s, both dominated by
+copying 144 MB; memory is flat at ~67 MB RSS throughout.
+
+Nothing is slow enough to matter.
+
+## 8. Gate
+
+```
+export PATH="$HOME/.local/bin:$PATH"
+uv run ruff format --check . && uv run ruff check . && uv run mypy src tests && uv run lint-imports && uv run pytest
+```
+
+Whole, every time (L2), exit code read without a pipe (L44). **1038 passed, 3 contracts kept,
+exit 0** — the base commit's number, because this task changed no code.

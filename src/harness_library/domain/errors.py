@@ -9,6 +9,13 @@ added to `ErrorCode` before it is emitted**, never invented at a raise site.
 cannot then disagree about their code, and adding a new code means adding a new class — which is
 the moment the taxonomy is meant to be reviewed.
 
+**The implication runs one way, and T-18 is where that first mattered.** A code needs a class;
+a class does not need a code of its own. `BACKUP_FAILED` and `TARGET_UNWRITABLE` each carry two
+classes, because what a class fixes is *the fields a raise site carries* and rollback's two
+failures name a backup where apply's named a path. Two remedies would have been two codes; these
+are one remedy each — go and look at where backups live, go and look at the target — reached from
+two directions.
+
 **Two codes currently have no class, deliberately.** `TARGET_UNWRITABLE`, `BACKUP_FAILED`,
 `INCOMPLETE` and `LOCK_HELD` entered the enum in T-13 together with `MANIFEST_UNREADABLE`, because
 invariant I-8 makes `cli/exit_codes.py` total over `ErrorCode` and a code added later without its
@@ -547,6 +554,72 @@ class LockHeldError(HarnessLibraryError):
         super().__init__(
             f"{path} is held by {holder}: another install is writing to this target, so this run "
             "wrote nothing. Wait for it to finish and run again"
+        )
+
+
+# -- Undoing an install (initiative 02, T-18) ----------------------------------------------------
+#
+# Two classes and **no new code**. Charter §9 fixes the direction — a code may arrive before its
+# class, never the reverse — and both codes below have been in the contract since T-13. What each
+# class fixes is the fields its raise site carries, and rollback's two failures carry a backup id
+# where apply's carried a path: `BackupStore.restore` puts a backup back as a unit, so the seam
+# has no failing path to report and inventing one would be worse than naming the backup.
+
+
+class BackupNotFoundError(HarnessLibraryError):
+    """No backup has this id, so there is nothing to roll back to.
+
+    The sibling of `BackupFailedError` over one code: that one is a backup that could not be
+    *taken*, this one is a backup that cannot be *found*, and a user acts on both the same way —
+    go and look at where backups live. A directory holding files and no `backup.json` is not a
+    backup either (see `infrastructure/backup.py`): a half-written copy offered for restore would
+    put half a target back, so it is not offered at all and arrives here.
+
+    Attributes:
+        code: always `ErrorCode.BACKUP_FAILED`.
+        backup_id: the id that names nothing. Not contract; a diagnosis.
+    """
+
+    code = ErrorCode.BACKUP_FAILED
+
+    def __init__(self, backup_id: str) -> None:
+        self.backup_id = backup_id
+        super().__init__(
+            f"no backup {backup_id!r} is available for this target, so there is nothing to put "
+            "back. A backup whose record is missing or unreadable is not offered rather than "
+            "restored half way"
+        )
+
+
+class RestoreFailedError(HarnessLibraryError):
+    """A backup could not be put back, so the target is part-way restored.
+
+    The counterpart of `TargetUnwritableError` on the undo path, over the same code and for the
+    same reason: the destination would not take a write. It carries the **backup id** rather than
+    a path because C-13 restores as a unit — the seam is given an id and reports nothing about
+    which of the paths it was on when the write failed.
+
+    **Nothing is disowned.** The manifest is rewritten only after a restore that finished, so a
+    target left half restored is still fully claimed by the record, and every path that did move
+    comes back `LOCAL_EDIT`, `CONFLICT` or `CREATE` on the next `hl diff` rather than `FOREIGN`.
+    The remedy is to fix the fault and roll back again: restoring one backup twice produces the
+    same target, which is the property apply does not have and the reason apply needed a rollback
+    while a rollback needs nothing beyond itself.
+
+    Attributes:
+        code: always `ErrorCode.TARGET_UNWRITABLE`.
+        backup_id: the backup that was being put back.
+        reason: the human sentence, usually the underlying `OSError`'s. Not contract.
+    """
+
+    code = ErrorCode.TARGET_UNWRITABLE
+
+    def __init__(self, backup_id: str, reason: str) -> None:
+        self.backup_id = backup_id
+        self.reason = reason
+        super().__init__(
+            f"backup {backup_id} could not be put back: {reason}. The target may be part-way "
+            "restored and is still fully described by its manifest; fix this and roll back again"
         )
 
 

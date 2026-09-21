@@ -11,11 +11,17 @@ real backup store, and a real `apply_install`. The library is the application fa
 library side is not what is being proven here and a real one would drag a fixture tree in with
 no bearing on the lock.
 
-**The second apply is fired from inside the first apply's first write**, through a target
-repository that calls back once. That is not a contrivance for its own sake: it is the only
-moment at which the two runs really overlap, and a test that merely took the lock by hand and
-then called apply would stay green even if apply released the lock before writing a byte — which
-is exactly the mutation this module's first test exists to catch.
+**The second run is fired from inside the first run's first write**, through a wrapper that
+calls back once. That is not a contrivance for its own sake: it is the only moment at which the
+two runs really overlap, and a test that merely took the lock by hand and then called the use
+case would stay green even if the use case released the lock before touching a byte — which is
+exactly the mutation this module's first test exists to catch.
+
+**T-18 adds rollback's and uninstall's witnesses here** rather than in a third cross-layer module,
+because they are the same claim about the same sentinel over two more write use cases (C-16, R82).
+Each keeps the shape above: uninstall's callback hangs off the first `delete`, and rollback's off
+the entry to `restore` — the moment the run is between taking the lock and moving a byte, which is
+the window an early release opens.
 
 Nothing here writes outside `tmp_path`. Every state root and every target is a temporary
 directory, and `default_state_root()` is not called.
@@ -34,10 +40,19 @@ from pathlib import Path
 
 import pytest
 
-from harness_library.application.write import ApplyResult, apply_install
+from harness_library.application.write import (
+    ApplyResult,
+    RollbackResult,
+    UninstallResult,
+    apply_install,
+    rollback_install,
+    uninstall_artifact,
+)
+from harness_library.domain.backup import BackupRecord, BackupStore
 from harness_library.domain.errors import ErrorCode, LockHeldError
 from harness_library.domain.hashing import hash_bytes
 from harness_library.domain.install_plan import InstallPlan, PlanEntry, Verdict
+from harness_library.domain.manifest import Manifest
 from harness_library.domain.repository import ArtifactRepository
 from harness_library.domain.target import TargetFile, TargetRepository
 from harness_library.infrastructure.backup import FilesystemBackupStore
@@ -62,6 +77,9 @@ INSTALLED_OTHER = "skills/phase-reviewer/SKILL.md"
 FOREIGN = "settings.json"
 FOREIGN_BYTES = b'{"theme": "dark"}\n'
 LIBRARY_BYTES = b"# what the library holds\n"
+LATER_BYTES = b"# what the library holds after it moved on\n"
+"""A second version, so an apply over an installed target really changes a byte — which is what
+lets a rollback of it be *seen*. T-18."""
 
 INSTALLED_AT = datetime(2026, 9, 21, 16, 45, tzinfo=UTC)
 """When every apply in this module ran. A parameter, never a clock."""
@@ -80,14 +98,17 @@ def a_target(root: Path, name: str = "target") -> Path:
     return target
 
 
-def a_library() -> FakeArtifactRepository:
-    """Two single-file skills, both holding `LIBRARY_BYTES`."""
+def a_library(body: bytes = LIBRARY_BYTES) -> FakeArtifactRepository:
+    """Two single-file skills, both holding `body`.
+
+    The parameter is T-18's and defaults to what every existing caller passed implicitly, so a
+    second version of the same library is one argument rather than a second helper.
+    """
     artifacts = [
-        make_artifact(name, files=(make_file(ENTRY, LIBRARY_BYTES),))
-        for name in (SKILL_NAME, OTHER_NAME)
+        make_artifact(name, files=(make_file(ENTRY, body),)) for name in (SKILL_NAME, OTHER_NAME)
     ]
     return FakeArtifactRepository(
-        artifacts, contents={(artifact.id, ENTRY): LIBRARY_BYTES for artifact in artifacts}
+        artifacts, contents={(artifact.id, ENTRY): body for artifact in artifacts}
     )
 
 
@@ -356,3 +377,216 @@ def test_two_targets_are_installed_into_concurrently(tmp_path: Path) -> None:
     assert [result.written for result in results] == [(INSTALLED_ENTRY, INSTALLED_OTHER)]
     assert hash_set(one) == an_installed_target()
     assert hash_set(two) == an_installed_target()
+
+
+# -------------------------------------------------------------------------------------------
+# C-16 / R82 — the other two write use cases, under the same sentinel (T-18)
+# -------------------------------------------------------------------------------------------
+
+
+def run_uninstall(
+    *,
+    target_root: Path,
+    state_root: Path,
+    manifest: Manifest,
+    target: TargetRepository | None = None,
+) -> UninstallResult:
+    """One real uninstall of `SKILL_ID` from `target_root`, under a real lock."""
+    return uninstall_artifact(
+        target if target is not None else FilesystemTargetRepository(target_root),
+        FilesystemBackupStore(state_root, target_root, now=lambda: INSTALLED_AT),
+        FilesystemManifestStore(state_root),
+        lock=FilesystemWriteLock(target_root, state_root=state_root, now=lambda: INSTALLED_AT),
+        manifest=manifest,
+        artifact_id=SKILL_ID,
+        installed_at=INSTALLED_AT,
+    )
+
+
+def run_rollback(
+    *,
+    target_root: Path,
+    state_root: Path,
+    manifest: Manifest,
+    backup_id: str,
+    backups: BackupStore | None = None,
+) -> RollbackResult:
+    """One real rollback of `target_root`, under a real lock."""
+    return rollback_install(
+        FilesystemTargetRepository(target_root),
+        backups
+        if backups is not None
+        else FilesystemBackupStore(state_root, target_root, now=lambda: INSTALLED_AT),
+        FilesystemManifestStore(state_root),
+        lock=FilesystemWriteLock(target_root, state_root=state_root, now=lambda: INSTALLED_AT),
+        manifest=manifest,
+        backup_id=backup_id,
+        installed_at=INSTALLED_AT,
+    )
+
+
+class TargetCallingBackOnItsFirstDelete:
+    """Contract C-12 over a real target, with a hook on the first delete.
+
+    Uninstall's equivalent of `TargetCallingBackOnItsFirstWrite`, and the same argument: the hook
+    runs after the first uninstall has taken the lock and its backup, and before the first file
+    leaves the target. Everything else is delegated, so what the first run does to the disk is
+    exactly what `FilesystemTargetRepository` would have done.
+    """
+
+    def __init__(self, inner: FilesystemTargetRepository, on_first_delete: Callable[[], None]):
+        self._inner = inner
+        self._on_first_delete = on_first_delete
+        self._fired = False
+
+    def scan(self) -> tuple[TargetFile, ...]:
+        return self._inner.scan()
+
+    def read_bytes(self, path: str) -> bytes:
+        return self._inner.read_bytes(path)
+
+    def write(self, path: str, data: bytes) -> None:
+        self._inner.write(path, data)
+
+    def delete(self, path: str) -> None:
+        if not self._fired:
+            self._fired = True
+            self._on_first_delete()
+        self._inner.delete(path)
+
+    def exists(self, path: str) -> bool:
+        return self._inner.exists(path)
+
+
+class BackupStoreCallingBackOnRestore:
+    """Contract C-13 over a real store, with a hook fired as a restore begins.
+
+    Rollback writes nothing through the target itself — the bytes are the store's, and
+    `FilesystemBackupStore` reaches the target through a repository it builds for itself — so the
+    hook goes here. It fires while the first rollback is **between taking the lock and moving a
+    byte**, which is precisely the window a lock released before the work opens: under an early
+    release the second run would take the lock, restore the whole backup, and the target would
+    change under the first run's feet.
+    """
+
+    def __init__(self, inner: FilesystemBackupStore, on_restore: Callable[[], None]):
+        self._inner = inner
+        self._on_restore = on_restore
+        self._fired = False
+
+    def create(self, paths: tuple[str, ...]) -> str:
+        return self._inner.create(paths)
+
+    def restore(self, backup_id: str) -> None:
+        if not self._fired:
+            self._fired = True
+            self._on_restore()
+        self._inner.restore(backup_id)
+
+    def list(self) -> tuple[BackupRecord, ...]:
+        return self._inner.list()
+
+
+def test_a_second_uninstall_against_a_held_lock_removes_nothing(tmp_path: Path) -> None:
+    """**C-16 for uninstall, in the shape L50 requires.**
+
+    The second uninstall starts while the first is between its backup and its first delete —
+    the window in which two runs can interleave and leave one of them writing a record about
+    files the other has already removed. It must be refused with `LOCK_HELD` and it must leave
+    the target untouched, and both are asserted.
+
+    Asserted on the target's **hash set** across the second run, never on either report: a
+    report saying "I removed nothing" is exactly what the wrong implementation also says. The
+    positive control is the last assertion — the first uninstall really does remove the file, so
+    "unchanged" cannot mean "this use case never deletes".
+    """
+    state_root = tmp_path / "state"
+    target_root = a_target(tmp_path)
+    installed = run_apply(library=a_library(), target_root=target_root, state_root=state_root)
+    second = SecondRun()
+
+    def a_second_uninstall_while_the_first_is_deleting() -> None:
+        second.before = hash_set(target_root)
+        try:
+            run_uninstall(
+                target_root=target_root, state_root=state_root, manifest=installed.manifest
+            )
+        except LockHeldError as refused:
+            second.refused = refused
+        second.after = hash_set(target_root)
+
+    run_uninstall(
+        target_root=target_root,
+        state_root=state_root,
+        manifest=installed.manifest,
+        target=TargetCallingBackOnItsFirstDelete(
+            FilesystemTargetRepository(target_root), a_second_uninstall_while_the_first_is_deleting
+        ),
+    )
+
+    assert isinstance(second.refused, LockHeldError), (
+        "the second uninstall was not refused: while one writer holds this target's lock another "
+        "must exit LOCK_HELD rather than interleaving its deletes with the first's (R50, R82)"
+    )
+    assert second.refused.code is ErrorCode.LOCK_HELD
+    assert second.after == second.before, (
+        "the second uninstall changed the target although it was refused: LOCK_HELD means "
+        "nothing was removed, and the lock is taken before the backup so that it can"
+    )
+    assert INSTALLED_ENTRY not in hash_set(target_root)
+
+
+def test_a_second_rollback_against_a_held_lock_restores_nothing(tmp_path: Path) -> None:
+    """**C-16 for rollback, in the shape L50 requires.**
+
+    The second rollback starts while the first holds the lock and has not yet moved a byte. Under
+    a lock released too early it would restore the whole backup there and then, and the target
+    would change inside the callback — which is what the hash set across the second run says.
+
+    The positive control is the last assertion: the first rollback really does put the earlier
+    bytes back, so "unchanged" cannot mean "this use case never restores".
+    """
+    state_root = tmp_path / "state"
+    target_root = a_target(tmp_path)
+    run_apply(library=a_library(), target_root=target_root, state_root=state_root)
+    updated = run_apply(
+        library=a_library(LATER_BYTES), target_root=target_root, state_root=state_root
+    )
+    assert updated.backup_id is not None
+    assert hash_set(target_root)[INSTALLED_ENTRY] == hash_bytes(LATER_BYTES)
+    second = SecondRun()
+
+    def a_second_rollback_while_the_first_is_restoring() -> None:
+        second.before = hash_set(target_root)
+        try:
+            run_rollback(
+                target_root=target_root,
+                state_root=state_root,
+                manifest=updated.manifest,
+                backup_id=str(updated.backup_id),
+            )
+        except LockHeldError as refused:
+            second.refused = refused
+        second.after = hash_set(target_root)
+
+    run_rollback(
+        target_root=target_root,
+        state_root=state_root,
+        manifest=updated.manifest,
+        backup_id=updated.backup_id,
+        backups=BackupStoreCallingBackOnRestore(
+            FilesystemBackupStore(state_root, target_root, now=lambda: INSTALLED_AT),
+            a_second_rollback_while_the_first_is_restoring,
+        ),
+    )
+
+    assert isinstance(second.refused, LockHeldError), (
+        "the second rollback was not refused: while one writer holds this target's lock another "
+        "must exit LOCK_HELD rather than restoring over the top of it (R50, R82)"
+    )
+    assert second.refused.code is ErrorCode.LOCK_HELD
+    assert second.after == second.before, (
+        "the second rollback changed the target although it was refused: LOCK_HELD means nothing "
+        "was restored"
+    )
+    assert hash_set(target_root)[INSTALLED_ENTRY] == hash_bytes(LIBRARY_BYTES)

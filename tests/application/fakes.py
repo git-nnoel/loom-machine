@@ -202,6 +202,15 @@ class FakeTargetRepository:
             allows every write. This is how a mid-write failure is injected: the real repository
             raises `OSError` from `write_bytes`, and a fake raising the project's own error would
             make the translation untestable by pre-supplying its result (ruling R24).
+
+    **A later `scan()` sees what an earlier `write` or `delete` did** — T-18 needs it, because
+    rollback reads the restored target back to compose its record, and a scan frozen at
+    construction would hand it the state it had just undone. The real repository holds no
+    snapshot for exactly this reason (`infrastructure/target.py`), so this is the fake catching
+    up rather than a liberty it takes: a written path becomes an ordinary entry whose digest and
+    size really describe the bytes, and a deleted one stops being an entry at all. The entries
+    given at construction keep their order and their metadata — a symlink stays a symlink, since
+    nothing about bytes could say so.
     """
 
     def __init__(
@@ -211,8 +220,8 @@ class FakeTargetRepository:
         contents: Mapping[str, bytes] | None = None,
         fail_write_after: int | None = None,
     ) -> None:
-        self._files = tuple(files)
-        self._contents = {file.path: b"" for file in self._files}
+        self._files = {file.path: file for file in files}
+        self._contents = {path: b"" for path in self._files}
         self._contents.update(contents or {})
         self.writes: list[tuple[str, bytes]] = []
         self.deletes: list[str] = []
@@ -221,7 +230,7 @@ class FakeTargetRepository:
 
     def scan(self) -> tuple[TargetFile, ...]:
         self.scan_calls += 1
-        return self._files
+        return tuple(self._files.values())
 
     def read_bytes(self, path: str) -> bytes:
         try:
@@ -234,10 +243,12 @@ class FakeTargetRepository:
             raise OSError(f"the injected failure refuses to write {path!r}")
         self.writes.append((path, data))
         self._contents[path] = data
+        self._files[path] = target_file(path, data)
 
     def delete(self, path: str) -> None:
         self.deletes.append(path)
         self._contents.pop(path, None)
+        self._files.pop(path, None)
 
     def exists(self, path: str) -> bool:
         return path in self._contents
@@ -260,47 +271,93 @@ def target_holding(*entries: tuple[str, bytes]) -> FakeTargetRepository:
 
 
 class FakeBackupStore:
-    """Contract C-13 in memory. Records what it was asked to keep; keeps nothing.
+    """Contract C-13 in memory, over a `FakeTargetRepository` when it is given one.
 
     **What this fake cannot prove.** It cannot prove that a backup survives a `git clean`, that it
-    lands outside the target, or that a restore puts real bytes back. Those are proven against
-    real files in `tests/infrastructure/test_backup.py`. What it *can* prove is the only thing
-    apply decides: that a backup is taken, that it covers every path the run will touch, and that
-    a failure to take one stops the run before anything is written.
+    lands outside the target, that a half-written one is passed over, or that real bytes reach a
+    real disk. Those are proven against real files in `tests/infrastructure/test_backup.py`, and
+    rollback end to end is proven in `tests/test_rollback.py`. What it *can* prove is the only
+    thing the use cases decide: that a backup is taken, that it covers every path the run will
+    touch, that a failure to take one stops the run before anything moves, and — given a target —
+    what the use case does with a target that has been put back.
+
+    **It keeps real bytes**, like `FakeTargetRepository`, and for the same reason: a rollback's
+    criterion is a fact about content, and a store that only recorded ids would let every
+    assertion about it be an assertion about a recording. `create` copies what the target holds
+    and merely *records* what it does not, which is ruling R79 — so `restore` removes a path the
+    target did not hold when the backup was taken, and a first install is undoable.
 
     Attributes:
         created: the path tuples `create` was called with, in call order.
         restored: the ids `restore` was called with, in call order.
         fail: raise `OSError` from `create` instead of taking a backup. A builtin, because that is
             what the real store raises (ruling R24).
+        fail_restore: raise `OSError` from `restore`, after putting back as much as it had got to.
+            A builtin, for the same reason — and part-way through, because that is what a real
+            restore does: C-13 puts a backup back path by path and offers no transaction.
     """
 
-    def __init__(self, *, fail: bool = False, backup_id: str = "2026-09-21T14-29-00Z") -> None:
+    def __init__(
+        self,
+        target: FakeTargetRepository | None = None,
+        *,
+        fail: bool = False,
+        fail_restore: bool = False,
+        backup_id: str = "2026-09-21T14-29-00Z",
+    ) -> None:
         self.created: list[tuple[str, ...]] = []
         self.restored: list[str] = []
         self.fail = fail
+        self.fail_restore = fail_restore
+        self._target = target
         self._backup_id = backup_id
         self._records: list[BackupRecord] = []
+        self._kept: dict[str, dict[str, bytes]] = {}
 
     def create(self, paths: tuple[str, ...]) -> str:
         if self.fail:
             raise OSError("the injected failure refuses to take a backup")
+        backup_id = self._next_id()
         self.created.append(paths)
+        self._kept[backup_id] = {
+            path: self._target.read_bytes(path)
+            for path in paths
+            if self._target is not None and self._target.exists(path)
+        }
         self._records.append(
             BackupRecord(
-                backup_id=self._backup_id,
+                backup_id=backup_id,
                 created_at=UPDATED_AT,
                 target_path=TARGET_PATH,
                 paths=paths,
             )
         )
-        return self._backup_id
+        return backup_id
 
     def restore(self, backup_id: str) -> None:
         self.restored.append(backup_id)
+        record = next((one for one in self._records if one.backup_id == backup_id), None)
+        if record is None:
+            raise KeyError(f"no backup {backup_id!r} in this store")
+        if self._target is None:
+            return
+        kept = self._kept[backup_id]
+        for path in record.paths:
+            if path in kept:
+                self._target.write(path, kept[path])
+            elif self._target.exists(path):
+                self._target.delete(path)
+            if self.fail_restore:
+                raise OSError(f"the injected failure refuses to finish restoring {backup_id}")
 
     def list(self) -> tuple[BackupRecord, ...]:
         return tuple(self._records)
+
+    def _next_id(self) -> str:
+        """The first backup gets the plain id; later ones get a suffix, as the real store does."""
+        if not self._records:
+            return self._backup_id
+        return f"{self._backup_id}-{len(self._records) + 1}"
 
 
 class FakeWriteLock:

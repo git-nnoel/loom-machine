@@ -85,7 +85,7 @@ def test_contract_is_configured_and_kept(
 WRITE_PACKAGE = "harness_library.application.write"
 READ_PACKAGE = "harness_library.application.read"
 
-WRITE_USE_CASES = ("apply_install", "plan_install")
+WRITE_USE_CASES = ("apply_install", "plan_install", "rollback_install", "uninstall_artifact")
 """Every use case `application/write/` exports. A new one is added here.
 
 The `mcp-is-read-only` contract forbids `mcp/` from reaching this package, which is the mechanism
@@ -95,8 +95,8 @@ a *given* use case is in it: move one into `application/read/` and `mypy`, `ruff
 the only thing that fails.
 """
 
-WRITE_TYPES = ("ApplyResult",)
-"""Every non-use-case name `application/write/` exports — a result type, today.
+WRITE_TYPES = ("ApplyResult", "RollbackResult", "UninstallResult")
+"""Every non-use-case name `application/write/` exports — three result types, today.
 
 Listed separately from the use cases so the definition-site guard above keeps meaning "a use case
 is where the contract can see it" rather than quietly widening to any exported name, and listed

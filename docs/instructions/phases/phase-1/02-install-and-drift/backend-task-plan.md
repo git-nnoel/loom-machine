@@ -828,3 +828,209 @@ uv run ruff format --check . && uv run ruff check . && uv run mypy src tests && 
 ```
 
 Whole, every time (L2), exit code read without a pipe (L44). Baseline 707 passed.
+
+---
+
+# Backend task plan — T-18, rollback and uninstall
+
+Initiative 02 · phase 1 · base commit `abdcdb8` · owner `backend-developer-specialist`.
+Realises **F-11** (rollback) and **F-12** (uninstall, without `--prune`, which is T-19's), over
+contracts **C-11**, **C-12**, **C-13**, **C-15** and **C-16**. Rulings **R79**, **R80**, **R82**,
+**R83**, **R56**, **R44** and **R63** bind.
+
+## 1. Where the code goes
+
+| File | Why |
+|---|---|
+| `src/harness_library/application/write/rollback.py` | new. `rollback_install`, `RollbackResult`. A module of its own rather than a section of `install.py`: rollback never reads the library and never builds a plan, and the one thing it shares with apply is the lock |
+| `src/harness_library/application/write/uninstall.py` | new. `uninstall_artifact`, `UninstallResult`. Separate from rollback for the same reason those two are separate from apply: uninstall never reads a backup record and rollback never reads an artifact id |
+| `src/harness_library/application/write/__init__.py` | re-exports the four new names |
+| `src/harness_library/domain/errors.py` | **two classes, no new code.** `BackupNotFoundError` over `BACKUP_FAILED` and `RestoreFailedError` over `TARGET_UNWRITABLE`. Charter §9 fixes the direction — a code may arrive before its class, never the reverse — and both codes have been in the contract since T-13. `cli/exit_codes.py` is **untouched**: no `ErrorCode` member is added, so I-8 stays total on its own |
+| `tests/application/test_rollback.py` · `tests/application/test_uninstall.py` | new. Fakes only, zero disk |
+| `tests/application/fakes.py` | `FakeBackupStore` gains a real restore over a `FakeTargetRepository`, and `FakeManifestStore` is unchanged. See §5 |
+| `tests/test_rollback.py` | new, and **cross-layer by necessity** — see §5. The one place the restore is real |
+| `tests/test_single_writer.py` | **added to, never altered.** Rollback's and uninstall's lock witnesses, in T-17's working shape |
+| `tests/test_architecture.py` | `WRITE_USE_CASES` and `WRITE_TYPES` gain the four names |
+
+No new `domain/` module, so `tests/domain/test_purity.py` is untouched (L13, L18). No dependency
+change; nothing here is outside `{domain,infrastructure,application}` but the two test modules and
+this plan.
+
+## 2. Rollback — what it does, and in which order
+
+```
+1  lock        R82: required, keyword-only, wrapping every step below
+2  restore     backups.restore(backup_id) — C-13's mechanism, run as a unit
+3  scan        the target, once, after the restore
+4  manifest    composed from the manifest it was given and that scan
+```
+
+**The order is restore-then-record, and it is the mirror of R63 rather than a copy of it.** R63
+writes apply's manifest *first* because apply makes files appear, and a manifest written after them
+can disown a file that is on disk — which reads `FOREIGN`, and nothing in this initiative can touch
+a foreign path. Rollback makes files *disappear* (and reappear at older bytes), so the same rule —
+**the manifest must never disown a file that is still on disk** — points the other way: record
+last. A crash between the restore and the manifest leaves the manifest still claiming the
+post-apply digests, so the restored paths come back `LOCAL_EDIT` or `CONFLICT` and a path the
+restore removed comes back `CREATE`. Every one of those is a decision the user is *asked* about.
+The opposite order is not merely unsafe here, it is impossible: the restored state is the only
+source for the digests the new manifest records, and it does not exist until the restore has run.
+
+**The manifest after a rollback is composed from the target, not from the record.** The manifest
+that described the pre-apply state is gone — apply overwrote it, and `ManifestStore` has one
+member. So for every artifact the current manifest records, every file it records is joined onto
+the target with `registry.target_path_of` and kept **only if the target still holds it**, carrying
+the digest and size the target now holds and the `is_text` the record already had (C-12 has no
+`is_text`; charter §7 keeps one implementation of that decision and this is not a second one). An
+artifact with no file left is dropped. `library_git_sha` becomes `None` — the restored bytes came
+from a library state this run cannot name, and C-11 makes `None` an honest answer rather than a
+missing one. `backup_id` becomes `None`: rollback takes no backup, and the way forward from a
+rolled-back target is an install, which takes its own.
+
+**Why this is the right digest.** A path the backup restored held, before the apply, exactly what
+the *previous* install put there — `UPDATE` means the target held what the manifest recorded, and
+`CREATE` means it held nothing. So reading the digest back off the restored disk reproduces the
+previous manifest's digest for every path it can, without a second record to keep in step. A path
+whose pre-apply content was a user's edit is never in the backup at all: `LOCAL_EDIT` and
+`CONFLICT` are left alone by apply, so apply never backs them up and rollback never restores them.
+
+## 3. Uninstall — what it does, and in which order
+
+```
+1  lock        R82
+2  back up     every path this run will delete — see §4, the one decision outside the dispatch
+3  delete      every path the manifest records for this artifact that the target holds
+4  manifest    the same manifest with that artifact's record dropped
+```
+
+Driven off `manifest.artifacts[...].files`, joined with `target_path_of`, and off **nothing else**.
+It never scans for what is under the artifact's root, which is the whole of F-12: a foreign file
+beside an installed one is not in the manifest, so it is not in the list, so it survives. A path
+the manifest records and the target no longer holds is passed over rather than raised on — the
+file is already not there, which is the outcome uninstall is for. R44 gets no mention anywhere in
+this module, because a named exclusion is exactly what would be needed if the list came from a
+directory walk instead of from the record.
+
+**Delete-then-record, for the reason rollback records last.** A manifest written first would drop
+the artifact and then crash mid-delete, leaving its remaining files on disk claimed by nobody —
+`FOREIGN`, untouchable by install and unremovable by uninstall. Deleting first can only leave the
+manifest over-claiming files that are already gone, which comes back `CREATE` on the next diff and
+is repaired by running uninstall again or by reinstalling.
+
+A directory is never removed (C-12 says so, and `delete` refuses one), so an emptied artifact root
+stays behind as an empty directory. An `artifact_id` the manifest does not record raises
+`ArtifactNotFoundError` — charter §13's posture, fail loudly rather than silently do nothing.
+
+## 4. What the contracts left open, and what I decided
+
+| Open point | Decision |
+|---|---|
+| **What the manifest says after a rollback** | composed from a scan of the restored target (§2). C-11 keeps one manifest per target and `ManifestStore` has no `read`, so the pre-apply record is genuinely gone; the restored disk is the only source there is |
+| Which backup a rollback restores | an explicit `backup_id`, required and keyword-only. `Manifest.backup_id` is the obvious default and is **not** taken as one: `backups.list()` offers older backups too, and the caller choosing is the difference between "undo the last install" and "undo the last *three*" |
+| **Does uninstall take a backup** | **yes** — the one decision outside the dispatch's letter, and separable in one parameter. Uninstall is the most destructive operation this tool has, and F-9's argument ("a write with no way back is the failure mode this initiative exists to remove") applies to a delete without modification. It is also what makes `hl rollback` able to undo an `hl uninstall`, which is the only thing that makes the pair coherent. Flagged to the lead |
+| A path the manifest records whose target copy was **edited** | removed like any other. The dispatch fixes the criterion — "exactly what the manifest records for that artifact and nothing else" — and the backup above is what makes it recoverable. Flagged: refusing an edited path would need `INCOMPLETE`'s vocabulary and T-21's `--force`, and it is a ruling, not a task-level choice |
+| A backup id that names nothing | `BackupNotFoundError`, code `BACKUP_FAILED`, exit 9 — the status whose remedy is already "go and look at where backups live". A new class over an existing code, which is the shape T-16 and T-17 both used |
+| `OSError` out of `restore` | `RestoreFailedError`, code `TARGET_UNWRITABLE`, exit 7 — C-13 documents that `OSError` there means the target could not be written. It carries the **backup id** and not a path, because C-13 restores as a unit and the failing path is not something the seam reports. R83: a plain OS fact, coded in `application/` |
+| **A partially unreadable backup** | rollback **restores what the store can and refuses to guess at the rest**; it does not pre-flight and it does not undo. The remedy is that `restore` is idempotent — the same backup restored twice produces the same target — so a rollback that failed half way is completed by running it again, which is a property apply does not have and is the reason apply needed this feature and this feature needs nothing beyond itself. Crucially the manifest is **not** written on that path, so nothing is disowned. **And the sharper half:** a backup whose `files/<path>` was *removed* rather than made unreadable raises nothing at all — C-13 infers "was absent when the backup was taken" from the tree, so the path is **deleted** from the target. Flagged; it is a C-13 question, not a T-18 one |
+| A symlink sitting at a manifest-recorded path after a restore | not recorded in the new manifest. `TargetFile.sha256` is `None` for a link (R6, R68) and `<unhashed>` is a plan-time sentinel, never a digest (`application/read/drift`); putting either into `ArtifactFile.sha256` would make the manifest claim a digest nothing has |
+| `installed_at` on both | a required parameter, never a clock — the same rule `apply_install` keeps (R66, and every assertion about the record would otherwise depend on how fast the suite ran) |
+
+## 5. Tests, and why one module is cross-layer
+
+`tests/application/test_rollback.py` and `tests/application/test_uninstall.py` are fakes only and
+zero disk (charter §10). What they cannot see: that a real restore puts real bytes back, that a
+delete lands on the right file, that a directory survives. `FakeBackupStore` gains a real restore
+**over a `FakeTargetRepository`** so that the application layer can assert on content rather than
+on a recording — the same upgrade T-16 made to `FakeTargetRepository`, and for the same reason: a
+recorder can be empty because nothing happened or because nothing recorded it.
+
+`tests/test_rollback.py` is **cross-layer by necessity**, the second module in this suite that has
+to be, and for the same shape of reason `tests/test_single_writer.py` gives: the thing F-11 claims
+is a fact about a real directory — "the target is empty again, per path" — and the code that makes
+it true is split across `infrastructure/backup.py` (the restore) and `application/write/rollback.py`
+(the decision to run it and the record afterwards). Neither layer alone can witness it, and the
+required mutation (a) lives in the infrastructure half while the criterion is stated of the
+application half.
+
+`tests/test_single_writer.py` gains rollback's and uninstall's lock witnesses **in T-17's working
+shape** (L50): a second run fired from inside the first's, through a one-shot wrapper, never "hold
+the lock by hand and then call the use case". For uninstall the hook is on the first `delete`; for
+rollback it is on the entry to `restore`, which is the moment the first run is between taking the
+lock and touching a byte — the window an early release opens.
+
+## 6. Mutation checks (L35 — read this if the session was interrupted)
+
+Two, both named in the dispatch and each run alone with `-k` (L42). Each file is backed up to
+`…/scratchpad/<name>.t18.orig` before it is mutated and restored from that copy rather than from
+memory of the edit.
+
+**(a)** rollback restores only the paths the target currently holds —
+`src/harness_library/infrastructure/backup.py`, `restore`, the `elif self._target.exists(path)`
+branch removed, so a path the backup holds no bytes for is skipped instead of deleted.
+Must fail: `tests/test_rollback.py::test_rolling_back_a_first_install_empties_the_target_again`,
+asserted **per path**.
+Must stay green: `tests/test_rollback.py::test_rolling_back_an_overwrite_restores_the_previous_bytes`,
+which the mutation does not touch — so "restores nothing" and "restores only overwrites" stay
+distinguishable.
+
+**(b)** uninstall removes the whole artifact directory —
+`src/harness_library/application/write/uninstall.py`, the removal list taken from a target scan
+under the artifact's root instead of from the manifest's file list.
+Must fail: `tests/application/test_uninstall.py::test_a_foreign_file_under_the_artifacts_root_survives`,
+asserted on the foreign file's **bytes**.
+Must stay green: `tests/application/test_uninstall.py::test_uninstall_removes_every_file_the_manifest_records`,
+so the mutation cannot pass by removing nothing.
+
+**Result — neither is applied; both modules match their backup by md5.**
+`infrastructure/backup.py` `598939915739af72a797c433f1dd1322`,
+`application/write/uninstall.py` `8827576c2a55e77cbde20e46bf222f9f`.
+
+Under **(a)**, `-k "rolling_back_a_first_install_empties_the_target_again or
+rolling_back_an_overwrite_restores_the_previous_bytes"` gave `1 failed, 1 passed`. The first
+install's rollback failed on its own message — *"skills/delivery-lead/SKILL.md was created by the
+install this rollback undid, so putting the target back means taking it away again (R79)"*,
+`assert not True … where True = exists()` — and the overwrite control **stayed green**, which is
+the half that matters: every path *its* backup describes is one the target already held, so the
+branch the mutation removes is never reached there, and "restores nothing" stays distinguishable
+from "restores only overwrites". Restored: `2 passed`.
+
+Three other tests redden under (a) and are kept out of the filter deliberately, the way T-14 kept
+its golden path list out of its own: `test_a_foreign_file_is_byte_identical_after_a_rollback` and
+`test_the_manifest_records_nothing_after_a_first_install_is_rolled_back` (both first-install
+rollbacks, so the same subject), and T-16's own
+`tests/infrastructure/test_backup.py::test_restoring_removes_a_path_the_target_did_not_hold`,
+which is the store's half of the same rule one layer down.
+
+Under **(b)**, `-k "a_foreign_file_under_the_artifacts_root_survives or
+uninstall_removes_every_file_the_manifest_records"` gave `1 failed, 1 passed`:
+`test_a_foreign_file_under_the_artifacts_root_survives` failed on the foreign file's **bytes** —
+`KeyError: 'skills/delivery-lead/NOTES.md'`, the file simply no longer there — and the removal
+test **stayed green**, so the mutation could not pass by removing nothing. Restored: `2 passed`.
+
+**The control had to be weakened to be a control.** It first asserted
+`result.removed == (INSTALLED_ENTRY, INSTALLED_REFERENCE)`, which reddens under (b) as well: a
+directory-shaped uninstall removes the record's files *and* the foreign one, so a control that
+pins the exact list fails for the same reason the subject does, and the pair stops telling
+"removes too much" from "removes nothing". It now asserts that the record's files went and not
+that only they went; the exact list is asserted in the must-fail next door, where reddening is
+the point.
+
+**A third, unrequired check, because DONE WHEN asks for T-17's shape and not L50's.** Both new
+lock witnesses were run against an early release — `with lock.hold(): pass` and the body after it,
+in `rollback.py` **and** `uninstall.py`. `-k "a_second_uninstall_against_a_held_lock_removes_nothing
+or a_second_rollback_against_a_held_lock_restores_nothing or
+a_single_apply_writes_every_file_and_leaves_no_sentinel or
+rolling_back_an_overwrite_restores_the_previous_bytes"` gave `2 failed, 2 passed`: both second
+runs went through unrefused (*"the second rollback was not refused … assert False … isinstance(
+None, LockHeldError)"*), and both controls stayed green. That is the whole reason the callback
+hangs off the first `delete` and off the entry to `restore` rather than being a lock taken by
+hand: the shape L50 warns about passes this mutation. Restored: `4 passed`.
+
+## 7. Gate
+
+```
+export PATH="$HOME/.local/bin:$PATH"
+uv run ruff format --check . && uv run ruff check . && uv run mypy src tests && uv run lint-imports && uv run pytest
+```
+
+Whole, every time (L2), exit code read without a pipe (L44). Baseline 745 passed.

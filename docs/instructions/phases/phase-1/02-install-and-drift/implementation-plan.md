@@ -1,6 +1,6 @@
 # Implementation plan — Install, backup, drift
 
-**Status:** CLOSED 2026-09-21 — thirteen tasks accepted, 1090 tests.
+**Status:** REOPENED 2026-10-05 for T-25 — two test-fragility defects found after the rename. Thirteen tasks accepted; T-25 outstanding.
 **Reviewed:** 2026-09-21 · `phase-reviewer` × 2 · NOT READY (9 blocking), then NOT READY (7 blocking) · all sixteen resolved; one disputed in writing (§12); see the design record for the decisions behind them
 **Phase:** 1 · **Initiative:** 02-install-and-drift · **Owner:** delivery lead
 **Last updated:** 2026-09-21
@@ -115,6 +115,7 @@ Owner `backend-developer-specialist`, territory `src/loom/**` and `tests/**`.
 | **T-20** | **V11** (C-3 amendment, R46, R53): detection in `infrastructure/scanner.py`, the finding on `AssembledLibrary.findings` **like V7 and V9 — not V8**, whose docstring says explicitly that it attaches to the colliding artifacts because it has two real ones; V11 has none, because the root was never scanned. That docstring enumerates its members and T-20 must extend it. — severity via `for_code()`, and the install refusal of **that artifact only**, not the run. | domain + infra + application | T-16 |
 | **T-21** | `--resolve library\|target` per artifact plus `$EDITOR` with both versions (F-15, R54), and `ExportArtifact` as a plain zip (F-16, R45). **Also carries R97**: `symlinked_roots()` into C-4 and `read_link`/`write_link` into C-12, both of which T-20 left additive because the contracts were outside its scope. | application | T-20 |
 | **T-22** | CLI: `install`, `diff`, `uninstall`, `rollback`, `clean`, `export`; `--target`, `--dry-run`, `--prune`, `--resolve`. Exit statuses per C-14. | cli | T-21 |
+| **T-25** | Two tests assert literals against Rich-rendered output and break on decoration rather than on behaviour (R117). **Neither guarantee is broken** — fix how they look, and prove the fix did not weaken the guard. | cli + mcp tests | T-24 |
 | **T-24** | Corrections from acceptance: **D-2** the backup records and restores file mode (R110, C-13 amendment, a security regression); **D-1** `STATE_UNWRITABLE = 15` and the lock translates `OSError` (R111); **R112** a rollback with nothing to put back is not an error; **R113** `loom backups` exposes `BackupStore.list()`. | domain + infra + cli | T-23 |
 | **T-23** | Acceptance against the real library **and** the target fixture, including a real `library.yaml` authored with the user (P-2), which also gives initiative 01's **F-5** its real-content proof (R39). | — | T-22 |
 

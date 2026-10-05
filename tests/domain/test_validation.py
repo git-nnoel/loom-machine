@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from harness_library.domain.validation import (
+from loom.domain.validation import (
     SEVERITY_BY_CODE,
     Severity,
     ValidationCode,

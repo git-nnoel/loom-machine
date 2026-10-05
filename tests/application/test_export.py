@@ -18,11 +18,11 @@ import zipfile
 
 import pytest
 
-from harness_library.application.read import ExportedCollection, export_collection
-from harness_library.domain.errors import CollectionNotFoundError, ErrorCode
-from harness_library.domain.identity import ArtifactType
-from harness_library.domain.metadata import Collection
-from harness_library.domain.validation import ValidationCode
+from loom.application.read import ExportedCollection, export_collection
+from loom.domain.errors import CollectionNotFoundError, ErrorCode
+from loom.domain.identity import ArtifactType
+from loom.domain.metadata import Collection
+from loom.domain.validation import ValidationCode
 from tests.application.fakes import (
     FakeArtifactRepository,
     finding,

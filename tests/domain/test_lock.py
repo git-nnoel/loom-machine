@@ -13,7 +13,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 
-from harness_library.domain.lock import WriteLock
+from loom.domain.lock import WriteLock
 
 
 def test_the_lock_protocol_is_satisfied_structurally() -> None:

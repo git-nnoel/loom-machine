@@ -26,10 +26,10 @@ from typing import Any
 
 import pytest
 
-from harness_library.domain.artifact import ArtifactFile
-from harness_library.domain.errors import ErrorCode, HarnessLibraryError, ManifestError
-from harness_library.domain.manifest import Manifest, ManifestArtifact, ManifestStore
-from harness_library.infrastructure.manifest_store import (
+from loom.domain.artifact import ArtifactFile
+from loom.domain.errors import ErrorCode, HarnessLibraryError, ManifestError
+from loom.domain.manifest import Manifest, ManifestArtifact, ManifestStore
+from loom.infrastructure.manifest_store import (
     MANIFESTS_DIRECTORY_NAME,
     SCHEMA_VERSION,
     FilesystemManifestStore,
@@ -431,7 +431,7 @@ def test_a_domain_invariant_broken_on_disk_arrives_as_a_coded_error(
 def test_an_unknown_schema_version_says_so_rather_than_calling_it_corrupt(
     target: Path, state_root: Path
 ) -> None:
-    """A manifest from a later `hl` is not damaged. Told it is, a user deletes a good file and
+    """A manifest from a later `loom` is not damaged. Told it is, a user deletes a good file and
     hunts a bug that is not there; told the truth, they upgrade."""
     deviate(target, state_root, lambda d: d.__setitem__("schema_version", SCHEMA_VERSION + 1))
 
@@ -527,7 +527,7 @@ def test_the_manifest_lives_outside_the_target(target: Path, state_root: Path) -
 
 
 def test_the_writer_creates_the_state_directory(target: Path, state_root: Path) -> None:
-    """A first install on a fresh machine has no `~/.local/state/harness-library` yet."""
+    """A first install on a fresh machine has no `~/.local/state/loom` yet."""
     assert not state_root.exists()
 
     write_manifest(a_manifest(target), state_root=state_root)
@@ -552,7 +552,7 @@ def test_a_write_leaves_exactly_one_file_behind(target: Path, state_root: Path) 
 def test_the_default_state_root_is_dec14s_path() -> None:
     """DEC-14, computed and never created. This test touches no filesystem at all — it is the one
     place the real `~/.local/state` is named, and naming it is as far as it goes."""
-    assert default_state_root().parts[-3:] == (".local", "state", "harness-library")
+    assert default_state_root().parts[-3:] == (".local", "state", "loom-machine")
     assert default_state_root().is_absolute()
 
 

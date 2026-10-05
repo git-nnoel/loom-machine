@@ -6,10 +6,10 @@ from datetime import UTC, datetime
 
 import pytest
 
-from harness_library.domain.artifact import Artifact, ArtifactFile, ArtifactKind
-from harness_library.domain.hashing import content_hash
-from harness_library.domain.identity import ArtifactType
-from harness_library.domain.validation import ValidationCode, ValidationFinding
+from loom.domain.artifact import Artifact, ArtifactFile, ArtifactKind
+from loom.domain.hashing import content_hash
+from loom.domain.identity import ArtifactType
+from loom.domain.validation import ValidationCode, ValidationFinding
 
 SCANNED_AT = datetime(2026, 8, 31, 12, 0, tzinfo=UTC)
 
@@ -72,7 +72,7 @@ def test_errors_and_warnings_partition_the_findings() -> None:
 
 def test_an_invalid_artifact_is_still_representable() -> None:
     """A skill directory with no `SKILL.md` is an artifact carrying V1, not an exception. Making
-    it unrepresentable here is how the superseded plan crashed on `hl show`."""
+    it unrepresentable here is how the superseded plan crashed on `loom show`."""
     broken = make_artifact(files=(), findings=(V1_ERROR,))
     assert broken.id == "skill/delivery-lead"
     assert broken.is_valid is False

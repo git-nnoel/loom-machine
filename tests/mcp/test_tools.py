@@ -1,7 +1,7 @@
 """Feature F-6's first half — what a real client handshake finds, **read from the server**.
 
 Every assertion here starts from a `tools/list` answer that came over the wire from a live
-process. Nothing is compared against a constant imported from `harness_library.mcp`: a test that
+process. Nothing is compared against a constant imported from `loom.mcp`: a test that
 checked one constant against its neighbour would pass through exactly the change it exists to
 catch — rename a tool in the registry and the "expected" tuple next to it renames itself.
 

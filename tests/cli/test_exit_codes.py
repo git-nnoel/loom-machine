@@ -7,7 +7,7 @@ added, rather than in whichever command first happens to raise it.
 
 from __future__ import annotations
 
-from harness_library.cli.exit_codes import (
+from loom.cli.exit_codes import (
     BACKUP_FAILED,
     BAD_REQUEST,
     EDITOR_FAILED,
@@ -27,7 +27,7 @@ from harness_library.cli.exit_codes import (
     VALIDATION_FAILED,
     exit_status_for,
 )
-from harness_library.domain.errors import ErrorCode, HarnessLibraryError
+from loom.domain.errors import ErrorCode, HarnessLibraryError
 
 
 def test_every_error_code_has_an_exit_status() -> None:
@@ -121,7 +121,7 @@ def test_each_install_code_maps_to_its_own_status() -> None:
 
 
 def test_no_install_status_reuses_a_read_path_status() -> None:
-    """A script that already branches on 3, 4 and 5 must not find `hl install` answering one of
+    """A script that already branches on 3, 4 and 5 must not find `loom install` answering one of
     them with a different meaning."""
     read_path = {NOT_FOUND, BAD_REQUEST, LIBRARY_UNUSABLE}
     install = {INCOMPLETE, TARGET_UNWRITABLE, MANIFEST_UNREADABLE, BACKUP_FAILED, LOCK_HELD}

@@ -11,7 +11,7 @@ import itertools
 
 import pytest
 
-from harness_library.domain.install_plan import (
+from loom.domain.install_plan import (
     BLOCKING_VERDICTS,
     EXPLAINED_VERDICTS,
     RESOLVABLE_VERDICTS,
@@ -442,7 +442,7 @@ def test_the_four_conflicts_give_four_different_reasons() -> None:
 
 def test_an_empty_plan_is_complete_and_counts_nine_zeros() -> None:
     """The default, constructed with no arguments: a plan over a target that needs nothing done is
-    the ordinary outcome of `hl diff`, and every criterion about it runs through this object."""
+    the ordinary outcome of `loom diff`, and every criterion about it runs through this object."""
     plan = InstallPlan()
     assert plan.entries == ()
     assert plan.is_complete is True

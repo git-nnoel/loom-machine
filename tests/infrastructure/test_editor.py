@@ -18,8 +18,8 @@ from pathlib import Path
 
 import pytest
 
-from harness_library.domain.resolution import ConflictEditor, ConflictVersions
-from harness_library.infrastructure.editor import (
+from loom.domain.resolution import ConflictEditor, ConflictVersions
+from loom.infrastructure.editor import (
     LIBRARY_DIRECTORY,
     TARGET_DIRECTORY,
     SubprocessConflictEditor,

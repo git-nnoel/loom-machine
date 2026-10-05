@@ -29,18 +29,18 @@ from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from datetime import UTC, datetime
 
-from harness_library.domain.artifact import Artifact, ArtifactFile, ArtifactKind
-from harness_library.domain.backup import BackupRecord
-from harness_library.domain.errors import LockHeldError
-from harness_library.domain.hashing import content_hash_of_files, hash_bytes
-from harness_library.domain.identity import ArtifactType
-from harness_library.domain.manifest import Manifest, ManifestArtifact
-from harness_library.domain.metadata import Collection
-from harness_library.domain.raw import SymlinkedRoot
-from harness_library.domain.registry import spec_for
-from harness_library.domain.resolution import ConflictVersions
-from harness_library.domain.target import TargetFile
-from harness_library.domain.validation import ValidationCode, ValidationFinding
+from loom.domain.artifact import Artifact, ArtifactFile, ArtifactKind
+from loom.domain.backup import BackupRecord
+from loom.domain.errors import LockHeldError
+from loom.domain.hashing import content_hash_of_files, hash_bytes
+from loom.domain.identity import ArtifactType
+from loom.domain.manifest import Manifest, ManifestArtifact
+from loom.domain.metadata import Collection
+from loom.domain.raw import SymlinkedRoot
+from loom.domain.registry import spec_for
+from loom.domain.resolution import ConflictVersions
+from loom.domain.target import TargetFile
+from loom.domain.validation import ValidationCode, ValidationFinding
 
 UPDATED_AT = datetime(2026, 8, 31, 12, 0, tzinfo=UTC)
 """The instant every artifact is pinned to unless a test is about ordering by time."""
@@ -48,7 +48,7 @@ UPDATED_AT = datetime(2026, 8, 31, 12, 0, tzinfo=UTC)
 TARGET_PATH = "/home/example/.claude"
 """The install target every fake in this module names. Never a real `~/.claude` (F-9, L37)."""
 
-SENTINEL_PATH = "/home/example/.local/state/harness-library/manifests/0123abcd.lock"
+SENTINEL_PATH = "/home/example/.local/state/loom/manifests/0123abcd.lock"
 """What `FakeWriteLock` calls its sentinel. A plausible shape, and a path nothing ever touches."""
 
 HOLDER_PID = 4242

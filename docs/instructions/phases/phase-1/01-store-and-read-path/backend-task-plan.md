@@ -22,10 +22,10 @@ No entity, no use case, no adapter. Every later task in the initiative is writte
    (`typer`, `pydantic`, `pydantic-settings`, `python-frontmatter`, `pyyaml`, `mcp`, `structlog`);
    dev group with exactly `pytest`, `ruff`, `mypy`, `import-linter`. Nothing else.
    `requires-python >= 3.12`. `hatchling` build backend over the `src/` layout so `uv run` installs
-   the project editable. **No `[project.scripts]` entry yet** — `hl` would point at a `cli/main.py`
+   the project editable. **No `[project.scripts]` entry yet** — `loom` would point at a `cli/main.py`
    that T-7 has not written, and a dangling entry point breaks the install.
 2. **`.gitignore`** — caches, `.venv`, build artefacts. `uv.lock` is *not* ignored.
-3. **Layer packages** under `src/harness_library/`: `domain/`, `application/` (with `read/` and
+3. **Layer packages** under `src/loom/`: `domain/`, `application/` (with `read/` and
    `write/`), `infrastructure/`, `cli/`, `mcp/`. Each with `__init__.py`.
    `application/write/` is created empty on purpose: the `mcp-is-read-only` contract needs a real
    module to forbid, and initiative 02 fills it.
@@ -38,8 +38,8 @@ No entity, no use case, no adapter. Every later task in the initiative is writte
      infrastructure implements domain protocols and neither adapter layer may reach the other.
      **L3** — this ordering reads plausibly in either direction, so it is proved by mutation, not
      by inspection.
-   - `mcp-is-read-only` (`forbidden`): `harness_library.mcp` ↛ `harness_library.application.write`.
-   - `domain-is-pure` (`forbidden`): `harness_library.domain` ↛ every other layer.
+   - `mcp-is-read-only` (`forbidden`): `loom.mcp` ↛ `loom.application.write`.
+   - `domain-is-pure` (`forbidden`): `loom.domain` ↛ every other layer.
 6. **`tests/test_architecture.py`** — invokes the **`lint-imports` console script** (**L4**, never
    `python -m importlinter.cli`) as a subprocess with an explicit `cwd` of the repo root, so the
    pytest rootdir cannot change the outcome. Asserts exit 0 *and* that each of the three contracts
@@ -55,7 +55,7 @@ uv run ruff format --check . && uv run ruff check . && uv run mypy src tests && 
 
 ## Mutation check — assertion named in advance
 
-Add `from harness_library import application` inside a module in `harness_library.domain`.
+Add `from loom import application` inside a module in `loom.domain`.
 
 **Must fail — both:** `lint-imports` reports `domain-is-pure` BROKEN, **and**
 `tests/test_architecture.py` fails. One firing without the other means the contract is not wired as
@@ -389,7 +389,7 @@ The finding is attached **to every artifact in the group**, the way V4 is attach
 library. A user reading the report on `skill/Delivery-Lead` must be able to see what it collides
 with, so each finding names the whole colliding set, sorted, so two scans report identically. It is
 not a library-level finding because — unlike V7 — there *are* artifacts to hang it on, and hanging it
-only on the library would make `hl show skill/Delivery-Lead` silent about the fault.
+only on the library would make `loom show skill/Delivery-Lead` silent about the fault.
 
 Different types do not collide: `skill/foo` and `agent/foo` are distinct artifacts living in
 distinct directories, and the grouping key carries the type for exactly that reason.
@@ -410,7 +410,7 @@ The defence, in order of weight:
 3. The reader's raise-seam is for documents that are *unusable* — cannot be parsed, or a value whose
    meaning cannot be determined. A duplicate key is fully parsed and fully understood: both blocks
    are visible. It does not meet that bar.
-4. `hl validate` is the consumer. A raise reports the duplicate and nothing else about the library;
+4. `loom validate` is the consumer. A raise reports the duplicate and nothing else about the library;
    a finding reports it alongside every other fault and still exits non-zero, because V9 is an ERROR.
 
 This mirrors **V6's** existing shape exactly: the scanner records `SkippedPath` values, the assembler
@@ -430,21 +430,21 @@ tree, run *after* interpretation so a genuinely unusable document still raises e
 
 ## Approach — file by file
 
-* `src/harness_library/domain/errors.py` — moved from `infrastructure/`, `path` narrowed to `str`,
+* `src/loom/domain/errors.py` — moved from `infrastructure/`, `path` narrowed to `str`,
   placement note replaced with why it lives here.
-* `src/harness_library/infrastructure/errors.py` — deleted.
-* `src/harness_library/infrastructure/_yaml_document.py`, `library_yaml.py` — import from
+* `src/loom/infrastructure/errors.py` — deleted.
+* `src/loom/infrastructure/_yaml_document.py`, `library_yaml.py` — import from
   `domain.errors`; convert the path at each raise site.
-* `src/harness_library/domain/validation.py` — `V8`, `V9` members and their register rows.
-* `src/harness_library/domain/metadata.py` — `DuplicateKey`, and `LibraryMetadata.duplicate_keys`.
-* `src/harness_library/infrastructure/library_yaml.py` — collect duplicates from the node tree.
-* `src/harness_library/domain/assembly.py` — `_apply_v8` and `_check_v9`.
+* `src/loom/domain/validation.py` — `V8`, `V9` members and their register rows.
+* `src/loom/domain/metadata.py` — `DuplicateKey`, and `LibraryMetadata.duplicate_keys`.
+* `src/loom/infrastructure/library_yaml.py` — collect duplicates from the node tree.
+* `src/loom/domain/assembly.py` — `_apply_v8` and `_check_v9`.
 * `tests/domain/test_purity.py` — `errors` added to `EXPECTED_MODULES` (**L13**).
 
 ## Existing tests changed
 
 * `tests/infrastructure/test_library_yaml.py::test_malformed_yaml_raises_with_the_line_number` and
-  `::test_the_error_is_a_harness_library_error_with_a_stable_code` — `path` compared as `str`. What
+  `::test_the_error_is_a_loom_error_with_a_stable_code` — `path` compared as `str`. What
   is no longer guaranteed: that the error carries a `Path` object. The absolute location it names,
   and its presence in `str(error)`, are still asserted.
 * `tests/domain/test_assembly.py::test_every_finding_takes_its_severity_from_the_register` — asserts
@@ -760,8 +760,8 @@ Written before the first edit. Task: phase-1 / initiative 01-store-and-read-path
 
 ## Understanding
 
-Deliver the first surface a human touches: `hl list`, `hl show`, `hl search`, `hl validate` and
-`hl collections`, each with `--json` and a global `--library`. Plus the composition root (C-8) and
+Deliver the first surface a human touches: `loom list`, `loom show`, `loom search`, `loom validate` and
+`loom collections`, each with `--json` and a global `--library`. Plus the composition root (C-8) and
 the `ErrorCode`-to-exit-code mapping (C-6). Everything below this layer is proven and frozen, so
 this task **renders and nothing more** — no filtering, no ordering, no cap, no re-sorting of ruling
 R8's ranking. A computation appearing here would be a second answer to a question `application/`
@@ -771,8 +771,8 @@ has already answered.
 
 **1. `cli/` may not import `mcp/`.** The `layered-architecture` contract puts them in one layer
 separated by `|`, which makes them *independent*, not stacked. Probed by adding
-`import harness_library.mcp` to a throwaway `cli/` module: `layered-architecture BROKEN`. This
-matters to T-7 only in what it implies for T-8 — a `hl mcp` command whose body lives in `mcp/`
+`import loom.mcp` to a throwaway `cli/` module: `layered-architecture BROKEN`. This
+matters to T-7 only in what it implies for T-8 — a `loom mcp` command whose body lives in `mcp/`
 cannot be registered from `cli/main.py` until that contract puts `cli` *above* `mcp` rather than
 beside it. Flagged; the contract edit is plan-level and is not made here.
 
@@ -787,7 +787,7 @@ of the environment). It is recorded here because it constrains T-8's shape.
 ## The seam
 
 `cli/` sees exactly two things: the use-case surface re-exported from
-`harness_library.application.read`, and `FilesystemArtifactRepository` for construction. Every
+`loom.application.read`, and `FilesystemArtifactRepository` for construction. Every
 command is: resolve the root → build the repository → call one use case → render. `--json` prints
 `payload.model_dump_json()` (ruling R7); the human format is a separate rendering of the *same*
 payload object, never a dict rebuilt from an entity.
@@ -807,7 +807,7 @@ the root-resolution precedence is what §13 says, and that a non-library directo
 | `cli/exit_codes.py` | Contract C-6 — the `ErrorCode`-to-exit-status **table**, exhaustive over the enum |
 | `cli/logging.py` | Ruling R3 — structlog configured to stderr, re-resolved per invocation |
 | `cli/rendering.py` | The two renderings of one payload: `--json`, and the human columnar format |
-| `cli/main.py` | The Typer app and the five commands. The `hl` entry point |
+| `cli/main.py` | The Typer app and the five commands. The `loom` entry point |
 
 ## Decisions taken inside the task
 
@@ -819,12 +819,12 @@ the root-resolution precedence is what §13 says, and that a non-library directo
    with no exit status fails that test, which is the same guard `domain/registry.py` uses. A chain
    of `if`s was rejected by ruling R24 in advance.
 3. **Errors are rendered to stderr, payloads to stdout, in both modes.** stdout carries only what a
-   caller asked for, so `hl list --json | jq` is safe on the failure path as well as the success
+   caller asked for, so `loom list --json | jq` is safe on the failure path as well as the success
    one. In `--json` mode the stderr diagnosis is itself JSON, so a wrapper reads one format.
-4. **`hl validate` exit status is decided by `report.is_valid`, not by counting findings in the
+4. **`loom validate` exit status is decided by `report.is_valid`, not by counting findings in the
    CLI.** Ruling R22 is already answered below; recomputing it here is exactly the second opinion
    this layer must not hold.
-5. **`hl collections` takes an optional key** rather than splitting into a sub-application:
+5. **`loom collections` takes an optional key** rather than splitting into a sub-application:
    with no key it lists, with a key it shows one. One command, both payloads, no bare-`collections`
    usage error.
 6. **A non-library directory exits with the "library unusable" status and no `ErrorCode`.** There
@@ -847,32 +847,32 @@ uv run ruff format --check . && uv run ruff check . && uv run mypy src tests && 
 
 ## Mutation checks — assertions named in advance
 
-**(a) Make `hl validate` always exit 0.**
+**(a) Make `loom validate` always exit 0.**
 Must fail: `tests/cli/test_validate.py::test_validate_exits_non_zero_when_an_error_finding_exists`.
 Must stay green:
 `tests/cli/test_validate.py::test_validate_exits_zero_when_the_only_findings_are_warnings` — ruling
 R22, and the half of F-4 that a "return 1 always" fix would break instead.
 
-**(b) Make `hl show` propagate instead of rendering findings for a broken artifact.**
+**(b) Make `loom show` propagate instead of rendering findings for a broken artifact.**
 Must fail: `tests/cli/test_show.py::test_show_renders_findings_for_the_entry_less_skill`.
 Must stay green: `tests/cli/test_show.py::test_show_renders_a_valid_artifact` — the case that
 already worked must keep working, or the mutation proves only that something broke.
 
 ## Out of scope
 
-No MCP server and no `hl mcp` stub. Nothing under `domain/`, `application/` or `infrastructure/`.
+No MCP server and no `loom mcp` stub. Nothing under `domain/`, `application/` or `infrastructure/`.
 No dependency change; the only `pyproject.toml` edit is the `[project.scripts]` line. No commit.
 
 ---
 
-# T-8 backend task plan — the read-only stdio MCP server and `hl mcp`
+# T-8 backend task plan — the read-only stdio MCP server and `loom mcp`
 
 Written before the first edit. Task: phase-1 / initiative 01-store-and-read-path / T-8.
 
 ## Understanding
 
-Deliver `harness_library.mcp`: four read-only tools — `list_artifacts`, `search_artifacts`,
-`get_artifact`, `get_reference` — served over stdio JSON-RPC, plus the `hl mcp` command a client
+Deliver `loom.mcp`: four read-only tools — `list_artifacts`, `search_artifacts`,
+`get_artifact`, `get_reference` — served over stdio JSON-RPC, plus the `loom mcp` command a client
 spawns. Like T-7 this layer **renders and nothing more**; every behaviour was decided in
 `application/read` and is proven there.
 
@@ -882,7 +882,7 @@ and correctly refused to invent a code; the delivery lead has now ruled.
 
 ## The seam
 
-R28 puts `cli` **above** `mcp` in the layer contract, so `hl mcp` registers in `cli/main.py` and the
+R28 puts `cli` **above** `mcp` in the layer contract, so `loom mcp` registers in `cli/main.py` and the
 composition root stays in `cli/`. `mcp/` is handed a ready `ArtifactRepository` and never resolves a
 root, never reads the environment, never touches `pyproject`-level configuration. `mcp/` imports
 `application.read` and `domain/` only — the `mcp-is-read-only` contract makes the read-only promise
@@ -918,7 +918,7 @@ text — `FileContent` has no field for it and the declared schema rejects one.
 | `mcp/dispatch.py` | `tools/call` as one **synchronous** function — ruling R24's errors become MCP error results, R3's one log line per call |
 | `mcp/server.py` | The low-level `Server`, its two handlers, and `serve_stdio(repository)` |
 | `mcp/__init__.py` | The re-exports an adapter needs |
-| `cli/main.py` | The `hl mcp` command, and the `_run` branch R29 makes redundant |
+| `cli/main.py` | The `loom mcp` command, and the `_run` branch R29 makes redundant |
 
 ## Decisions taken inside the task
 
@@ -941,7 +941,7 @@ text — `FileContent` has no field for it and the declared schema rejects one.
    handshake, the tool enumeration and the schema revalidation; and a raw line-oriented exchange
    over `Popen` for byte-level stdout purity, which is the only level at which "nothing but JSON-RPC
    frames" is a statement about bytes.
-6. **`python -m harness_library.cli.main` is the spawn command**, because `[project.scripts]` is
+6. **`python -m loom.cli.main` is the spawn command**, because `[project.scripts]` is
    still absent from `pyproject.toml` and this task may not add it. Flagged.
 
 ## Ruling R29, and its consequences above `domain/`
@@ -973,7 +973,7 @@ uv run ruff format --check . && uv run ruff check . && uv run mypy src tests && 
 
 ## Mutation checks — assertions named in advance
 
-**(a) Write one line to stdout in the `hl mcp` entry path**, before the transport claims fd 1.
+**(a) Write one line to stdout in the `loom mcp` entry path**, before the transport claims fd 1.
 Must fail: `tests/mcp/test_stdout_purity.py::test_every_byte_on_stdout_is_a_json_rpc_frame`.
 Must **stay green**:
 `tests/mcp/test_stdout_purity.py::test_the_server_still_reports_its_tool_calls_on_stderr` — the rule
@@ -1028,9 +1028,9 @@ to make a green line look like more than it is.
 2. Count V3 on the two stubs (expect **seven** — L5, do not debug the regex), then copy the tree and
    add a `library.yaml` declaring both supersessions; contrast the two reports. Also exercise R15's
    frontmatter fallback on a second copy, since it is the cheaper thing a user might author.
-3. Time `hl list` end to end, then decompose: bare interpreter, import-only, and the snapshot timed
+3. Time `loom list` end to end, then decompose: bare interpreter, import-only, and the snapshot timed
    in-process. An end-to-end number alone would have attributed import cost to the scan.
-4. Drive `hl mcp` over raw pipes — initialize, tools/list, two tools/call — reading all four
+4. Drive `loom mcp` over raw pipes — initialize, tools/list, two tools/call — reading all four
    response lines **before** closing stdin, with a watchdog (**L31**).
 5. Find a term that occurs only inside the HTML asset, and record the skip reason. Per R25 it must
    never be *binary*; the asset is verified as valid UTF-8 first, so the point is not hypothetical.
@@ -1084,7 +1084,7 @@ given, ruling deferred. No dependency change, no `pyproject.toml` or `uv.lock` e
 
 Recorded in `2026-09-01-acceptance.md`. Three defects: **D-1** V3 cannot be satisfied by a FILE-kind
 artifact (8 false positives, 0 true positives on real content); **D-2** one unquoted `:` discards a
-whole frontmatter block and the diagnosis names the wrong fault; **D-3** `hl list` pays 1.31 s
+whole frontmatter block and the diagnosis names the wrong fault; **D-3** `loom list` pays 1.31 s
 importing the MCP SDK it never uses, against a 16 ms scan.
 
 ---
@@ -1108,7 +1108,7 @@ ruled on (R32, R33) and written into charter §8's register; the third is a stra
    message with line and column, and **suppressing the V2/V5 cascade** behind it. When the block did
    not parse we know nothing about its keys, so reporting them as missing is a claim we cannot
    support. V1 already suppresses V5; this is the same shape.
-3. **`hl list` must stop importing the MCP SDK.** `cli/main.py` imports `serve_stdio` at module
+3. **`loom list` must stop importing the MCP SDK.** `cli/main.py` imports `serve_stdio` at module
    scope. Measured before the fix: importing `cli.main` costs ~1.81 s and pulls 115 `mcp*` modules,
    against a ~17 ms scan.
 
@@ -1157,7 +1157,7 @@ citing its own missing reference still reports V3. This pair is the point of the
 reports exactly one finding. Must **stay green**: a test proving a well-formed artifact that
 genuinely lacks a required key still reports V5 — suppression is conditional on the parse failing.
 
-**(c) Restore the module-scope MCP import.** Must fail: the test proving `hl list`'s import path
+**(c) Restore the module-scope MCP import.** Must fail: the test proving `loom list`'s import path
 pulls no MCP module. Asserted on the imported module set in a fresh interpreter, never on elapsed
 time (a timing assertion is flaky and gets deleted by whoever meets it on a slow day).
 
@@ -1170,7 +1170,7 @@ export PATH="$HOME/.local/bin:$PATH"
 uv run ruff format --check . && uv run ruff check . && uv run mypy src tests && uv run lint-imports && uv run pytest
 ```
 
-Plus `hl --library ~/.claude validate` before and after, and a manifest diff over `~/.claude` that
+Plus `loom --library ~/.claude validate` before and after, and a manifest diff over `~/.claude` that
 must be empty.
 
 **Seven is the correct answer.** After fix 1 the real library still reports 7 V3 findings, from the

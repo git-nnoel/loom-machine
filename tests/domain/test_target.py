@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from harness_library.domain.target import TargetFile, TargetRepository
+from loom.domain.target import TargetFile, TargetRepository
 
 DIGEST = "a" * 64
 

@@ -58,7 +58,7 @@ Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/).
 $ git clone https://github.com/git-nnoel/loom-machine.git
 $ cd loom-machine
 $ uv sync
-$ uv run hl --help
+$ uv run loom --help
 ```
 
 ---

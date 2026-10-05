@@ -14,6 +14,7 @@ Two invocation details are load-bearing:
 from __future__ import annotations
 
 import importlib
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -40,6 +41,11 @@ def _run_lint_imports() -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [str(script)],
         cwd=REPO_ROOT,
+        # `lint-imports` colourises `KEPT` when it believes it has a terminal, and the
+        # assertions below match on the plain substring. Without this the suite passes or
+        # fails on whether pytest happened to inherit a tty, which is not a property of
+        # the architecture it exists to guard.
+        env={**os.environ, "NO_COLOR": "1"},
         capture_output=True,
         text=True,
         check=False,
@@ -82,8 +88,8 @@ def test_contract_is_configured_and_kept(
 # Which package a use case is *defined* in — the guard `lint-imports` cannot be
 # ------------------------------------------------------------------------------------------------
 
-WRITE_PACKAGE = "harness_library.application.write"
-READ_PACKAGE = "harness_library.application.read"
+WRITE_PACKAGE = "loom.application.write"
+READ_PACKAGE = "loom.application.read"
 
 WRITE_USE_CASES = (
     "apply_install",

@@ -1,4 +1,4 @@
-"""`hl install` — the first command in this project that can destroy a file. Features F-9, F-13.
+"""`loom install` — the first command in this project that can destroy a file. Features F-9, F-13.
 
 Everything the install *decides* was decided and proven below: the verdict table in T-12, the
 record ordering in T-16, the lock in T-17, V11's refusal in T-20. What is decided at this layer
@@ -25,7 +25,7 @@ from typing import Any
 
 from typer.testing import CliRunner
 
-from harness_library.cli.main import app
+from loom.cli.main import app
 from tests.cli.write.conftest import (
     FIXTURE_LIBRARY,
     SETTINGS,
@@ -136,7 +136,7 @@ def test_a_dry_run_writes_nothing(
 
 
 def test_a_missing_target_is_named_and_not_created(runner: CliRunner, tmp_path: Path) -> None:
-    """`hl install --target ~/.clade` must fail naming the path and build nothing there.
+    """`loom install --target ~/.clade` must fail naming the path and build nothing there.
 
     The temptation is one `mkdir -p`, and the cost of giving in is a complete harness in a typo,
     reported as a success, with the user's real one untouched.
@@ -235,7 +235,7 @@ def test_a_write_command_leaves_stdout_carrying_only_its_payload(
     """One JSON document on stdout, with `--verbose` turning logging as far up as it goes.
 
     The write path is the first in this project that moves a user's files while holding a lock,
-    so charter §11's guarantee is re-proven over it rather than inherited from `hl list`. Its
+    so charter §11's guarantee is re-proven over it rather than inherited from `loom list`. Its
     positive control is the sibling below: without one, a command that printed nothing anywhere
     would pass this.
     """
@@ -263,7 +263,7 @@ def test_a_failing_write_command_writes_nothing_at_all_to_stdout(
 ) -> None:
     """**The positive control**, and the sharper half of it.
 
-    A diagnosis on stdout would break `hl install --json | jq` exactly as a log line would, and
+    A diagnosis on stdout would break `loom install --json | jq` exactly as a log line would, and
     the failure path is where a command is most tempted to print one. The assertion that stderr
     is *not* empty is what stops this passing against a command that said nothing at all.
     """
@@ -276,7 +276,8 @@ def test_a_failing_write_command_writes_nothing_at_all_to_stdout(
     assert result.stderr != ""
 
 
-# -- The four argument combinations `hl install` will not accept -----------------------------------
+# -- The four argument combinations `loom install` will not accept
+# -----------------------------------
 
 
 def test_naming_an_artifact_without_resolve_is_a_usage_error(

@@ -13,7 +13,7 @@ import json
 
 from pydantic import BaseModel
 
-from harness_library.application.read import (
+from loom.application.read import (
     ArtifactDetail,
     ArtifactListPayload,
     ArtifactSummary,
@@ -32,8 +32,8 @@ from harness_library.application.read import (
     list_artifacts,
     validate_library,
 )
-from harness_library.domain.repository import ArtifactRepository
-from harness_library.domain.validation import ValidationCode
+from loom.domain.repository import ArtifactRepository
+from loom.domain.validation import ValidationCode
 from tests.application.fakes import FakeArtifactRepository, finding, make_artifact, skill_with_entry
 
 EXPECTED_FIELDS: dict[type[BaseModel], list[str]] = {

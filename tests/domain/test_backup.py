@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from harness_library.domain.backup import BackupRecord, BackupStore
+from loom.domain.backup import BackupRecord, BackupStore
 
 CREATED_AT = datetime(2026, 9, 21, 14, 29, tzinfo=UTC)
 TARGET = "/home/example/.claude"

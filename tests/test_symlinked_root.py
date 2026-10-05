@@ -28,15 +28,15 @@ from pathlib import Path
 
 import pytest
 
-from harness_library.application.write import apply_install, plan_install
-from harness_library.cli.exit_codes import INCOMPLETE
-from harness_library.domain.install_plan import InstallPlan, PlanEntry, Verdict
-from harness_library.domain.validation import Severity, ValidationCode
-from harness_library.infrastructure.backup import FilesystemBackupStore
-from harness_library.infrastructure.lock import FilesystemWriteLock
-from harness_library.infrastructure.manifest_store import FilesystemManifestStore
-from harness_library.infrastructure.repository import FilesystemArtifactRepository
-from harness_library.infrastructure.target import FilesystemTargetRepository
+from loom.application.write import apply_install, plan_install
+from loom.cli.exit_codes import INCOMPLETE
+from loom.domain.install_plan import InstallPlan, PlanEntry, Verdict
+from loom.domain.validation import Severity, ValidationCode
+from loom.infrastructure.backup import FilesystemBackupStore
+from loom.infrastructure.lock import FilesystemWriteLock
+from loom.infrastructure.manifest_store import FilesystemManifestStore
+from loom.infrastructure.repository import FilesystemArtifactRepository
+from loom.infrastructure.target import FilesystemTargetRepository
 from tests.infrastructure.conftest import FIXED_TIMESTAMPS, FIXTURE_LIBRARY
 
 LINKED_ROOT = "skills/linked-skill"
@@ -179,7 +179,7 @@ def test_the_symlinked_root_is_in_no_listing_the_library_can_produce(
 ) -> None:
     """**The omission itself** — the fact V11 exists to make visible, asserted at the layer that
     produces it. R6 never walks the root, so no `Artifact` is built, so the skill appears in no
-    `hl list`, no `hl search` and no install.
+    `loom list`, no `loom search` and no install.
 
     The second assertion is the positive control: `skill/delivery-lead` *is* listed, so "absent"
     is a fact about this artifact and not about a library that came back empty.
@@ -194,7 +194,7 @@ def test_the_warning_is_a_warning_and_the_library_is_still_reported_on(
     library: FilesystemArtifactRepository,
 ) -> None:
     """R22, kept where it belongs. V11 refuses **one install**; it does not make the library
-    invalid, it does not stop `hl validate` exiting on its own verdict, and it does not silence
+    invalid, it does not stop `loom validate` exiting on its own verdict, and it does not silence
     the other library-level rules. The V7 findings beside it are the control."""
     codes = [f.code for f in library.library_findings()]
 

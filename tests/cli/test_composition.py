@@ -1,6 +1,6 @@
 """Contract C-8 — the precedence, and the loud failure. Charter §13.
 
-Every step of `--library` → `$HL_LIBRARY` → current directory is exercised, **including the one
+Every step of `--library` → `$LOOM_LIBRARY` → current directory is exercised, **including the one
 that supplies no flag at all**, because a precedence chain tested only through its first link is a
 chain whose other two links have never run.
 """
@@ -12,15 +12,15 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from harness_library.cli.composition import (
+from loom.cli.composition import (
     LibraryRootError,
     is_library,
     open_library,
     resolve_library_root,
 )
-from harness_library.cli.exit_codes import LIBRARY_UNUSABLE
-from harness_library.cli.main import app
-from harness_library.cli.settings import Settings
+from loom.cli.exit_codes import LIBRARY_UNUSABLE
+from loom.cli.main import app
+from loom.cli.settings import Settings
 from tests.cli.conftest import payload_of, write_skill
 
 
@@ -30,7 +30,7 @@ def test_the_library_flag_wins_over_the_environment(
     """Step one of C-8. The flag is "this run" and it outranks the shell."""
     other = tmp_path / "other"
     write_skill(other, "only-here")
-    monkeypatch.setenv("HL_LIBRARY", str(other))
+    monkeypatch.setenv("LOOM_LIBRARY", str(other))
 
     assert resolve_library_root(fixture_library) == fixture_library.resolve()
 
@@ -38,10 +38,10 @@ def test_the_library_flag_wins_over_the_environment(
 def test_the_environment_is_used_when_no_flag_is_given(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Step two. `$HL_LIBRARY` is read through the one settings object (ruling R2)."""
+    """Step two. `$LOOM_LIBRARY` is read through the one settings object (ruling R2)."""
     library = tmp_path / "from-env"
     write_skill(library, "env-skill")
-    monkeypatch.setenv("HL_LIBRARY", str(library))
+    monkeypatch.setenv("LOOM_LIBRARY", str(library))
 
     assert resolve_library_root(None, settings=Settings()) == library.resolve()
 
@@ -49,7 +49,7 @@ def test_the_environment_is_used_when_no_flag_is_given(
 def test_the_current_directory_is_used_when_nothing_else_says(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Step three: **no flag and no variable at all**, which is how `hl list` is usually run."""
+    """Step three: **no flag and no variable at all**, which is how `loom list` is usually run."""
     library = tmp_path / "cwd-library"
     write_skill(library, "cwd-skill")
     monkeypatch.chdir(library)
@@ -70,11 +70,11 @@ def test_the_whole_precedence_holds_end_to_end_through_the_command(
     write_skill(here, "cwd-skill")
     monkeypatch.chdir(here)
 
-    monkeypatch.setenv("HL_LIBRARY", str(from_env))
+    monkeypatch.setenv("LOOM_LIBRARY", str(from_env))
     flagged_result = runner.invoke(app, ["--library", str(flagged), "list", "--json"])
     env_result = runner.invoke(app, ["list", "--json"])
 
-    monkeypatch.delenv("HL_LIBRARY")
+    monkeypatch.delenv("LOOM_LIBRARY")
     cwd_result = runner.invoke(app, ["list", "--json"])
 
     assert [a["id"] for a in payload_of(flagged_result)["artifacts"]] == ["skill/flag-skill"]

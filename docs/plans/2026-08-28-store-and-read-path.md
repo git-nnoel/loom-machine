@@ -21,7 +21,7 @@
 
 **Tech Stack:** Python 3.12, uv, Typer, python-frontmatter, PyYAML, the `mcp` SDK, pytest, ruff, mypy, import-linter.
 
-**Spec:** `docs/specs/2026-08-28-harness-library-design.md`
+**Spec:** `docs/specs/2026-08-28-loom-machine-design.md`
 
 ## Global Constraints
 
@@ -45,9 +45,9 @@
 
 **Files:**
 - Create: `pyproject.toml`
-- Create: `src/harness_library/__init__.py`
-- Create: `src/harness_library/domain/__init__.py`
-- Create: `src/harness_library/domain/artifact.py`
+- Create: `src/loom/__init__.py`
+- Create: `src/loom/domain/__init__.py`
+- Create: `src/loom/domain/artifact.py`
 - Create: `tests/domain/test_artifact.py`
 - Create: `.gitignore`
 
@@ -61,7 +61,7 @@
 
 ```toml
 [project]
-name = "harness-library"
+name = "loom-machine"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
@@ -72,7 +72,7 @@ dependencies = [
 ]
 
 [project.scripts]
-hl = "harness_library.cli.main:app"
+loom = "loom.cli.main:app"
 
 [dependency-groups]
 dev = ["pytest>=8.0", "ruff>=0.6", "mypy>=1.11", "import-linter>=2.0"]
@@ -82,7 +82,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/harness_library"]
+packages = ["src/loom"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -104,7 +104,7 @@ __pycache__/
 dist/
 ```
 
-Then run `uv sync` and create empty `src/harness_library/__init__.py` and `src/harness_library/domain/__init__.py`.
+Then run `uv sync` and create empty `src/loom/__init__.py` and `src/loom/domain/__init__.py`.
 
 - [ ] **Step 2: Write the failing test**
 
@@ -113,7 +113,7 @@ Then run `uv sync` and create empty `src/harness_library/__init__.py` and `src/h
 ```python
 import pytest
 
-from harness_library.domain.artifact import (
+from loom.domain.artifact import (
     Artifact,
     ArtifactKind,
     ArtifactType,
@@ -183,11 +183,11 @@ def _artifact(**overrides):
 - [ ] **Step 3: Run the test to verify it fails**
 
 Run: `uv run pytest tests/domain/test_artifact.py -v`
-Expected: FAIL — `ModuleNotFoundError: No module named 'harness_library.domain.artifact'`
+Expected: FAIL — `ModuleNotFoundError: No module named 'loom.domain.artifact'`
 
 - [ ] **Step 4: Write the minimal implementation**
 
-`src/harness_library/domain/artifact.py`:
+`src/loom/domain/artifact.py`:
 
 ```python
 """The Artifact entity. Pure: no I/O, no framework, no clock."""
@@ -259,7 +259,7 @@ Expected: PASS, 7 tests.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add pyproject.toml .gitignore src/harness_library tests/domain
+git add pyproject.toml .gitignore src/loom tests/domain
 git commit -m "feat(domain): add Artifact entity and content hashing"
 ```
 
@@ -268,9 +268,9 @@ git commit -m "feat(domain): add Artifact entity and content hashing"
 ### Task 2: Type registry and frontmatter parsing
 
 **Files:**
-- Create: `src/harness_library/domain/types.py`
-- Create: `src/harness_library/infrastructure/__init__.py`
-- Create: `src/harness_library/infrastructure/frontmatter_parser.py`
+- Create: `src/loom/domain/types.py`
+- Create: `src/loom/infrastructure/__init__.py`
+- Create: `src/loom/infrastructure/frontmatter_parser.py`
 - Create: `tests/domain/test_types.py`
 - Create: `tests/infrastructure/test_frontmatter_parser.py`
 
@@ -283,8 +283,8 @@ git commit -m "feat(domain): add Artifact entity and content hashing"
 `tests/domain/test_types.py`:
 
 ```python
-from harness_library.domain.artifact import ArtifactKind, ArtifactType
-from harness_library.domain.types import TYPE_REGISTRY, entry_filename_for, spec_for
+from loom.domain.artifact import ArtifactKind, ArtifactType
+from loom.domain.types import TYPE_REGISTRY, entry_filename_for, spec_for
 
 
 def test_registry_covers_every_artifact_type():
@@ -316,7 +316,7 @@ def test_every_type_requires_name_and_description():
 ```python
 import pytest
 
-from harness_library.infrastructure.frontmatter_parser import (
+from loom.infrastructure.frontmatter_parser import (
     FrontmatterError,
     parse_frontmatter,
 )
@@ -357,7 +357,7 @@ Expected: FAIL — `ModuleNotFoundError` for both new modules.
 
 - [ ] **Step 3: Write the minimal implementation**
 
-`src/harness_library/domain/types.py`:
+`src/loom/domain/types.py`:
 
 ```python
 """The single place a new artifact type is registered."""
@@ -366,7 +366,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from harness_library.domain.artifact import ArtifactKind, ArtifactType
+from loom.domain.artifact import ArtifactKind, ArtifactType
 
 
 @dataclass(frozen=True, slots=True)
@@ -408,7 +408,7 @@ def entry_filename_for(artifact_type: ArtifactType, name: str) -> str:
     return spec.entry_filename if spec.entry_filename else f"{name}.md"
 ```
 
-`src/harness_library/infrastructure/frontmatter_parser.py`:
+`src/loom/infrastructure/frontmatter_parser.py`:
 
 ```python
 """Frontmatter parsing. Wraps python-frontmatter so the rest of the code never sees it."""
@@ -439,7 +439,7 @@ Expected: PASS, 7 tests.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/harness_library tests
+git add src/loom tests
 git commit -m "feat: add type registry and frontmatter parsing"
 ```
 
@@ -448,8 +448,8 @@ git commit -m "feat: add type registry and frontmatter parsing"
 ### Task 3: Filesystem scan — the repository
 
 **Files:**
-- Create: `src/harness_library/domain/repository.py`
-- Create: `src/harness_library/infrastructure/filesystem_repository.py`
+- Create: `src/loom/domain/repository.py`
+- Create: `src/loom/infrastructure/filesystem_repository.py`
 - Create: `tests/infrastructure/conftest.py`
 - Create: `tests/infrastructure/test_filesystem_repository.py`
 
@@ -517,8 +517,8 @@ def library_root(tmp_path: Path) -> Path:
 ```python
 from pathlib import Path
 
-from harness_library.domain.artifact import ArtifactKind, ArtifactType
-from harness_library.infrastructure.filesystem_repository import (
+from loom.domain.artifact import ArtifactKind, ArtifactType
+from loom.infrastructure.filesystem_repository import (
     FilesystemArtifactRepository,
 )
 
@@ -594,11 +594,11 @@ def test_read_file_rejects_traversal(library_root: Path):
 - [ ] **Step 3: Run the test to verify it fails**
 
 Run: `uv run pytest tests/infrastructure/test_filesystem_repository.py -v`
-Expected: FAIL — `ModuleNotFoundError: No module named 'harness_library.infrastructure.filesystem_repository'`
+Expected: FAIL — `ModuleNotFoundError: No module named 'loom.infrastructure.filesystem_repository'`
 
 - [ ] **Step 4: Write the repository protocol**
 
-`src/harness_library/domain/repository.py`:
+`src/loom/domain/repository.py`:
 
 ```python
 """Repository protocols. Domain declares what it needs; infrastructure supplies it."""
@@ -607,7 +607,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from harness_library.domain.artifact import Artifact
+from loom.domain.artifact import Artifact
 
 
 class ArtifactRepository(Protocol):
@@ -620,7 +620,7 @@ class ArtifactRepository(Protocol):
 
 - [ ] **Step 5: Write the filesystem implementation**
 
-`src/harness_library/infrastructure/filesystem_repository.py`:
+`src/loom/infrastructure/filesystem_repository.py`:
 
 ```python
 """Reads the library tree. The tree is the database."""
@@ -631,14 +631,14 @@ import re
 from datetime import UTC, datetime
 from pathlib import Path
 
-from harness_library.domain.artifact import (
+from loom.domain.artifact import (
     Artifact,
     ArtifactKind,
     ArtifactType,
     compute_content_hash,
 )
-from harness_library.domain.types import TYPE_REGISTRY, entry_filename_for, spec_for
-from harness_library.infrastructure.frontmatter_parser import (
+from loom.domain.types import TYPE_REGISTRY, entry_filename_for, spec_for
+from loom.infrastructure.frontmatter_parser import (
     FrontmatterError,
     parse_frontmatter,
 )
@@ -739,7 +739,7 @@ Expected: PASS, 9 tests. The `skill/solution-designer` entry appears with an emp
 - [ ] **Step 7: Commit**
 
 ```bash
-git add src/harness_library tests
+git add src/loom tests
 git commit -m "feat(infrastructure): scan the library tree into Artifacts"
 ```
 
@@ -748,9 +748,9 @@ git commit -m "feat(infrastructure): scan the library tree into Artifacts"
 ### Task 4: library.yaml — tags, collections, supersession
 
 **Files:**
-- Create: `src/harness_library/domain/metadata.py`
-- Create: `src/harness_library/infrastructure/library_yaml.py`
-- Modify: `src/harness_library/infrastructure/filesystem_repository.py`
+- Create: `src/loom/domain/metadata.py`
+- Create: `src/loom/infrastructure/library_yaml.py`
+- Modify: `src/loom/infrastructure/filesystem_repository.py`
 - Create: `tests/infrastructure/test_library_yaml.py`
 - Modify: `tests/infrastructure/conftest.py`
 
@@ -787,10 +787,10 @@ from pathlib import Path
 
 import pytest
 
-from harness_library.infrastructure.filesystem_repository import (
+from loom.infrastructure.filesystem_repository import (
     FilesystemArtifactRepository,
 )
-from harness_library.infrastructure.library_yaml import (
+from loom.infrastructure.library_yaml import (
     LibraryYamlError,
     read_library_yaml,
 )
@@ -839,11 +839,11 @@ def test_repository_applies_metadata_to_artifacts(library_root: Path):
 - [ ] **Step 3: Run the test to verify it fails**
 
 Run: `uv run pytest tests/infrastructure/test_library_yaml.py -v`
-Expected: FAIL — `ModuleNotFoundError: No module named 'harness_library.infrastructure.library_yaml'`
+Expected: FAIL — `ModuleNotFoundError: No module named 'loom.infrastructure.library_yaml'`
 
 - [ ] **Step 4: Write the metadata domain types**
 
-`src/harness_library/domain/metadata.py`:
+`src/loom/domain/metadata.py`:
 
 ```python
 """Metadata the artifact files cannot express themselves."""
@@ -879,7 +879,7 @@ class LibraryMetadata:
 
 - [ ] **Step 5: Write the reader**
 
-`src/harness_library/infrastructure/library_yaml.py`:
+`src/loom/infrastructure/library_yaml.py`:
 
 ```python
 """Reads library.yaml into LibraryMetadata."""
@@ -890,7 +890,7 @@ from pathlib import Path
 
 import yaml
 
-from harness_library.domain.metadata import ArtifactMetadata, Collection, LibraryMetadata
+from loom.domain.metadata import ArtifactMetadata, Collection, LibraryMetadata
 
 
 class LibraryYamlError(ValueError):
@@ -933,7 +933,7 @@ def read_library_yaml(path: Path) -> LibraryMetadata:
 
 - [ ] **Step 6: Apply metadata in the repository**
 
-In `filesystem_repository.py`, add the import `from harness_library.domain.metadata import LibraryMetadata`, then change `__init__` and the tail of `_build`:
+In `filesystem_repository.py`, add the import `from loom.domain.metadata import LibraryMetadata`, then change `__init__` and the tail of `_build`:
 
 ```python
     def __init__(self, root: Path, metadata: LibraryMetadata | None = None) -> None:
@@ -959,7 +959,7 @@ Expected: PASS, all tests including Task 3's, which still pass because `metadata
 - [ ] **Step 8: Commit**
 
 ```bash
-git add src/harness_library tests
+git add src/loom tests
 git commit -m "feat: read tags, collections and supersession from library.yaml"
 ```
 
@@ -968,8 +968,8 @@ git commit -m "feat: read tags, collections and supersession from library.yaml"
 ### Task 5: Validation rules V1–V6
 
 **Files:**
-- Create: `src/harness_library/domain/validation.py`
-- Modify: `src/harness_library/infrastructure/filesystem_repository.py`
+- Create: `src/loom/domain/validation.py`
+- Modify: `src/loom/infrastructure/filesystem_repository.py`
 - Create: `tests/domain/test_validation.py`
 
 **Interfaces:**
@@ -981,8 +981,8 @@ git commit -m "feat: read tags, collections and supersession from library.yaml"
 `tests/domain/test_validation.py`:
 
 ```python
-from harness_library.domain.artifact import Artifact, ArtifactKind, ArtifactType
-from harness_library.domain.validation import validate_artifact
+from loom.domain.artifact import Artifact, ArtifactKind, ArtifactType
+from loom.domain.validation import validate_artifact
 
 
 def _artifact(**overrides) -> Artifact:
@@ -1072,16 +1072,16 @@ def test_a_clean_artifact_has_no_errors():
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run: `uv run pytest tests/domain/test_validation.py -v`
-Expected: FAIL — `ModuleNotFoundError: No module named 'harness_library.domain.validation'`
+Expected: FAIL — `ModuleNotFoundError: No module named 'loom.domain.validation'`
 
 - [ ] **Step 3: Write the implementation**
 
-`src/harness_library/domain/validation.py`:
+`src/loom/domain/validation.py`:
 
 ```python
 """Validation rules. Each rule exists because the failure was observed on disk.
 
-See docs/specs/2026-08-28-harness-library-design.md §4.
+See docs/specs/2026-08-28-loom-machine-design.md §4.
 """
 
 from __future__ import annotations
@@ -1089,8 +1089,8 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 
-from harness_library.domain.artifact import Artifact, ValidationError
-from harness_library.domain.types import entry_filename_for, spec_for
+from loom.domain.artifact import Artifact, ValidationError
+from loom.domain.types import entry_filename_for, spec_for
 
 _REFERENCE_CITATION = re.compile(r"(?:^|[\s`(\[])(references/[\w./-]+\.md)")
 
@@ -1168,7 +1168,7 @@ Expected: PASS, 9 tests.
         return sorted(validated, key=lambda a: a.id)
 ```
 
-`_build` now returns `tuple[Artifact, dict[str, object], str, tuple[str, ...]]`, where the last element lists dotfiles and other skipped entries found under the artifact root. Add `from dataclasses import replace` and `from harness_library.domain.validation import validate_artifact` to the imports, and extract the entry-listing loop from `_scan_type` into `_entries(artifact_type) -> list[Path]`.
+`_build` now returns `tuple[Artifact, dict[str, object], str, tuple[str, ...]]`, where the last element lists dotfiles and other skipped entries found under the artifact root. Add `from dataclasses import replace` and `from loom.domain.validation import validate_artifact` to the imports, and extract the entry-listing loop from `_scan_type` into `_entries(artifact_type) -> list[Path]`.
 
 - [ ] **Step 6: Add the repository-level regression test**
 
@@ -1198,7 +1198,7 @@ Expected: PASS.
 - [ ] **Step 8: Commit**
 
 ```bash
-git add src/harness_library tests
+git add src/loom tests
 git commit -m "feat(domain): add validation rules V1-V6"
 ```
 
@@ -1207,9 +1207,9 @@ git commit -m "feat(domain): add validation rules V1-V6"
 ### Task 6: Read use cases
 
 **Files:**
-- Create: `src/harness_library/application/__init__.py`
-- Create: `src/harness_library/application/read/__init__.py`
-- Create: `src/harness_library/application/read/use_cases.py`
+- Create: `src/loom/application/__init__.py`
+- Create: `src/loom/application/read/__init__.py`
+- Create: `src/loom/application/read/use_cases.py`
 - Create: `tests/application/fakes.py`
 - Create: `tests/application/test_read_use_cases.py`
 
@@ -1224,7 +1224,7 @@ git commit -m "feat(domain): add validation rules V1-V6"
 ```python
 from __future__ import annotations
 
-from harness_library.domain.artifact import Artifact, ArtifactKind, ArtifactType
+from loom.domain.artifact import Artifact, ArtifactKind, ArtifactType
 
 
 def make_artifact(
@@ -1285,7 +1285,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from harness_library.application.read.use_cases import (
+from loom.application.read.use_cases import (
     ArtifactFilter,
     ArtifactNotFoundError,
     SortKey,
@@ -1295,7 +1295,7 @@ from harness_library.application.read.use_cases import (
     search_artifacts,
     validate_library,
 )
-from harness_library.domain.artifact import ValidationError
+from loom.domain.artifact import ValidationError
 from tests.application.fakes import FakeArtifactRepository, make_artifact
 
 
@@ -1412,11 +1412,11 @@ def test_validate_library_returns_only_invalid_artifacts():
 - [ ] **Step 3: Run the test to verify it fails**
 
 Run: `uv run pytest tests/application -v`
-Expected: FAIL — `ModuleNotFoundError: No module named 'harness_library.application'`
+Expected: FAIL — `ModuleNotFoundError: No module named 'loom.application'`
 
 - [ ] **Step 4: Write the implementation**
 
-Create empty `src/harness_library/application/__init__.py` and `src/harness_library/application/read/__init__.py`, then `src/harness_library/application/read/use_cases.py`:
+Create empty `src/loom/application/__init__.py` and `src/loom/application/read/__init__.py`, then `src/loom/application/read/use_cases.py`:
 
 ```python
 """Read use cases. No I/O of their own — everything arrives through the repository."""
@@ -1427,8 +1427,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 
-from harness_library.domain.artifact import Artifact
-from harness_library.domain.repository import ArtifactRepository
+from loom.domain.artifact import Artifact
+from loom.domain.repository import ArtifactRepository
 
 
 class ArtifactNotFoundError(LookupError):
@@ -1524,7 +1524,7 @@ Expected: PASS, 16 tests.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/harness_library tests
+git add src/loom tests
 git commit -m "feat(application): add read use cases"
 ```
 
@@ -1533,14 +1533,14 @@ git commit -m "feat(application): add read use cases"
 ### Task 7: Read CLI
 
 **Files:**
-- Create: `src/harness_library/cli/__init__.py`
-- Create: `src/harness_library/cli/context.py`
-- Create: `src/harness_library/cli/main.py`
+- Create: `src/loom/cli/__init__.py`
+- Create: `src/loom/cli/context.py`
+- Create: `src/loom/cli/main.py`
 - Create: `tests/cli/test_cli.py`
 
 **Interfaces:**
 - Consumes: everything from Tasks 3–6.
-- Produces: `build_repository(root: Path) -> FilesystemArtifactRepository` (reads `library.yaml` and wires it in); `resolve_library_root(explicit: Path | None) -> Path` (uses `--library`, else `$HL_LIBRARY`, else the current directory); the Typer `app` with `list`, `show`, `search`, `validate`. Exit code 1 when `validate` finds errors, 0 otherwise.
+- Produces: `build_repository(root: Path) -> FilesystemArtifactRepository` (reads `library.yaml` and wires it in); `resolve_library_root(explicit: Path | None) -> Path` (uses `--library`, else `$LOOM_LIBRARY`, else the current directory); the Typer `app` with `list`, `show`, `search`, `validate`. Exit code 1 when `validate` finds errors, 0 otherwise.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1551,7 +1551,7 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
-from harness_library.cli.main import app
+from loom.cli.main import app
 
 runner = CliRunner()
 
@@ -1620,11 +1620,11 @@ Add `tests/cli/conftest.py` containing `from tests.infrastructure.conftest impor
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run: `uv run pytest tests/cli -v`
-Expected: FAIL — `ModuleNotFoundError: No module named 'harness_library.cli'`
+Expected: FAIL — `ModuleNotFoundError: No module named 'loom.cli'`
 
 - [ ] **Step 3: Write the wiring**
 
-`src/harness_library/cli/context.py`:
+`src/loom/cli/context.py`:
 
 ```python
 """Composition root for the CLI. The only place adapters know about concrete infrastructure."""
@@ -1634,16 +1634,16 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from harness_library.infrastructure.filesystem_repository import (
+from loom.infrastructure.filesystem_repository import (
     FilesystemArtifactRepository,
 )
-from harness_library.infrastructure.library_yaml import read_library_yaml
+from loom.infrastructure.library_yaml import read_library_yaml
 
 
 def resolve_library_root(explicit: Path | None) -> Path:
     if explicit is not None:
         return explicit
-    from_env = os.environ.get("HL_LIBRARY")
+    from_env = os.environ.get("LOOM_LIBRARY")
     return Path(from_env) if from_env else Path.cwd()
 
 
@@ -1653,7 +1653,7 @@ def build_repository(root: Path) -> FilesystemArtifactRepository:
 
 - [ ] **Step 4: Write the CLI**
 
-`src/harness_library/cli/main.py`:
+`src/loom/cli/main.py`:
 
 ```python
 """Typer adapter. Contains no logic — every command calls one use case."""
@@ -1665,7 +1665,7 @@ from typing import Annotated
 
 import typer
 
-from harness_library.application.read.use_cases import (
+from loom.application.read.use_cases import (
     ArtifactFilter,
     ArtifactNotFoundError,
     SortKey,
@@ -1675,13 +1675,13 @@ from harness_library.application.read.use_cases import (
     search_artifacts,
     validate_library,
 )
-from harness_library.cli.context import build_repository, resolve_library_root
-from harness_library.domain.types import entry_filename_for
+from loom.cli.context import build_repository, resolve_library_root
+from loom.domain.types import entry_filename_for
 
 app = typer.Typer(help="Harness Library — manage the skills and agents you author.")
 
 _LibraryOption = Annotated[
-    Path | None, typer.Option("--library", help="Library root. Defaults to $HL_LIBRARY or cwd.")
+    Path | None, typer.Option("--library", help="Library root. Defaults to $LOOM_LIBRARY or cwd.")
 ]
 
 
@@ -1756,12 +1756,12 @@ Expected: PASS, 9 tests.
 
 - [ ] **Step 6: Run it against the real library**
 
-Run: `uv run hl --library ~/.claude list` — but note `~/.claude` is a *target* layout, not a library, so this is only a smoke check that the command runs. Expected: it lists the six skills and two agents, and reports nothing as `INVALID` (the broken skills were fixed earlier).
+Run: `uv run loom --library ~/.claude list` — but note `~/.claude` is a *target* layout, not a library, so this is only a smoke check that the command runs. Expected: it lists the six skills and two agents, and reports nothing as `INVALID` (the broken skills were fixed earlier).
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add src/harness_library tests
+git add src/loom tests
 git commit -m "feat(cli): add list, show, search and validate"
 ```
 
@@ -1770,15 +1770,15 @@ git commit -m "feat(cli): add list, show, search and validate"
 ### Task 8: MCP server and the structural read-only guarantee
 
 **Files:**
-- Create: `src/harness_library/mcp/__init__.py`
-- Create: `src/harness_library/mcp/server.py`
+- Create: `src/loom/mcp/__init__.py`
+- Create: `src/loom/mcp/server.py`
 - Create: `setup.cfg`
 - Create: `tests/mcp/test_server.py`
 - Create: `tests/test_architecture.py`
 
 **Interfaces:**
 - Consumes: the read use cases (Task 6) and `build_repository` / `resolve_library_root` (Task 7).
-- Produces: `build_server(repo) -> mcp.server.Server` exposing exactly `list_artifacts`, `search_artifacts`, `get_artifact`, `get_reference`; console entry point `hl mcp`.
+- Produces: `build_server(repo) -> mcp.server.Server` exposing exactly `list_artifacts`, `search_artifacts`, `get_artifact`, `get_reference`; console entry point `loom mcp`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1789,7 +1789,7 @@ import json
 
 import pytest
 
-from harness_library.mcp.server import TOOL_NAMES, build_server, call_tool
+from loom.mcp.server import TOOL_NAMES, build_server, call_tool
 from tests.application.fakes import FakeArtifactRepository, make_artifact
 
 
@@ -1877,7 +1877,7 @@ def test_import_contracts_hold():
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `uv run pytest tests/mcp tests/test_architecture.py -v`
-Expected: FAIL — `ModuleNotFoundError` for `harness_library.mcp.server`, and the contract test fails because `setup.cfg` does not exist.
+Expected: FAIL — `ModuleNotFoundError` for `loom.mcp.server`, and the contract test fails because `setup.cfg` does not exist.
 
 - [ ] **Step 3: Write the import contracts**
 
@@ -1885,45 +1885,45 @@ Expected: FAIL — `ModuleNotFoundError` for `harness_library.mcp.server`, and t
 
 ```ini
 [importlinter]
-root_package = harness_library
+root_package = loom
 
 [importlinter:contract:layers]
 name = Clean Architecture layers
 type = layers
 layers =
-    harness_library.cli
-    harness_library.mcp
-    harness_library.infrastructure
-    harness_library.application
-    harness_library.domain
+    loom.cli
+    loom.mcp
+    loom.infrastructure
+    loom.application
+    loom.domain
 ignore_imports =
-    harness_library.cli.context -> harness_library.infrastructure.*
+    loom.cli.context -> loom.infrastructure.*
 
 [importlinter:contract:mcp-is-read-only]
 name = MCP never imports write use cases
 type = forbidden
-source_modules = harness_library.mcp
-forbidden_modules = harness_library.application.write
+source_modules = loom.mcp
+forbidden_modules = loom.application.write
 
 [importlinter:contract:domain-is-pure]
 name = Domain imports no other layer
 type = forbidden
-source_modules = harness_library.domain
+source_modules = loom.domain
 forbidden_modules =
-    harness_library.application
-    harness_library.infrastructure
-    harness_library.cli
-    harness_library.mcp
+    loom.application
+    loom.infrastructure
+    loom.cli
+    loom.mcp
 ```
 
 - [ ] **Step 4: Write the MCP server**
 
-`src/harness_library/mcp/server.py`:
+`src/loom/mcp/server.py`:
 
 ```python
 """Read-only stdio MCP server.
 
-Imports from harness_library.application.read ONLY. Enforced by setup.cfg
+Imports from loom.application.read ONLY. Enforced by setup.cfg
 contract "mcp-is-read-only", which runs in tests/test_architecture.py.
 """
 
@@ -1936,7 +1936,7 @@ import mcp.server.stdio
 import mcp.types as types
 from mcp.server import Server
 
-from harness_library.application.read.use_cases import (
+from loom.application.read.use_cases import (
     ArtifactFilter,
     ArtifactNotFoundError,
     get_artifact,
@@ -1944,8 +1944,8 @@ from harness_library.application.read.use_cases import (
     list_artifacts,
     search_artifacts,
 )
-from harness_library.domain.repository import ArtifactRepository
-from harness_library.domain.types import entry_filename_for
+from loom.domain.repository import ArtifactRepository
+from loom.domain.types import entry_filename_for
 
 TOOL_NAMES = ("list_artifacts", "search_artifacts", "get_artifact", "get_reference")
 
@@ -2054,7 +2054,7 @@ def call_tool(repo: ArtifactRepository, name: str, arguments: dict[str, Any]) ->
 
 
 def build_server(repo: ArtifactRepository) -> Server:
-    server: Server = Server("harness-library")
+    server: Server = Server("loom-machine")
 
     @server.list_tools()
     async def _list_tools() -> list[types.Tool]:
@@ -2073,9 +2073,9 @@ async def run_stdio(repo: ArtifactRepository) -> None:
         await server.run(read_stream, write_stream, server.create_initialization_options())
 ```
 
-- [ ] **Step 5: Add the `hl mcp` command**
+- [ ] **Step 5: Add the `loom mcp` command**
 
-Append to `src/harness_library/cli/main.py`:
+Append to `src/loom/cli/main.py`:
 
 ```python
 @app.command("mcp")
@@ -2083,7 +2083,7 @@ def mcp_command(ctx: typer.Context) -> None:
     """Run the read-only MCP server over stdio. Spawned by an MCP client, not by you."""
     import asyncio
 
-    from harness_library.mcp.server import run_stdio
+    from loom.mcp.server import run_stdio
 
     asyncio.run(run_stdio(ctx.obj))
 ```
@@ -2107,10 +2107,10 @@ Add to `~/.claude/settings.json` (or the project `.mcp.json`):
 ```json
 {
   "mcpServers": {
-    "harness-library": {
+    "loom-machine": {
       "command": "uv",
-      "args": ["run", "--directory", "/project/harness-library", "hl", "mcp"],
-      "env": { "HL_LIBRARY": "/project/harness-library" }
+      "args": ["run", "--directory", "/project/loom-machine", "hl", "mcp"],
+      "env": { "LOOM_LIBRARY": "/project/loom-machine" }
     }
   }
 }
@@ -2121,7 +2121,7 @@ Start a session, confirm the four tools appear, call `search_artifacts` with a t
 - [ ] **Step 9: Commit**
 
 ```bash
-git add src/harness_library tests setup.cfg
+git add src/loom tests setup.cfg
 git commit -m "feat(mcp): add read-only stdio server with structural import contract"
 ```
 
@@ -2129,12 +2129,12 @@ git commit -m "feat(mcp): add read-only stdio server with structural import cont
 
 ## Done when
 
-- `hl list`, `hl show`, `hl search`, `hl validate` all work against the real library tree.
-- `hl validate` exits 1 and names the rule for every defect in §1 of the spec.
+- `loom list`, `loom show`, `loom search`, `loom validate` all work against the real library tree.
+- `loom validate` exits 1 and names the rule for every defect in §1 of the spec.
 - The four MCP tools respond in a real Claude Code session.
 - `uv run pytest && uv run ruff check . && uv run mypy src` is green.
 - Nothing in this plan has written to `~/.claude/`.
 
 ## Not in this plan
 
-Install, backup, manifest, drift, rollback (Plan 2). The FastAPI JSON API (Plan 3). The React SPA (Plan 4). `hl new` and `hl edit` — they are write use cases and belong with Plan 2.
+Install, backup, manifest, drift, rollback (Plan 2). The FastAPI JSON API (Plan 3). The React SPA (Plan 4). `loom new` and `loom edit` — they are write use cases and belong with Plan 2.

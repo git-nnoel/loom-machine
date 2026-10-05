@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from harness_library.application.read import get_collection, list_collections
-from harness_library.domain.errors import CollectionNotFoundError, ErrorCode
-from harness_library.domain.metadata import Collection
+from loom.application.read import get_collection, list_collections
+from loom.domain.errors import CollectionNotFoundError, ErrorCode
+from loom.domain.metadata import Collection
 from tests.application.fakes import FakeArtifactRepository, make_artifact
 
 
@@ -43,7 +43,7 @@ def test_a_summary_reports_the_declaration_verbatim_including_ids_that_resolve_t
 
 
 def test_members_resolve_in_declaration_order_not_listing_order() -> None:
-    """A curated sequence answers a different question from `hl list`, so it keeps its order."""
+    """A curated sequence answers a different question from `loom list`, so it keeps its order."""
     detail = get_collection(_library(), "core")
 
     assert [m.id for m in detail.members] == ["skill/gamma", "skill/alpha"]

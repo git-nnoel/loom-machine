@@ -3,7 +3,7 @@
 **Reviewer:** backend-developer-specialist
 **Date:** 2026-08-31
 **Under review:** `docs/plans/2026-08-28-store-and-read-path.md`
-**Against:** `docs/specs/2026-08-28-harness-library-design.md` (D1–D8 treated as settled), `backend-system-architecture` Mode A + references `contracts.md`, `testing.md`, `concurrency.md`, `observability.md`, `persistence.md`, `schema-evolution.md`
+**Against:** `docs/specs/2026-08-28-loom-machine-design.md` (D1–D8 treated as settled), `backend-system-architecture` Mode A + references `contracts.md`, `testing.md`, `concurrency.md`, `observability.md`, `persistence.md`, `schema-evolution.md`
 **Evidence base:** the real `~/.claude/skills/` (6 skills, 632 657 bytes) and `~/.claude/agents/` (2 agents, 35 749 bytes), read this session.
 
 ---
@@ -134,7 +134,7 @@ the wrong order.
 | **5** | **The scanner and the repository.** `infrastructure/scanner.py` + `infrastructure/repository.py`, composed from 3 and 4. Includes the `ArtifactRepository` protocol (declared in `domain/` in Task 2 or here — either is fine, but before Task 6). | infra | `tmp_path` fixtures reproduce every §1 failure *including a nested vendor tree inside a skill directory*. Nothing from Tasks 2–4 is edited. |
 | **6** | **Read use cases**, including `list_collections` and `get_collection`. | application | Every use case tested against `FakeArtifactRepository`. |
 | **7** | **Read CLI** + composition root + library-root resolution that fails loudly on a non-library (§4 D-24). | cli | Typer runner tests, **including one that supplies no `--library`** (§6). |
-| **8** | **MCP server**, driven over real JSON-RPC frames, plus a stdout-purity test. | mcp | The four tools are enumerated *from the server*, and `hl mcp` with a bad root emits nothing on stdout. |
+| **8** | **MCP server**, driven over real JSON-RPC frames, plus a stdout-purity test. | mcp | The four tools are enumerated *from the server*, and `loom mcp` with a bad root emits nothing on stdout. |
 | **9** | **Acceptance against the real library**, output recorded in the plan. | — | Recorded, honest output — see §4 D-13 for what it will actually say. |
 
 **Merged:** old 1+2 → new 2. **Split:** old 8 → new 1 (contract) + 8 (server) + 9 (acceptance).
@@ -245,7 +245,7 @@ Three changes, all forced by Plans 2–4:
 - **`Sequence`, not `list`** — a `list` return is an invitation to mutate a memoised snapshot.
 
 **Scan semantics must be stated in the protocol's docstring, not left implicit.** The plan's `get()` calls
-`list_all()`, which reads and hashes **every byte of the library** to answer one lookup: `hl show` and
+`list_all()`, which reads and hashes **every byte of the library** to answer one lookup: `loom show` and
 each MCP `get_reference` re-read ~670 KB. Lock it as: *one scan per repository instance, memoised; the
 result is a point-in-time snapshot; a new instance is a new scan.* That is the honest answer to "what
 happens when a file changes mid-scan" (§5.6) and it is what Plan 2's manifest depends on.
@@ -327,11 +327,11 @@ HTTP responses. Two shapes for one artifact is the drift `contracts.md` opens wi
 ### 3.8 The composition root
 
 ```python
-def resolve_library_root(explicit: Path | None) -> Path: ...  # --library > $HL_LIBRARY > cwd, then verify
+def resolve_library_root(explicit: Path | None) -> Path: ...  # --library > $LOOM_LIBRARY > cwd, then verify
 def build_repository(root: Path) -> ArtifactRepository: ...
 ```
 
-`hl serve` (Plan 3) and `hl mcp` must resolve identically. Freeze the precedence and the `$HL_LIBRARY`
+`loom serve` (Plan 3) and `loom mcp` must resolve identically. Freeze the precedence and the `$LOOM_LIBRARY`
 name now; changing an env var name after Plan 3 ships breaks every user's MCP client config.
 
 ### 3.9 What will *not* survive contact — summary
@@ -379,7 +379,7 @@ Severity: **B** blocker (contract or ships-broken) · **H** high · **M** medium
 | D-14 | **H** | 5 | **V6 can never fire.** `_collect_files` discards skipped paths; Task 5 asserts `_build` "returns … the last element lists dotfiles and other skipped entries" but no step produces that list. The only V6 test is the pure unit test, which is *handed* `extraneous_files=(".SKILL.md.swp",)`. V6 ships green and non-functional — the single most damaging failure mode here, because §1's `.swp` and `node_modules` observations are the reason V6 exists. `RawArtifact.skipped` (§1.2) makes this structurally impossible to forget. |
 | D-15 | **H** | 4, 5 | **Spec §3.4's rule is not implemented anywhere.** "An entry in `library.yaml` for an artifact that does not exist on disk is a validation error, not a silent no-op." `validate_artifact` is per-artifact, and the plan has no library-level pass. The fixture's own `library.yaml` keys `skill/developers-orchestration`, which is **absent from the fixture tree**, and no test notices. Add **V7**, covering both `artifacts:` keys and `collections[].members`. |
 | D-16 | **H** | 4 | `read_library_yaml` does no shape validation on a hard-failure path. `skill/x:` with an empty body (the most common YAML slip) makes `entry` `None` → `AttributeError`, not the line-numbered failure spec §9 promises. `tags: process` (scalar, not list) yields `('p','r','o','c','e','s','s')` silently. |
-| D-17 | **H** | 6, 7 | **`hl show` crashes on the plan's own fixture.** `show_command` calls `get_artifact_file(..., entry_filename_for(...))`; for `skill/solution-designer` — the V1 artifact with no `SKILL.md` — the repository raises `FileNotFoundError`, which crosses the application layer untouched (R7 violation: infrastructure exceptions must not leak) and reaches the CLI with no handler. Spec §4's whole point is that an invalid artifact is *shown with its reasons*. Untested. |
+| D-17 | **H** | 6, 7 | **`loom show` crashes on the plan's own fixture.** `show_command` calls `get_artifact_file(..., entry_filename_for(...))`; for `skill/solution-designer` — the V1 artifact with no `SKILL.md` — the repository raises `FileNotFoundError`, which crosses the application layer untouched (R7 violation: infrastructure exceptions must not leak) and reaches the CLI with no handler. Spec §4's whole point is that an invalid artifact is *shown with its reasons*. Untested. |
 | D-18 | **H** | 8 | `TOOL_NAMES` is a hand-written tuple sitting beside `TOOL_SCHEMAS`, and `test_exposes_exactly_the_four_read_tools` asserts on `TOOL_NAMES`. **A fifth tool added to `TOOL_SCHEMAS` and not to `TOOL_NAMES` passes the test that exists to prevent it.** Two lists, one vocabulary — `contracts.md` rule 1, in the one place the plan calls a structural guarantee. Derive names from schemas and assert against what the server's `list_tools()` actually returns. |
 | D-19 | **H** | 6 | `--sort size` sorts by `len(a.files)` — file *count*, not size. `test_sorts_by_size_largest_first` asserts the wrong thing under a name that claims otherwise. Spec §7.1 says `size`. Add `Artifact.size_bytes` (§3.2) or rename the key. |
 | D-20 | **H** | 8 | The `import-linter` `layers` contract orders `cli > mcp > infrastructure > application > domain`, which makes `infrastructure → application` a *downward*, **permitted** import. In Mode A infrastructure implements domain protocols and must never reach up into use cases. The contract as drafted does not enforce the layering it is named for. Also `ignore_imports = cli.context -> infrastructure.*` is redundant (already downward) and signals the misreading. Correct shape: `cli : mcp` as independent siblings above `application` above `domain`, plus a `forbidden` contract for `infrastructure → application | cli | mcp`. |
@@ -390,9 +390,9 @@ Severity: **B** blocker (contract or ships-broken) · **H** high · **M** medium
 |---|:--:|:--:|---|
 | D-21 | **H** | 4, 5 | Both tasks retro-fit Task 3. Task 5 changes `_build`'s return type and rewrites `list_all`; Task 4 changes the constructor and `_build`'s tail. Confirmed and worse than suspected. §2.3 reorders. |
 | D-22 | **H** | 6, 7, 8 | `from tests.application.fakes import ...` and `from tests.infrastructure.conftest import library_root` require `tests` to be an importable package. `pythonpath = ["src"]` adds only `src`, and no `tests/__init__.py` is created anywhere. **These imports will fail on first run.** Add `tests/__init__.py` (and per-subpackage) in Task 1, plus `pythonpath = ["src", "."]`. Recurring trap — see §8. |
-| D-23 | **M** | 3 | `get()` calls `list_all()`, so a single lookup reads and hashes the entire library. `hl show` and every MCP `get_reference` pay ~670 KB. Memoise the scan per instance and document the snapshot semantics (§3.4). |
-| D-24 | **M** | 7 | `resolve_library_root` falls back to `Path.cwd()`, and a directory with no `skills/` or `agents/` scans to `[]` and exits **0**. `hl list` in the wrong directory silently reports an empty library — the same "invisible rather than flagged" failure class §1 exists to close. Raise `NotALibraryError` when none of `skills/`, `agents/`, `library.yaml` is present. |
-| D-25 | **M** | 7 | `cli/context.py` reads `os.environ.get("HL_LIBRARY")` directly. R1: config is read in exactly one Pydantic Settings class and no other file touches the environment. `pydantic-settings` is not in the dependency set — **stack question for you** (§8). |
+| D-23 | **M** | 3 | `get()` calls `list_all()`, so a single lookup reads and hashes the entire library. `loom show` and every MCP `get_reference` pay ~670 KB. Memoise the scan per instance and document the snapshot semantics (§3.4). |
+| D-24 | **M** | 7 | `resolve_library_root` falls back to `Path.cwd()`, and a directory with no `skills/` or `agents/` scans to `[]` and exits **0**. `loom list` in the wrong directory silently reports an empty library — the same "invisible rather than flagged" failure class §1 exists to close. Raise `NotALibraryError` when none of `skills/`, `agents/`, `library.yaml` is present. |
+| D-25 | **M** | 7 | `cli/context.py` reads `os.environ.get("LOOM_LIBRARY")` directly. R1: config is read in exactly one Pydantic Settings class and no other file touches the environment. `pydantic-settings` is not in the dependency set — **stack question for you** (§8). |
 | D-26 | **M** | 7 | `build_repository` runs in `@app.callback()`, so `library.yaml` is read for every invocation including `--help`, and a `LibraryYamlError` surfaces as a traceback rather than spec §9's line-numbered hard failure. Build lazily; catch at the command boundary. |
 | D-27 | **M** | 6 | `get_artifact_file` calls `get_artifact` (a full scan) purely to pick the right exception, then resolves the path again. Two resolutions, one lookup. |
 | D-28 | **M** | 6 | `search_artifacts` swallows `UnicodeDecodeError`/`ValueError` per file and continues, silently skipping the 184 KB HTML asset. "No match" and "not searched" become indistinguishable. §3.5's `skipped_binary` fixes it. |
@@ -410,7 +410,7 @@ Severity: **B** blocker (contract or ships-broken) · **H** high · **M** medium
 ### Plan-level
 
 - **D-39 (H) — the plan's two acceptance criteria contradict each other.** "Done when" requires
-  `hl validate` to exit 1 and name the rule for every defect in spec §1; Task 8 step 6 notes those defects
+  `loom validate` to exit 1 and name the rule for every defect in spec §1; Task 8 step 6 notes those defects
   were already fixed in the real tree and expects no `INVALID`. Both cannot hold. And per D-13 the real
   run will report two INVALID artifacts, for a reason the plan does not anticipate. Task 9 exists to
   record the honest output.
@@ -436,7 +436,7 @@ valid UTF-8 but not text (a PNG that happens to decode).
 
 ### 5.2 Symlinks
 Unhandled at every level (D-8, D-9). Decide now, because Plan 2 must know whether to copy the link or the
-target, and `hl clean --foreign` must not follow a link out of the target tree. Recommendation: do not
+target, and `loom clean --foreign` must not follow a link out of the target tree. Recommendation: do not
 follow; record each as a V6 finding with a distinct message.
 
 ### 5.3 Case-insensitive filesystems
@@ -483,7 +483,7 @@ intermediate state and how it is recovered.
   Recommendation: a separate `LibraryProvenance` port, not a method on `ArtifactRepository` — read-only
   MCP has no business holding it.
 - **Observability: nothing logs anything.** `observability.md` wants structured logs at boundaries. For
-  `hl mcp` specifically, a failure is currently *completely silent*, and **stdout is fatal** (D8). The
+  `loom mcp` specifically, a failure is currently *completely silent*, and **stdout is fatal** (D8). The
   charter must state: logs to stderr, always; one structured line per MCP tool call; never stdout in the
   `mcp` process. There is no test asserting stdout purity, and Typer prints errors to stdout by default —
   a bad `--library` would corrupt the JSON-RPC stream.
@@ -520,9 +520,9 @@ observation the whole design exists to close. The plan's fixture puts the `.swp`
 not by discarding the tree. Aim it in the scanner, not in a fake — `testing.md`: a mutation inside a
 double proves only that the double is a double.
 
-Runners-up, in order: (2) `hl mcp` with an unresolvable `--library` emits **zero bytes on stdout**;
+Runners-up, in order: (2) `loom mcp` with an unresolvable `--library` emits **zero bytes on stdout**;
 (3) V3 against a redirect stub, asserting the seven real citations do **not** produce findings (D-13);
-(4) `hl show` on a V1-invalid artifact prints the findings and exits non-zero instead of raising (D-17).
+(4) `loom show` on a V1-invalid artifact prints the findings and exits non-zero instead of raising (D-17).
 
 ### 6.3 Tests that assert the wrong thing
 - `test_sorts_by_size_largest_first` — asserts file count under a name claiming bytes (D-19).
@@ -543,9 +543,9 @@ contract is the real guarantee); `test_registry_covers_every_artifact_type` (tau
 dict it reads). The eight single-predicate `ArtifactFilter` tests should be one table test.
 
 ### 6.5 The untested default
-Every CLI test passes `--library` explicitly, so `resolve_library_root`'s `$HL_LIBRARY`-then-cwd
+Every CLI test passes `--library` explicitly, so `resolve_library_root`'s `$LOOM_LIBRARY`-then-cwd
 fallback — **the only path production uses** — is never exercised. `testing.md`, verbatim: a default needs
-one test that supplies nothing. Add two: `$HL_LIBRARY` set, and neither set (asserting the loud failure
+one test that supplies nothing. Add two: `$LOOM_LIBRARY` set, and neither set (asserting the loud failure
 from D-24).
 
 ### 6.6 What the fake cannot see
@@ -589,11 +589,11 @@ A section list. One line each on what it must settle.
     requirement, the positive-control rule for absence assertions, and the fixture set that reproduces
     every spec §1 failure (with the note that those fixtures are never deleted).
 11. **Logging and stdout discipline** — structured to stderr; one line per MCP tool call; **nothing ever
-    on stdout in the `hl mcp` process**, and the test that proves it. This is D8's requirement turned into
+    on stdout in the `loom mcp` process**, and the test that proves it. This is D8's requirement turned into
     a mechanism instead of a promise.
-12. **Concurrency posture** — read-only, no locking, multiple concurrent `hl mcp` processes are safe;
+12. **Concurrency posture** — read-only, no locking, multiple concurrent `loom mcp` processes are safe;
     state explicitly that Plan 2 revisits this because it writes.
-13. **Configuration** — the single settings reader, `$HL_LIBRARY`, the resolution precedence, and R1's
+13. **Configuration** — the single settings reader, `$LOOM_LIBRARY`, the resolution precedence, and R1's
     prohibition on any other module touching the environment.
 14. **Decisions log** — dated entries; the place a mode change or a stack ruling is recorded.
 
@@ -637,7 +637,7 @@ being frozen *in* Plan 1; and **§12.5 (search depth)**, which is Plan 1's contr
    required; I have not assumed one.**
 6. **`pyyaml`** — required by spec §3.4, prohibited by skill §5. I believe the carve-out is correct
    (data, not config) but the ruling is yours to make and record (§7 item 4).
-7. **CLI output as contract.** `hl list`'s columnar output is asserted by substring in the tests and will
+7. **CLI output as contract.** `loom list`'s columnar output is asserted by substring in the tests and will
    be scraped by users. Is it contract? If so it needs a `--json` mode locked now, since Plan 3's SPA and
    any scripting user will otherwise parse the human format.
 
@@ -656,14 +656,14 @@ being frozen *in* Plan 1; and **§12.5 (search depth)**, which is Plan 1's contr
    `application` silently *permits* the inward-violating import you meant to forbid. The contract looks
    right and enforces the opposite. Verify by deliberately adding a violating import and watching
    `lint-imports` fail — a contract nobody has seen fail is a contract that does not run. (D-20)
-4. **`~/.claude/` is a target layout, not a library layout.** Task 7 step 6 points `hl --library ~/.claude`
+4. **`~/.claude/` is a target layout, not a library layout.** Task 7 step 6 points `loom --library ~/.claude`
    at it as a smoke test. It happens to work because both use `skills/` and `agents/`, but there is no
    `library.yaml`, so tags, collections and supersession all read as empty, and the run tells you far less
    than it appears to. Build a real fixture library in the repo for acceptance.
 5. **The two redirect stubs will fail V3 and it will look like your bug.** Seven findings, all naming
    reference files that plainly exist — in a *different* skill's directory. Expect it, and check D-13
    before debugging the regex. (D-13)
-6. **`hl mcp` dies silently on any stdout write**, including Typer's own error output on a bad flag. There
+6. **`loom mcp` dies silently on any stdout write**, including Typer's own error output on a bad flag. There
    is no test for this and the failure mode is an MCP client that reports a malformed JSON-RPC stream with
    no clue why. Write the stdout-purity test before the server.
 7. **`python -m importlinter.cli` is not the supported entry point** and its cwd-dependence makes it fail

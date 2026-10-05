@@ -23,13 +23,13 @@ from pathlib import Path
 
 import pytest
 
-from harness_library.domain.artifact import Artifact
-from harness_library.domain.assembly import cited_reference_paths
-from harness_library.domain.errors import LibraryYamlError
-from harness_library.domain.repository import ArtifactRepository
-from harness_library.domain.validation import Severity, ValidationCode
-from harness_library.infrastructure.repository import FilesystemArtifactRepository
-from harness_library.infrastructure.scanner import scan_library
+from loom.domain.artifact import Artifact
+from loom.domain.assembly import cited_reference_paths
+from loom.domain.errors import LibraryYamlError
+from loom.domain.repository import ArtifactRepository
+from loom.domain.validation import Severity, ValidationCode
+from loom.infrastructure.repository import FilesystemArtifactRepository
+from loom.infrastructure.scanner import scan_library
 from tests.infrastructure.conftest import FIXED_TIMESTAMPS, write, write_skill
 
 

@@ -9,12 +9,12 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from harness_library.domain.artifact import Artifact, ArtifactKind
-from harness_library.domain.identity import ArtifactType
-from harness_library.domain.metadata import Collection
-from harness_library.domain.raw import SymlinkedRoot
-from harness_library.domain.repository import ArtifactRepository
-from harness_library.domain.validation import ValidationFinding
+from loom.domain.artifact import Artifact, ArtifactKind
+from loom.domain.identity import ArtifactType
+from loom.domain.metadata import Collection
+from loom.domain.raw import SymlinkedRoot
+from loom.domain.repository import ArtifactRepository
+from loom.domain.validation import ValidationFinding
 
 
 class FakeRepository:

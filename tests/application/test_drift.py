@@ -13,18 +13,18 @@ from __future__ import annotations
 
 import pytest
 
-from harness_library.application.read.drift import (
+from loom.application.read.drift import (
     UNHASHED_TARGET_SHA,
     diff_against_target,
     target_sha_of,
 )
-from harness_library.application.write.install import plan_install
-from harness_library.domain.artifact import Artifact
-from harness_library.domain.hashing import hash_bytes
-from harness_library.domain.identity import ArtifactType, make_artifact_id
-from harness_library.domain.install_plan import InstallPlan, PlanEntry, Verdict
-from harness_library.domain.manifest import Manifest, ManifestArtifact
-from harness_library.domain.target import TargetFile
+from loom.application.write.install import plan_install
+from loom.domain.artifact import Artifact
+from loom.domain.hashing import hash_bytes
+from loom.domain.identity import ArtifactType, make_artifact_id
+from loom.domain.install_plan import InstallPlan, PlanEntry, Verdict
+from loom.domain.manifest import Manifest, ManifestArtifact
+from loom.domain.target import TargetFile
 from tests.application.fakes import (
     FakeArtifactRepository,
     FakeTargetRepository,

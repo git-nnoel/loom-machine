@@ -7,7 +7,7 @@ Realises contracts **C-9** (`Verdict`) and **C-10** (`PlanEntry`, `InstallPlan`)
 
 | File | Why |
 |---|---|
-| `src/harness_library/domain/install_plan.py` | new. Holds `Verdict`, the equality table, the presence rule, `PlanEntry`, `InstallPlan`. One module, because the verdict vocabulary and the entity that carries it are one decision — splitting them would let a rename land on one side only |
+| `src/loom/domain/install_plan.py` | new. Holds `Verdict`, the equality table, the presence rule, `PlanEntry`, `InstallPlan`. One module, because the verdict vocabulary and the entity that carries it are one decision — splitting them would let a rename land on one side only |
 | `tests/domain/test_install_plan.py` | new |
 | `tests/domain/test_purity.py` | one line: `install_plan` joins `EXPECTED_MODULES` (L13, L18) |
 
@@ -64,7 +64,7 @@ manifest differs from target, library equals target — maps to `Verdict.UNCHANG
 `Verdict.MANIFEST_REPAIR`. Must fail: the manifest-stale row of the equality table, by verdict
 value. Must stay green: every other row.
 
-While the mutation was applied, `src/harness_library/domain/install_plan.py` was deliberately
+While the mutation was applied, `src/loom/domain/install_plan.py` was deliberately
 wrong; the backup was taken at
 `…/scratchpad/install_plan.py.orig` and the file restored from that copy rather than from memory of
 the edit. A red gate here with an otherwise complete diff would be a mutation in flight, not
@@ -104,10 +104,10 @@ Realises contract **C-11** (`Manifest`), **C-14** (five install exit statuses) a
 
 | File | Why |
 |---|---|
-| `src/harness_library/domain/manifest.py` | new. `Manifest` and `ManifestArtifact` — C-11's entity, pure, reusing C-1's `ArtifactFile`. A module of its own rather than a section of `install_plan.py`: the plan is a *judgement* and the manifest is a *record*, and T-18's rollback and T-19's prune read the record without ever building a plan |
-| `src/harness_library/domain/errors.py` | five `ErrorCode` members, and **one** exception class — `ManifestError`, the only one this task emits |
-| `src/harness_library/cli/exit_codes.py` | five statuses and their five `EXIT_STATUS` rows. Nothing else |
-| `src/harness_library/infrastructure/manifest_store.py` | new. Where the manifest is, how it is written, and the loudly-failing reader |
+| `src/loom/domain/manifest.py` | new. `Manifest` and `ManifestArtifact` — C-11's entity, pure, reusing C-1's `ArtifactFile`. A module of its own rather than a section of `install_plan.py`: the plan is a *judgement* and the manifest is a *record*, and T-18's rollback and T-19's prune read the record without ever building a plan |
+| `src/loom/domain/errors.py` | five `ErrorCode` members, and **one** exception class — `ManifestError`, the only one this task emits |
+| `src/loom/cli/exit_codes.py` | five statuses and their five `EXIT_STATUS` rows. Nothing else |
+| `src/loom/infrastructure/manifest_store.py` | new. Where the manifest is, how it is written, and the loudly-failing reader |
 | `tests/domain/test_manifest.py` · `tests/infrastructure/test_manifest_store.py` | new |
 | `tests/domain/test_purity.py` | one line: `manifest` joins `EXPECTED_MODULES` (L13, L18) |
 | `tests/cli/test_exit_codes.py` | **added to, never altered.** Two new tests over the five new rows; every existing test is untouched and must stay green |
@@ -125,7 +125,7 @@ No dependency change. The manifest is JSON — `json` is stdlib, so L17's PyYAML
   required key is missing. Also `ManifestError`, carrying the **field path** inside the document.
 
 `None` rather than `Manifest.empty()` for the absent case, which is where this reader parts company
-with `read_library_metadata`. An empty manifest is a **real value**: after `hl uninstall` the target
+with `read_library_metadata`. An empty manifest is a **real value**: after `loom uninstall` the target
 has a manifest recording zero artifacts, and that is not the same fact as "this target was never
 installed into". Collapsing them would cost T-18 and T-19 the distinction, and would make the
 mutation below unable to tell its two tests apart.
@@ -149,7 +149,7 @@ binary manifest is reported as "not UTF-8 text" and never as a syntax error at l
 
 ## 4. Keying, and R43
 
-`~/.local/state/harness-library/manifests/<sha256 of the target path>.json`, per DEC-14.
+`~/.local/state/loom/manifests/<sha256 of the target path>.json`, per DEC-14.
 
 * the hashed string is `str(Path(target).resolve())`, so `~/.claude`, `~/.claude/` and a relative
   spelling of the same directory key the same manifest, and two different directories key two
@@ -159,7 +159,7 @@ binary manifest is reported as "not UTF-8 text" and never as a syntax error at l
   hashing implementation, and a second one here would drift exactly where it matters.
 * the **state root is a parameter**, never read from the environment inside the store. Every test
   passes `tmp_path`. `default_state_root()` exists beside it, computes `~/.local/state/
-  harness-library` and creates nothing; the composition root (T-22) is what calls it.
+  loom-machine` and creates nothing; the composition root (T-22) is what calls it.
   Charter §13 keeps `os.environ` in `cli/settings.py`, so `$XDG_STATE_HOME` is **not** consulted —
   flagged as an open point rather than decided here.
 * the writer is **atomic**: a sibling temp file plus `os.replace`. A crash mid-write is precisely
@@ -168,7 +168,7 @@ binary manifest is reported as "not UTF-8 text" and never as a syntax error at l
 ## 5. `schema_version`, and what it is not
 
 The document carries `"schema_version": 1`. This is a **document** field and not a `Manifest`
-field — C-11's entity is untouched. Without it, a manifest written by a later `hl` reads as
+field — C-11's entity is untouched. Without it, a manifest written by a later `loom` reads as
 "unknown key", which is the diagnosis for corruption and the wrong thing to tell a user whose file
 is fine. Flagged to the lead: the contract did not ask for it and did not forbid it.
 
@@ -229,9 +229,9 @@ target fixture). Also closes ruling **R60** on `PlanEntry.artifact_id`.
 
 | File | Why |
 |---|---|
-| `src/harness_library/domain/target.py` | new. `TargetFile` and the `TargetRepository` protocol. C-12 puts the protocol in `domain/`, so it lands beside C-4's `ArtifactRepository` and is satisfied structurally, never inherited |
-| `src/harness_library/infrastructure/target.py` | new. `FilesystemTargetRepository` — the walk, the hashing, and the four path operations |
-| `src/harness_library/domain/install_plan.py` | **one change only**: `PlanEntry.artifact_id` and `plan_entry_for`'s parameter become `str \| None` (R60), with the docstring that described the empty string corrected in the same edit |
+| `src/loom/domain/target.py` | new. `TargetFile` and the `TargetRepository` protocol. C-12 puts the protocol in `domain/`, so it lands beside C-4's `ArtifactRepository` and is satisfied structurally, never inherited |
+| `src/loom/infrastructure/target.py` | new. `FilesystemTargetRepository` — the walk, the hashing, and the four path operations |
+| `src/loom/domain/install_plan.py` | **one change only**: `PlanEntry.artifact_id` and `plan_entry_for`'s parameter become `str \| None` (R60), with the docstring that described the empty string corrected in the same edit |
 | `tests/domain/test_target.py` · `tests/infrastructure/test_target.py` | new |
 | `tests/domain/test_purity.py` | one line: `target` joins `EXPECTED_MODULES` (L13, L18) |
 | `tests/domain/test_install_plan.py` | **one test changed**, named in §6 below |
@@ -302,7 +302,7 @@ is untouched.
 ## 7. Mutation checks (L35 — read this if the session was interrupted)
 
 Two, because the dispatch and the initiative plan's §9 row name different ones. Both are one-line
-edits to `src/harness_library/infrastructure/target.py`, backed up first to
+edits to `src/loom/infrastructure/target.py`, backed up first to
 `…/scratchpad/target.py.orig` and restored from that copy rather than from memory of the edit.
 
 **(a) the dispatch's.** `scan()` reports `is_symlink=False` for every entry.
@@ -364,13 +364,13 @@ artifact_id` rejects `""`) and **R68** (`TargetFile.sha256` becomes `str | None`
 
 | File | Why |
 |---|---|
-| `src/harness_library/application/read/drift.py` | new. `diff_against_target`, and the join — `target_path_of`, `target_sha_of`, `UNHASHED_TARGET_SHA` |
-| `src/harness_library/application/read/__init__.py` | re-exports the four new names, per this package's rule that a caller never has to know which module a name lives in |
-| `src/harness_library/application/write/install.py` | new. `plan_install` — the first module in `application/write/` |
-| `src/harness_library/application/write/__init__.py` | re-exports `plan_install` |
-| `src/harness_library/domain/install_plan.py` | **one guard only**: `PlanEntry.__post_init__` rejects `artifact_id=""` (R69) |
-| `src/harness_library/domain/target.py` | **R68**: `sha256: str \| None`, the one-way invariant restated against `None` |
-| `src/harness_library/infrastructure/target.py` | **R68's third mirror.** `NO_DIGEST` becomes `None`. Outside the dispatch's constraint list and done anyway — see §3 |
+| `src/loom/application/read/drift.py` | new. `diff_against_target`, and the join — `target_path_of`, `target_sha_of`, `UNHASHED_TARGET_SHA` |
+| `src/loom/application/read/__init__.py` | re-exports the four new names, per this package's rule that a caller never has to know which module a name lives in |
+| `src/loom/application/write/install.py` | new. `plan_install` — the first module in `application/write/` |
+| `src/loom/application/write/__init__.py` | re-exports `plan_install` |
+| `src/loom/domain/install_plan.py` | **one guard only**: `PlanEntry.__post_init__` rejects `artifact_id=""` (R69) |
+| `src/loom/domain/target.py` | **R68**: `sha256: str \| None`, the one-way invariant restated against `None` |
+| `src/loom/infrastructure/target.py` | **R68's third mirror.** `NO_DIGEST` becomes `None`. Outside the dispatch's constraint list and done anyway — see §3 |
 | `tests/application/fakes.py` | `FakeTargetRepository` (C-12) and the builders the drift tests read from |
 | `tests/application/test_drift.py` · `tests/application/test_install.py` | new |
 | `tests/test_architecture.py` | the module-path guard — the **only** thing that catches mutation (a) |
@@ -481,8 +481,8 @@ so the mutation cannot pass by making everything foreign.
 
 Under (a), the filter gave `1 failed, 4 passed`:
 `test_every_write_use_case_is_defined_in_the_write_package[plan_install]` failed with
-*"plan_install is exported from harness_library.application.write but defined in
-harness_library.application.read.drift"*, and `lint-imports` **stayed green** — run on its own it
+*"plan_install is exported from loom.application.write but defined in
+loom.application.read.drift"*, and `lint-imports` **stayed green** — run on its own it
 still reported `layered-architecture KEPT · mcp-is-read-only KEPT · domain-is-pure KEPT`, exit 0.
 That is the finding, not an accident: the contract forbids a module path and cannot see which
 functions are in it, so this one test is the whole guard. Restored: `5 passed`.
@@ -521,15 +521,15 @@ guard onto `ManifestArtifact`) and **R75** (an ERROR finding makes an artifact `
 
 | File | Why |
 |---|---|
-| `src/harness_library/domain/backup.py` | new. C-13's `BackupRecord` and `BackupStore`. A module of its own rather than a section of `manifest.py`: a backup is a *copy of a target*, a manifest is a *record of an install*, and T-18 restores one without reading the other. Costs one line in `tests/domain/test_purity.py` (L13, L18) |
-| `src/harness_library/domain/manifest.py` | **R74**'s guard on `ManifestArtifact.__post_init__`, and the **`ManifestStore` protocol** — see §3, it is the one seam no contract named |
-| `src/harness_library/domain/registry.py` | **R73**. `target_path_of` lands beside `root_path` and `entry_path`, the third answer in the same family |
-| `src/harness_library/domain/errors.py` | `MANIFEST_UNWRITABLE` (C-14, R64) and three classes for codes that have been in the contract since T-13: `BackupFailedError`, `TargetUnwritableError`, `ManifestWriteError` |
-| `src/harness_library/cli/exit_codes.py` | `MANIFEST_UNWRITABLE = 11` and its row. I-8 keeps the table total |
-| `src/harness_library/infrastructure/backup.py` | new. `FilesystemBackupStore` under the state root |
-| `src/harness_library/infrastructure/manifest_store.py` | `FilesystemManifestStore` — the protocol over the module functions already here |
-| `src/harness_library/application/write/install.py` | `apply_install`, `ApplyResult`, and R75's narrowing on `plan_install` |
-| `src/harness_library/application/read/drift.py` · `read/__init__.py` | R73's mirrors. This **deletes** a function |
+| `src/loom/domain/backup.py` | new. C-13's `BackupRecord` and `BackupStore`. A module of its own rather than a section of `manifest.py`: a backup is a *copy of a target*, a manifest is a *record of an install*, and T-18 restores one without reading the other. Costs one line in `tests/domain/test_purity.py` (L13, L18) |
+| `src/loom/domain/manifest.py` | **R74**'s guard on `ManifestArtifact.__post_init__`, and the **`ManifestStore` protocol** — see §3, it is the one seam no contract named |
+| `src/loom/domain/registry.py` | **R73**. `target_path_of` lands beside `root_path` and `entry_path`, the third answer in the same family |
+| `src/loom/domain/errors.py` | `MANIFEST_UNWRITABLE` (C-14, R64) and three classes for codes that have been in the contract since T-13: `BackupFailedError`, `TargetUnwritableError`, `ManifestWriteError` |
+| `src/loom/cli/exit_codes.py` | `MANIFEST_UNWRITABLE = 11` and its row. I-8 keeps the table total |
+| `src/loom/infrastructure/backup.py` | new. `FilesystemBackupStore` under the state root |
+| `src/loom/infrastructure/manifest_store.py` | `FilesystemManifestStore` — the protocol over the module functions already here |
+| `src/loom/application/write/install.py` | `apply_install`, `ApplyResult`, and R75's narrowing on `plan_install` |
+| `src/loom/application/read/drift.py` · `read/__init__.py` | R73's mirrors. This **deletes** a function |
 | `tests/domain/test_backup.py` · `tests/infrastructure/test_backup.py` | new |
 | `tests/application/fakes.py` | `FakeBackupStore`, `FakeManifestStore`, and real bytes behind `FakeTargetRepository` so "byte-identical" is an assertion over content and not over a recording |
 | `tests/domain/test_registry.py` · `test_manifest.py` · `test_purity.py` · `tests/infrastructure/test_manifest_store.py` · `tests/application/test_drift.py` · `test_install.py` · `tests/test_architecture.py` · `tests/cli/test_exit_codes.py` | the mirrors, each named in §7 |
@@ -548,7 +548,7 @@ No dependency change; everything used is stdlib or already imported in `infrastr
 
 **The manifest is written before the first file and that is the whole ordering.** A crash between
 the two can only make the manifest *over*-claim, and over-claiming is self-correcting: a path the
-manifest names that was never written comes back `LOCAL_EDIT` or `CONFLICT` on the next `hl diff`,
+manifest names that was never written comes back `LOCAL_EDIT` or `CONFLICT` on the next `loom diff`,
 which is a decision the user is asked to make. The other order loses files: a crash after the last
 write and before the manifest leaves every installed path held by neither the library's record nor
 the manifest, so it reads `FOREIGN` — install will not touch it and uninstall cannot remove it, and
@@ -612,7 +612,7 @@ plan* — with the positive control in the same test.
 ## 6. Mutation checks (L35 — read this if the session was interrupted)
 
 Three, each named in the dispatch and in the plan's §9. All three are one-line edits to
-`src/harness_library/application/write/install.py`, backed up first to
+`src/loom/application/write/install.py`, backed up first to
 `…/scratchpad/install.py.orig` and restored from that copy rather than from memory of the edit.
 
 **(a)** the manifest is written **after** the files instead of before.
@@ -697,11 +697,11 @@ duration of an apply, released on exit, stale-broken by a pid check — and adds
 
 | File | Why |
 |---|---|
-| `src/harness_library/domain/lock.py` | new. The `WriteLock` protocol, one member. A module of its own rather than a section of `manifest.py`: the lock is *not* the record, and T-18's rollback will take it without reading a manifest. Costs one line in `tests/domain/test_purity.py` (L13, L18) |
-| `src/harness_library/domain/errors.py` | `TARGET_UNREADABLE` (R81) and the `LockHeldError` class over the `LOCK_HELD` code T-13 put in the contract |
-| `src/harness_library/cli/exit_codes.py` | `TARGET_UNREADABLE = 12` and its row. I-8 keeps the table total |
-| `src/harness_library/infrastructure/lock.py` | new. `FilesystemWriteLock` — the sentinel, the pid check, the release |
-| `src/harness_library/application/write/install.py` | `apply_install` gains a required keyword-only `lock` and wraps its whole body in it |
+| `src/loom/domain/lock.py` | new. The `WriteLock` protocol, one member. A module of its own rather than a section of `manifest.py`: the lock is *not* the record, and T-18's rollback will take it without reading a manifest. Costs one line in `tests/domain/test_purity.py` (L13, L18) |
+| `src/loom/domain/errors.py` | `TARGET_UNREADABLE` (R81) and the `LockHeldError` class over the `LOCK_HELD` code T-13 put in the contract |
+| `src/loom/cli/exit_codes.py` | `TARGET_UNREADABLE = 12` and its row. I-8 keeps the table total |
+| `src/loom/infrastructure/lock.py` | new. `FilesystemWriteLock` — the sentinel, the pid check, the release |
+| `src/loom/application/write/install.py` | `apply_install` gains a required keyword-only `lock` and wraps its whole body in it |
 | `tests/domain/test_lock.py` · `tests/infrastructure/test_lock.py` · `tests/test_single_writer.py` | new |
 | `tests/application/fakes.py` · `tests/application/test_install.py` · `tests/domain/test_purity.py` · `tests/cli/test_exit_codes.py` | the mirrors, each named in §7 |
 
@@ -771,13 +771,13 @@ Two. Each is a one-line edit backed up first to `…/scratchpad/<name>.orig` and
 copy. **No file is mutated as this plan is written**, and both modules match their backup by md5: `install.py` `9c16d304baf905f385f526d5e9a5c532`, `lock.py` `7349edd749eebb0c3e7f4b86e9f15678`.
 
 **(a)** the plan's named row — the lock is released **before** the write instead of after
-(`src/harness_library/application/write/install.py`: `with lock.hold(): pass` and the body after
+(`src/loom/application/write/install.py`: `with lock.hold(): pass` and the body after
 it). Must fail: `test_a_second_apply_against_a_held_lock_writes_nothing`, on the target's hash
 set *and* on the status. Must stay green: `test_a_single_apply_writes_every_file_and_leaves_no_sentinel` —
 without it, "the lock is never taken" and "the lock is released too early" look the same.
 
 **(b)** mine — the pid check never breaks a sentinel
-(`src/harness_library/infrastructure/lock.py`: `_is_running` returns `True` unconditionally).
+(`src/loom/infrastructure/lock.py`: `_is_running` returns `True` unconditionally).
 Must fail: `test_a_stale_sentinel_whose_process_is_gone_is_broken_and_the_apply_proceeds`. Named
 precisely, because the shape matters: under this mutation the dead holder reads as alive, so the
 apply is **refused** with `LockHeldError` where it should have proceeded — the failure is at the
@@ -842,10 +842,10 @@ contracts **C-11**, **C-12**, **C-13**, **C-15** and **C-16**. Rulings **R79**, 
 
 | File | Why |
 |---|---|
-| `src/harness_library/application/write/rollback.py` | new. `rollback_install`, `RollbackResult`. A module of its own rather than a section of `install.py`: rollback never reads the library and never builds a plan, and the one thing it shares with apply is the lock |
-| `src/harness_library/application/write/uninstall.py` | new. `uninstall_artifact`, `UninstallResult`. Separate from rollback for the same reason those two are separate from apply: uninstall never reads a backup record and rollback never reads an artifact id |
-| `src/harness_library/application/write/__init__.py` | re-exports the four new names |
-| `src/harness_library/domain/errors.py` | **two classes, no new code.** `BackupNotFoundError` over `BACKUP_FAILED` and `RestoreFailedError` over `TARGET_UNWRITABLE`. Charter §9 fixes the direction — a code may arrive before its class, never the reverse — and both codes have been in the contract since T-13. `cli/exit_codes.py` is **untouched**: no `ErrorCode` member is added, so I-8 stays total on its own |
+| `src/loom/application/write/rollback.py` | new. `rollback_install`, `RollbackResult`. A module of its own rather than a section of `install.py`: rollback never reads the library and never builds a plan, and the one thing it shares with apply is the lock |
+| `src/loom/application/write/uninstall.py` | new. `uninstall_artifact`, `UninstallResult`. Separate from rollback for the same reason those two are separate from apply: uninstall never reads a backup record and rollback never reads an artifact id |
+| `src/loom/application/write/__init__.py` | re-exports the four new names |
+| `src/loom/domain/errors.py` | **two classes, no new code.** `BackupNotFoundError` over `BACKUP_FAILED` and `RestoreFailedError` over `TARGET_UNWRITABLE`. Charter §9 fixes the direction — a code may arrive before its class, never the reverse — and both codes have been in the contract since T-13. `cli/exit_codes.py` is **untouched**: no `ErrorCode` member is added, so I-8 stays total on its own |
 | `tests/application/test_rollback.py` · `tests/application/test_uninstall.py` | new. Fakes only, zero disk |
 | `tests/application/fakes.py` | `FakeBackupStore` gains a real restore over a `FakeTargetRepository`, and `FakeManifestStore` is unchanged. See §5 |
 | `tests/test_rollback.py` | new, and **cross-layer by necessity** — see §5. The one place the restore is real |
@@ -927,7 +927,7 @@ stays behind as an empty directory. An `artifact_id` the manifest does not recor
 |---|---|
 | **What the manifest says after a rollback** | composed from a scan of the restored target (§2). C-11 keeps one manifest per target and `ManifestStore` has no `read`, so the pre-apply record is genuinely gone; the restored disk is the only source there is |
 | Which backup a rollback restores | an explicit `backup_id`, required and keyword-only. `Manifest.backup_id` is the obvious default and is **not** taken as one: `backups.list()` offers older backups too, and the caller choosing is the difference between "undo the last install" and "undo the last *three*" |
-| **Does uninstall take a backup** | **yes** — the one decision outside the dispatch's letter, and separable in one parameter. Uninstall is the most destructive operation this tool has, and F-9's argument ("a write with no way back is the failure mode this initiative exists to remove") applies to a delete without modification. It is also what makes `hl rollback` able to undo an `hl uninstall`, which is the only thing that makes the pair coherent. Flagged to the lead |
+| **Does uninstall take a backup** | **yes** — the one decision outside the dispatch's letter, and separable in one parameter. Uninstall is the most destructive operation this tool has, and F-9's argument ("a write with no way back is the failure mode this initiative exists to remove") applies to a delete without modification. It is also what makes `loom rollback` able to undo an `loom uninstall`, which is the only thing that makes the pair coherent. Flagged to the lead |
 | A path the manifest records whose target copy was **edited** | removed like any other. The dispatch fixes the criterion — "exactly what the manifest records for that artifact and nothing else" — and the backup above is what makes it recoverable. Flagged: refusing an edited path would need `INCOMPLETE`'s vocabulary and T-21's `--force`, and it is a ruling, not a task-level choice |
 | A backup id that names nothing | `BackupNotFoundError`, code `BACKUP_FAILED`, exit 9 — the status whose remedy is already "go and look at where backups live". A new class over an existing code, which is the shape T-16 and T-17 both used |
 | `OSError` out of `restore` | `RestoreFailedError`, code `TARGET_UNWRITABLE`, exit 7 — C-13 documents that `OSError` there means the target could not be written. It carries the **backup id** and not a path, because C-13 restores as a unit and the failing path is not something the seam reports. R83: a plain OS fact, coded in `application/` |
@@ -965,7 +965,7 @@ Two, both named in the dispatch and each run alone with `-k` (L42). Each file is
 memory of the edit.
 
 **(a)** rollback restores only the paths the target currently holds —
-`src/harness_library/infrastructure/backup.py`, `restore`, the `elif self._target.exists(path)`
+`src/loom/infrastructure/backup.py`, `restore`, the `elif self._target.exists(path)`
 branch removed, so a path the backup holds no bytes for is skipped instead of deleted.
 Must fail: `tests/test_rollback.py::test_rolling_back_a_first_install_empties_the_target_again`,
 asserted **per path**.
@@ -974,7 +974,7 @@ which the mutation does not touch — so "restores nothing" and "restores only o
 distinguishable.
 
 **(b)** uninstall removes the whole artifact directory —
-`src/harness_library/application/write/uninstall.py`, the removal list taken from a target scan
+`src/loom/application/write/uninstall.py`, the removal list taken from a target scan
 under the artifact's root instead of from the manifest's file list.
 Must fail: `tests/application/test_uninstall.py::test_a_foreign_file_under_the_artifacts_root_survives`,
 asserted on the foreign file's **bytes**.
@@ -1048,15 +1048,15 @@ Realises **F-10**'s second half (`clean --foreign`) and **F-12**'s `--prune`, ov
 
 | File | Why |
 |---|---|
-| `src/harness_library/application/write/prune.py` | new. `prune_target`, `PruneResult`, `pruned_entries`. §2 argues why it is a use case and not a mode |
-| `src/harness_library/application/write/clean.py` | new. `clean_foreign`, `CleanResult`, `foreign_entries` |
-| `src/harness_library/application/write/install.py` | **one line.** `apply --prune` selects its entries through `pruned_entries`, so "which entries are pruned" has one spelling and not two. No behaviour change |
-| `src/harness_library/application/write/rollback.py` · `uninstall.py` | the manifest write after the work raises `RecordStaleError` instead of a bare `OSError` — R90 is the plan-level decision both modules' docstrings said they were waiting for |
-| `src/harness_library/application/write/__init__.py` | re-exports the four new names |
-| `src/harness_library/domain/errors.py` | `ErrorCode.RECORD_STALE` and `RecordStaleError` (R90) |
-| `src/harness_library/cli/exit_codes.py` | `RECORD_STALE = 13` and its `EXIT_STATUS` row. I-8 makes the table total, so the row lands in the same edit as the code |
-| `src/harness_library/domain/backup.py` | **C-13 amended (R92).** `BackupRecord.kept` — the paths the backup holds bytes for |
-| `src/harness_library/infrastructure/backup.py` | writes and reads `kept`; `SCHEMA_VERSION` 1 → 2; `restore` pre-flights the kept set |
+| `src/loom/application/write/prune.py` | new. `prune_target`, `PruneResult`, `pruned_entries`. §2 argues why it is a use case and not a mode |
+| `src/loom/application/write/clean.py` | new. `clean_foreign`, `CleanResult`, `foreign_entries` |
+| `src/loom/application/write/install.py` | **one line.** `apply --prune` selects its entries through `pruned_entries`, so "which entries are pruned" has one spelling and not two. No behaviour change |
+| `src/loom/application/write/rollback.py` · `uninstall.py` | the manifest write after the work raises `RecordStaleError` instead of a bare `OSError` — R90 is the plan-level decision both modules' docstrings said they were waiting for |
+| `src/loom/application/write/__init__.py` | re-exports the four new names |
+| `src/loom/domain/errors.py` | `ErrorCode.RECORD_STALE` and `RecordStaleError` (R90) |
+| `src/loom/cli/exit_codes.py` | `RECORD_STALE = 13` and its `EXIT_STATUS` row. I-8 makes the table total, so the row lands in the same edit as the code |
+| `src/loom/domain/backup.py` | **C-13 amended (R92).** `BackupRecord.kept` — the paths the backup holds bytes for |
+| `src/loom/infrastructure/backup.py` | writes and reads `kept`; `SCHEMA_VERSION` 1 → 2; `restore` pre-flights the kept set |
 | `tests/application/test_prune.py` · `tests/application/test_clean.py` | new. Fakes only, zero disk |
 | `tests/test_clean.py` | new, cross-layer by necessity — §5 |
 | `tests/application/fakes.py` | `FakeBackupStore` records its kept set; nothing else changes |
@@ -1067,7 +1067,7 @@ change.
 
 ## 2. Prune is a use case, not a mode
 
-`apply --prune` and `hl prune` remove the same paths and cannot be the same function, for one
+`apply --prune` and `loom prune` remove the same paths and cannot be the same function, for one
 reason that is not a matter of taste: **they record at opposite ends of the run.** Apply makes
 files appear and writes its manifest first (R63); prune only makes files disappear and writes its
 manifest last (charter §13b, R86). A `prune`-shaped mode of apply would need apply to hold two
@@ -1259,16 +1259,16 @@ charter §13b) and **R94** (a backup cannot capture a symlink). Rulings **R6**, 
 
 | File | Why |
 |---|---|
-| `src/harness_library/domain/raw.py` | `SymlinkedRoot` and `LibraryScan`. **No new domain module**, so `tests/domain/test_purity.py` is untouched (L13, L18) |
-| `src/harness_library/domain/validation.py` | **C-3 amended.** `ValidationCode.V11`, its `SEVERITY_BY_CODE` row (WARNING), and the `path` attribute docstring, which V11 widens |
-| `src/harness_library/domain/assembly.py` | `_check_v11`, `assemble_library(..., symlinked_roots=())`, and the `AssembledLibrary.findings` docstring, **which enumerates its members** |
-| `src/harness_library/infrastructure/scanner.py` | detection in `_scan_type`; `scan_library` now returns `LibraryScan` |
-| `src/harness_library/infrastructure/repository.py` | hands the symlinked roots to the assembler; additive `symlinked_roots()`, **not** a C-4 member |
-| `src/harness_library/application/write/install.py` | `plan_install` takes `unscannable`, required and keyword-only; `_skip_unscannable_roots`; **R93's double record write** on the prune path |
-| `src/harness_library/application/read/dtos.py` | `FindingPayload`'s docstring enumerates the code range — inside frozen C-7, so the text and nothing else |
-| `src/harness_library/domain/backup.py` | **C-13 amended (R94).** `BackupRecord.links` — a described path's symlink destination |
-| `src/harness_library/infrastructure/backup.py` | `create` records a link's destination, `restore` recreates it as a link; `SCHEMA_VERSION` 2 → 3 |
-| `src/harness_library/infrastructure/target.py` | `read_link` / `write_link` on the **concrete class only**. C-12's protocol keeps its five members |
+| `src/loom/domain/raw.py` | `SymlinkedRoot` and `LibraryScan`. **No new domain module**, so `tests/domain/test_purity.py` is untouched (L13, L18) |
+| `src/loom/domain/validation.py` | **C-3 amended.** `ValidationCode.V11`, its `SEVERITY_BY_CODE` row (WARNING), and the `path` attribute docstring, which V11 widens |
+| `src/loom/domain/assembly.py` | `_check_v11`, `assemble_library(..., symlinked_roots=())`, and the `AssembledLibrary.findings` docstring, **which enumerates its members** |
+| `src/loom/infrastructure/scanner.py` | detection in `_scan_type`; `scan_library` now returns `LibraryScan` |
+| `src/loom/infrastructure/repository.py` | hands the symlinked roots to the assembler; additive `symlinked_roots()`, **not** a C-4 member |
+| `src/loom/application/write/install.py` | `plan_install` takes `unscannable`, required and keyword-only; `_skip_unscannable_roots`; **R93's double record write** on the prune path |
+| `src/loom/application/read/dtos.py` | `FindingPayload`'s docstring enumerates the code range — inside frozen C-7, so the text and nothing else |
+| `src/loom/domain/backup.py` | **C-13 amended (R94).** `BackupRecord.links` — a described path's symlink destination |
+| `src/loom/infrastructure/backup.py` | `create` records a link's destination, `restore` recreates it as a link; `SCHEMA_VERSION` 2 → 3 |
+| `src/loom/infrastructure/target.py` | `read_link` / `write_link` on the **concrete class only**. C-12's protocol keeps its five members |
 | `tests/fixtures/library/skills/linked-skill` → `../../outside/linked-skill` | the committed symlinked root. **Points at a real directory** (L21) |
 | `tests/fixtures/outside/linked-skill/SKILL.md` | its destination: a skill that would load perfectly, which is what makes the omission a fault |
 | `tests/test_symlinked_root.py` | new, cross-layer by necessity — §4 |
@@ -1495,16 +1495,16 @@ carries **R97**'s two contract corrections: `symlinked_roots()` into **C-4** and
 
 | File | Why |
 |---|---|
-| `src/harness_library/domain/resolution.py` | new. `Resolution` (which side), `ConflictVersions` (what a comparison shows) and the `ConflictEditor` protocol. A module of its own rather than a section of `install_plan.py`: the plan is a *judgement* and this is a *decision the user makes about one*, and the seam belongs beside the vocabulary it carries, exactly as `TargetRepository` sits beside `TargetFile`. Costs one line in `tests/domain/test_purity.py` (L13, L18) |
-| `src/harness_library/domain/install_plan.py` | **one register.** `RESOLVABLE_VERDICTS`, beside `BLOCKING_VERDICTS`. Additive; C-9 and C-10 are untouched |
-| `src/harness_library/domain/repository.py` | **C-4 amended (R97).** `symlinked_roots()` becomes the seventh member |
-| `src/harness_library/domain/target.py` | **C-12 amended (R97).** `read_link` and `write_link` become the sixth and seventh members |
-| `src/harness_library/domain/errors.py` | **two classes, no new code.** `NothingToResolveError` over `ARTIFACT_NOT_FOUND`, and **`TargetUnreadableError` over `TARGET_UNREADABLE`** — R81 put that code in the contract in T-17 with no emitter, and `resolve target` is the emitter: keeping what is on disk means reading it. `cli/exit_codes.py` is **untouched**, because no `ErrorCode` member is added and I-8 stays total on its own |
-| `src/harness_library/application/write/resolve.py` | new. `resolve_conflict` / `ResolveResult` and `compare_versions` / `ComparisonResult` |
-| `src/harness_library/application/read/export.py` | new. `export_collection` / `ExportedCollection`. **`read/`, per spec §5** — and `mcp-is-read-only` cannot see the difference, so `tests/test_architecture.py` is the only guard (T-15's mutation proved it) |
-| `src/harness_library/application/write/__init__.py` · `read/__init__.py` | the re-exports |
-| `src/harness_library/infrastructure/repository.py` · `target.py` | the three members stop being "additive, flagged" and become contract |
-| `src/harness_library/infrastructure/editor.py` | new. `SubprocessConflictEditor` — materialises both versions and launches the editor command. **The command is a constructor parameter**: charter §13 keeps `os.environ` in `cli/settings.py`, which is outside this task's territory, so T-22 reads `$EDITOR` and passes it |
+| `src/loom/domain/resolution.py` | new. `Resolution` (which side), `ConflictVersions` (what a comparison shows) and the `ConflictEditor` protocol. A module of its own rather than a section of `install_plan.py`: the plan is a *judgement* and this is a *decision the user makes about one*, and the seam belongs beside the vocabulary it carries, exactly as `TargetRepository` sits beside `TargetFile`. Costs one line in `tests/domain/test_purity.py` (L13, L18) |
+| `src/loom/domain/install_plan.py` | **one register.** `RESOLVABLE_VERDICTS`, beside `BLOCKING_VERDICTS`. Additive; C-9 and C-10 are untouched |
+| `src/loom/domain/repository.py` | **C-4 amended (R97).** `symlinked_roots()` becomes the seventh member |
+| `src/loom/domain/target.py` | **C-12 amended (R97).** `read_link` and `write_link` become the sixth and seventh members |
+| `src/loom/domain/errors.py` | **two classes, no new code.** `NothingToResolveError` over `ARTIFACT_NOT_FOUND`, and **`TargetUnreadableError` over `TARGET_UNREADABLE`** — R81 put that code in the contract in T-17 with no emitter, and `resolve target` is the emitter: keeping what is on disk means reading it. `cli/exit_codes.py` is **untouched**, because no `ErrorCode` member is added and I-8 stays total on its own |
+| `src/loom/application/write/resolve.py` | new. `resolve_conflict` / `ResolveResult` and `compare_versions` / `ComparisonResult` |
+| `src/loom/application/read/export.py` | new. `export_collection` / `ExportedCollection`. **`read/`, per spec §5** — and `mcp-is-read-only` cannot see the difference, so `tests/test_architecture.py` is the only guard (T-15's mutation proved it) |
+| `src/loom/application/write/__init__.py` · `read/__init__.py` | the re-exports |
+| `src/loom/infrastructure/repository.py` · `target.py` | the three members stop being "additive, flagged" and become contract |
+| `src/loom/infrastructure/editor.py` | new. `SubprocessConflictEditor` — materialises both versions and launches the editor command. **The command is a constructor parameter**: charter §13 keeps `os.environ` in `cli/settings.py`, which is outside this task's territory, so T-22 reads `$EDITOR` and passes it |
 | `tests/application/test_resolve.py` · `test_export.py` | new. Fakes only, zero disk |
 | `tests/test_export.py` | new, cross-layer by necessity — §6 |
 | `tests/domain/test_resolution.py` | new |
@@ -1536,7 +1536,7 @@ machine, and that contract is a statement about a *package*.
 **Both take the lock** (R82, C-16), required and keyword-only. For `compare_versions` that is not
 ceremony: while the user is looking at two versions of a path, no apply may move it underneath
 them. The cost is that the lock is held for as long as the editor runs, so a concurrent
-`hl install` exits `LOCK_HELD = 10` — correct, and flagged.
+`loom install` exits `LOCK_HELD = 10` — correct, and flagged.
 
 **Resolution is per artifact.** The entries acted on are exactly those whose `artifact_id` is the
 one named and whose verdict is in `RESOLVABLE_VERDICTS`. Another artifact's conflict is not in the
@@ -1599,7 +1599,7 @@ nothing on disk to disown.
 **The backup (R88).** `resolve library` takes one, of exactly the paths it will write, and refuses
 to run without it. Against: the user named this artifact and this side, so the overwrite is
 deliberate. For: this is the only operation in the project that destroys a user's *edit* — apply
-refuses precisely these paths for that reason — and `hl uninstall` is just as deliberate and takes
+refuses precisely these paths for that reason — and `loom uninstall` is just as deliberate and takes
 one anyway. F-9's sentence applies without modification, so it takes one.
 `resolve target` takes **none**: it writes no file, so there is no target path to copy, and the only
 thing that changes is a record no backup in this project describes.
@@ -1638,7 +1638,7 @@ Nothing writes to `~/.claude/`; every state root is `tmp_path`.
 
 ## 7. Mutation checks (L35 — read this if the session was interrupted)
 
-Two, each run alone with `-k` (L42). `src/harness_library/application/write/resolve.py` is copied
+Two, each run alone with `-k` (L42). `src/loom/application/write/resolve.py` is copied
 to `…/scratchpad/resolve.py.t21.orig` before it is mutated and restored from that copy rather than
 from memory of the edit. **If this session was interrupted, that is the file that was under
 mutation; compare it against its `.t21.orig` copy.**
@@ -1753,13 +1753,13 @@ at the process boundary and amends C-14 with **`EDITOR_FAILED = 14`** (R102). Ru
 
 | File | Why |
 |---|---|
-| `src/harness_library/domain/errors.py` | **one code, one class.** `ErrorCode.EDITOR_FAILED` and `EditorFailedError`. R102: T-21 correctly let the editor's `OSError` out rather than mislabel it, and without a code the user gets a traceback |
-| `src/harness_library/cli/exit_codes.py` | `EDITOR_FAILED = 14` and its `EXIT_STATUS` row. I-8 makes the table total over `ErrorCode`, so the row and the member land in one edit |
-| `src/harness_library/cli/settings.py` | **`$EDITOR`, R104.** Charter §13 keeps every environment read here. A `validation_alias` so the `HL_` prefix does not apply, and `editor_command()` splits it with `shlex` — a real `$EDITOR` is routinely `code --wait`, and splitting it in `infrastructure/editor.py` would be a second, worse shell |
-| `src/harness_library/cli/composition.py` | the **write-side** composition root beside C-8's: `default_target_root`, `require_target` (R71), `TargetSession`, `open_target`, `open_editor`, `ReportingConflictEditor`. One module, because two composition roots in two files is how a command comes to open a different target from the one it locked |
-| `src/harness_library/cli/payloads.py` | new. The `--json` contract for the six commands (R7). Pydantic, subclassing `application.read.Payload`, so `emit_json` stays one function. **In `cli/` and not in `application/read/dtos.py`** — T-22's territory is `cli/**`; flagged in §8 |
-| `src/harness_library/cli/rendering.py` | the six human renderers, beside the five that exist. Presentation, never contract (R7) |
-| `src/harness_library/cli/main.py` | the six commands. `_run` is unchanged and is still the whole convention |
+| `src/loom/domain/errors.py` | **one code, one class.** `ErrorCode.EDITOR_FAILED` and `EditorFailedError`. R102: T-21 correctly let the editor's `OSError` out rather than mislabel it, and without a code the user gets a traceback |
+| `src/loom/cli/exit_codes.py` | `EDITOR_FAILED = 14` and its `EXIT_STATUS` row. I-8 makes the table total over `ErrorCode`, so the row and the member land in one edit |
+| `src/loom/cli/settings.py` | **`$EDITOR`, R104.** Charter §13 keeps every environment read here. A `validation_alias` so the `LOOM_` prefix does not apply, and `editor_command()` splits it with `shlex` — a real `$EDITOR` is routinely `code --wait`, and splitting it in `infrastructure/editor.py` would be a second, worse shell |
+| `src/loom/cli/composition.py` | the **write-side** composition root beside C-8's: `default_target_root`, `require_target` (R71), `TargetSession`, `open_target`, `open_editor`, `ReportingConflictEditor`. One module, because two composition roots in two files is how a command comes to open a different target from the one it locked |
+| `src/loom/cli/payloads.py` | new. The `--json` contract for the six commands (R7). Pydantic, subclassing `application.read.Payload`, so `emit_json` stays one function. **In `cli/` and not in `application/read/dtos.py`** — T-22's territory is `cli/**`; flagged in §8 |
+| `src/loom/cli/rendering.py` | the six human renderers, beside the five that exist. Presentation, never contract (R7) |
+| `src/loom/cli/main.py` | the six commands. `_run` is unchanged and is still the whole convention |
 | `tests/cli/test_install.py` · `test_diff.py` · `test_uninstall_rollback.py` · `test_clean_export.py` · `test_resolve.py` · `test_settings.py` | new. Typer's runner, real files under `tmp_path`, copies of the committed target fixture |
 | `tests/cli/test_exit_codes.py` | added to, never altered — `EDITOR_FAILED`'s three tests beside the eight that exist |
 
@@ -1767,7 +1767,7 @@ No dependency change: `shlex` and `tempfile` are stdlib. No use-case signature c
 
 ## 2. The composition, and the one place I departed from the dispatch
 
-`hl install --resolve <side> <artifact>` needs two write use cases, and the lock is not
+`loom install --resolve <side> <artifact>` needs two write use cases, and the lock is not
 re-entrant (C-16, R82), so they run **in sequence** and the second is handed the manifest the
 first wrote — `ManifestStore` has only `write` (C-15), so nothing inside `application/` can
 refresh it.
@@ -1858,7 +1858,7 @@ the developer's harness.
 ## 5. Exit statuses
 
 `INCOMPLETE = 6` is **not** an error and is not raised: the payload goes to stdout naming every
-entry left alone with its reason, and the command then exits 6 — `hl validate`'s shape exactly.
+entry left alone with its reason, and the command then exits 6 — `loom validate`'s shape exactly.
 `is_complete` is composed, never recomputed from a rendering:
 
 * no `--resolve`: `ApplyResult.is_complete`;
@@ -1899,7 +1899,7 @@ not on the report.
 Must stay green: `test_a_complete_install_exits_zero_and_writes_the_library`, which must still
 write.
 
-**(c)** `hl install --resolve` hands the second run a stale manifest — `manifest=result.manifest`
+**(c)** `loom install --resolve` hands the second run a stale manifest — `manifest=result.manifest`
 replaced by `manifest=session.manifest` at the re-plan and the resolve.
 Must fail: `tests/cli/test_resolve.py::test_a_resolving_install_keeps_the_record_the_apply_wrote`,
 on **the artifact the apply installed being absent from the manifest read back off disk** — the
@@ -1924,7 +1924,7 @@ nothing about any artifact but the resolved one.
   and both per artifact. C-11's field therefore answers "which version is on this machine" with
   `None` on every install. Adding a `head_sha()` to that module is one function and is outside
   `cli/**`;
-* **`hl diff` exits 0 whatever it finds.** It is a report, like `hl list`; `install --dry-run` is
+* **`loom diff` exits 0 whatever it finds.** It is a report, like `loom list`; `install --dry-run` is
   the command whose exit status says whether the plan is complete. No criterion fixes it;
 * **the install payloads live in `cli/payloads.py`.** Initiative 03 renders C-9 and C-10 too; if
   the two are to be one wire format they belong in `application/read/dtos.py`, which is outside
@@ -1964,11 +1964,11 @@ Nothing under `src/`, `tests/` or `~/.claude/` was touched. The gate is green at
 
 ## 2. Method, and why each claim is checkable
 
-Everything ran through `hl`, because the CLI is the only human surface there is. Three rules held
+Everything ran through `loom`, because the CLI is the only human surface there is. Three rules held
 throughout and are what make the report auditable:
 
 * **`$HOME` redirected on every single invocation** (L64). `default_target_root()` is
-  `~/.claude` and `default_state_root()` is `~/.local/state/harness-library`; one forgotten
+  `~/.claude` and `default_state_root()` is `~/.local/state/loom`; one forgotten
   `--target` reaches the real harness. §2.2 of the report deliberately runs *without* `--target`
   to prove the default resolves inside the redirected home rather than outside it.
 * **Every claim about a file is a content hash of the whole tree**, before and after, never the
@@ -1983,7 +1983,7 @@ throughout and are what make the report auditable:
 
 **The promise holds, with one exception.** Installing is inspectable (the scan reported 1382 of
 1382 real paths, omitting none), reversible (144 MB and 1345 paths destroyed by
-`clean --foreign --remove` and restored byte-identical by `hl rollback`, symlink included), and
+`clean --foreign --remove` and restored byte-identical by `loom rollback`, symlink included), and
 incapable of destroying a file it did not put there (an install over real drift in a 1382-path
 harness changed exactly two files, both library files with a safe verdict).
 
@@ -2009,13 +2009,13 @@ safety model — is 1345 lines long against real content.
 
 Both **confirmed**, with the behaviour observed rather than reasoned about.
 
-* `hl install` over the committed fixture library is `INCOMPLETE = 6` **by design and forever**:
+* `loom install` over the committed fixture library is `INCOMPLETE = 6` **by design and forever**:
   six artifacts carry ERROR findings (R75), a seventh root is a symlink (R46, which `--force`
   does not lift, R99), and charter §10 forbids deleting the fixtures. Any future criterion
   wanting exit 0 through the CLI needs a different library; this task built a small clean one.
 * `--resolve target` settles the refusal and does not pin the file: the kept copy was **observed**
   being overwritten by the next plain install, `4e1fcd0b… → 630f349e…`. Both the resolve's `note`
-  and the intervening `hl diff` said so first. The observation worth carrying is the direction:
+  and the intervening `loom diff` said so first. The observation worth carrying is the direction:
   resolving moves a path from `local_edit` (never touched) to `update` (written without asking),
   so the safest state for a user's edit is the unresolved one.
 
@@ -2023,18 +2023,18 @@ Both **confirmed**, with the behaviour observed rather than reasoned about.
 
 A real `library.yaml` was authored for the user's nine artifacts — five collections, two
 `superseded_by` declarations — in the scratch library copy, and is reproduced in full in §3 of the
-report for adoption. It took `hl validate` on the real tree from **8 errors to 1**: L5's seven V3
+report for adoption. It took `loom validate` on the real tree from **8 errors to 1**: L5's seven V3
 findings are exactly the seven the two redirect stubs produce, and declaring their supersession
 clears all seven through charter §8's V3 exemption.
 
-**R39 is discharged.** F-5's criterion — *`hl list --collection <key>` returns exactly the
+**R39 is discharged.** F-5's criterion — *`loom list --collection <key>` returns exactly the
 declared members* — now has its real-content proof, over real artifacts with real tags and real
 supersession, with no unresolved member and therefore no V7.
 
 The eighth error is **not** a false positive and L5 does not predict it:
 `skills/frontend-system-pattern/SKILL.md` is **V10**, its `description:` an unquoted YAML scalar
 containing `: `. Claude Code's own loader accepts the file; PyYAML does not. Under R75 that means
-the user's first real install leaves **9 of 37 paths unwritten**. `hl` is behaving exactly as
+the user's first real install leaves **9 of 37 paths unwritten**. `loom` is behaving exactly as
 specified; whether it should is a product question (O-3).
 
 ## 6. R108 — the gap, reported and not fixed
@@ -2048,7 +2048,7 @@ machine*. Recorded with evidence in §5 of the report; acceptance adds no featur
 
 Method, numbers and interpretation are §7 of the report. The one thing a future task should carry:
 **the process floor is 833 ms** (interpreter + imports, MCP already deferred), and it is the
-largest single term in every command except `clean --foreign --remove`. `hl diff` over a 145 MB /
+largest single term in every command except `clean --foreign --remove`. `loom diff` over a 145 MB /
 1382-path target is 1294 ms, so the scan-and-join itself is ~460 ms. Optimise against 833 ms, not
 against zero. `clean --foreign --remove` is 10.0 s and its rollback 6.7 s, both dominated by
 copying 144 MB; memory is flat at ~67 MB RSS throughout.
@@ -2087,7 +2087,7 @@ changes.
 | `cli/exit_codes.py` | `STATE_UNWRITABLE = 15` and its `EXIT_STATUS` row — one edit, because I-8 makes the table total |
 | `infrastructure/lock.py` | the translation. **One `except OSError`**, wrapping the whole acquire |
 | `application/read/backups.py` | new. `list_backups(backups, *, target_path)` — this target's backups, oldest first. Read side: it takes no lock (R85) and writes nothing |
-| `cli/payloads.py`, `cli/rendering.py`, `cli/main.py` | `hl backups` (R113), and `hl rollback`'s "nothing to put back" (R112) |
+| `cli/payloads.py`, `cli/rendering.py`, `cli/main.py` | `loom backups` (R113), and `loom rollback`'s "nothing to put back" (R112) |
 
 ## 2. D-2 — the mode is content, and it is lost at backup time
 
@@ -2161,10 +2161,10 @@ The second branch matters more than it looks: without it, a backup this build de
 a schema-3 one, §2 — would be reported as "there is nothing to put back", which is the tool
 lying about a rollback point the user still has on disk.
 
-## 5. R113 — `hl backups`
+## 5. R113 — `loom backups`
 
 `list_backups` in `application/read/`, filtering on `BackupRecord.target_path`, because
-`BackupStore.list()` returns **every** target's backups (R43) and `hl rollback`'s own
+`BackupStore.list()` returns **every** target's backups (R43) and `loom rollback`'s own
 `_backup_id` already needed that filter. One definition of "this target's backups", reached by
 both, rather than the two spellings that were about to exist. Listing only — retention and
 deletion are out of scope.

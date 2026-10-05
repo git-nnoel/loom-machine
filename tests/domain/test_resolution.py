@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from harness_library.domain.resolution import ConflictEditor, ConflictVersions, Resolution
+from loom.domain.resolution import ConflictEditor, ConflictVersions, Resolution
 
 LIBRARY_BYTES = b"# the library has moved on\n"
 EDITED_BYTES = b"# and then the user edited it\n"

@@ -11,8 +11,8 @@ Two rulings decide everything here and both have a failure mode that looks like 
 
 from __future__ import annotations
 
-from harness_library.application.read import validate_library
-from harness_library.domain.validation import Severity, ValidationCode
+from loom.application.read import validate_library
+from loom.domain.validation import Severity, ValidationCode
 from tests.application.fakes import FakeArtifactRepository, finding, make_artifact
 
 

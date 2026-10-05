@@ -29,22 +29,22 @@ from pathlib import Path
 
 import pytest
 
-from harness_library.application.write import (
+from loom.application.write import (
     ApplyResult,
     RollbackResult,
     apply_install,
     plan_install,
     rollback_install,
 )
-from harness_library.domain.hashing import hash_bytes
-from harness_library.domain.manifest import Manifest
-from harness_library.infrastructure.backup import FilesystemBackupStore
-from harness_library.infrastructure.lock import FilesystemWriteLock
-from harness_library.infrastructure.manifest_store import (
+from loom.domain.hashing import hash_bytes
+from loom.domain.manifest import Manifest
+from loom.infrastructure.backup import FilesystemBackupStore
+from loom.infrastructure.lock import FilesystemWriteLock
+from loom.infrastructure.manifest_store import (
     FilesystemManifestStore,
     read_manifest,
 )
-from harness_library.infrastructure.target import (
+from loom.infrastructure.target import (
     DIRECTORY_MODE,
     FILE_MODE,
     FilesystemTargetRepository,
@@ -269,7 +269,7 @@ def test_the_manifest_on_disk_describes_the_restored_state(
     assertion made against a manifest really read back off a real state directory.
 
     The digest is the *first* install's, which is what the restored file holds. Left claiming the
-    second install's digest, the next `hl diff` would call the restored file a `LOCAL_EDIT` and
+    second install's digest, the next `loom diff` would call the restored file a `LOCAL_EDIT` and
     ask the user to decide about a file this tool put back itself.
     """
     first = a_library(SKILL_NAME)

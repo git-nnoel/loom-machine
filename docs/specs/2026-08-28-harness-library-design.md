@@ -49,7 +49,7 @@ Each of these is a class of failure the design closes, not an incident to be mor
 | D5 | **Python (FastAPI) + React/TypeScript.** | `backend-system-architecture` (Mode A, Clean Architecture) and `frontend-system-pattern` (Mode A, SPA-layered) both govern; the existing specialist agents can build it. `[OBS]` |
 | D6 | **MCP is read-only.** Four tools: list, search, get artifact, get reference. | A session can consume the library but cannot write to canon. Enforced structurally — see §7.3. `[OBS]` |
 | D7 | **Filesystem-native store; no database.** | The library tree *is* the data. Git diffs are real content diffs, `$EDITOR` still works, and install is a copy because layout already matches the target. `[OBS]` |
-| D8 | **Separate processes:** `hl serve` (web) and `hl mcp` (stdio, client-spawned). | stdio MCP owns stdout exclusively; a web log line in the same process corrupts the JSON-RPC stream. `[DER]` |
+| D8 | **Separate processes:** `loom serve` (web) and `loom mcp` (stdio, client-spawned). | stdio MCP owns stdout exclusively; a web log line in the same process corrupts the JSON-RPC stream. `[DER]` |
 
 ---
 
@@ -114,7 +114,7 @@ ERROR", and Plan 2 refuses to install only on ERROR.
 redirect stubs — `developers-orchestration` → `delivery-lead` and `frontend-ctg-system-pattern` →
 `frontend-system-pattern`. Both must stay installed so that plans and records citing the old names
 still resolve, and both say so in their own body text. A tag would be advisory; a typed field lets
-the list view demote them, the search rank them below their successors, and `hl validate` verify
+the list view demote them, the search rank them below their successors, and `loom validate` verify
 the target exists.
 
 ### 3.3 Type registry
@@ -162,7 +162,7 @@ silent no-op. `[INF]`
 ### 3.5 Repository layout
 
 ```
-harness-library/
+loom-machine/
   skills/<name>/SKILL.md, references/*.md, <assets>
   agents/<name>.md
   library.yaml
@@ -270,20 +270,20 @@ produces an `InstallPlan` (§8). Nothing writes to a target without a plan. `[IN
 The complete surface. The UI does nothing the CLI cannot. `[OBS]`
 
 ```
-hl list [--type T] [--tag T] [--collection C] [--invalid] [--sort name|updated|size]
-hl show <id> [--files] [--refs]
-hl search <query>
-hl new <type> <name>
-hl edit <id>                       → $EDITOR
-hl validate
-hl export <id|--collection C> [-o PATH]
-hl install [<id>… | --collection C | --all] [--target PATH] [--dry-run] [--prune]
-hl diff [--target PATH]
-hl uninstall <id> [--target PATH]
-hl rollback [--to TIMESTAMP]
-hl clean --foreign [--target PATH]
-hl serve [--port 8760] [--open]
-hl mcp                             → stdio; spawned by the client, not by you
+loom list [--type T] [--tag T] [--collection C] [--invalid] [--sort name|updated|size]
+loom show <id> [--files] [--refs]
+loom search <query>
+loom new <type> <name>
+loom edit <id>                       → $EDITOR
+loom validate
+loom export <id|--collection C> [-o PATH]
+loom install [<id>… | --collection C | --all] [--target PATH] [--dry-run] [--prune]
+loom diff [--target PATH]
+loom uninstall <id> [--target PATH]
+loom rollback [--to TIMESTAMP]
+loom clean --foreign [--target PATH]
+loom serve [--port 8760] [--open]
+loom mcp                             → stdio; spawned by the client, not by you
 ```
 
 ### 7.2 HTTP API + React SPA
@@ -386,7 +386,7 @@ Summarised, the three presence-only verdicts:
 The rule that changes the observed outcome. `[DER from §1]`
 
 ```
-$ hl install --all --dry-run
+$ loom install --all --dry-run
   skill/backend-system-architecture   UPDATE   8 files
   skill/delivery-lead                 CREATE   7 files
   skill/developers-orchestration      UPDATE   1 file    (→ redirect stub)
@@ -398,17 +398,17 @@ $ hl install --all --dry-run
 ```
 
 The swap file survives. The `node_modules` cruft is reported rather than silently carried into
-canon. Removing either is a deliberate `hl clean --foreign`, which lists before it acts.
+canon. Removing either is a deliberate `loom clean --foreign`, which lists before it acts.
 
 ### 8.3 Backups
 
-`~/.local/state/harness-library/backups/<timestamp>/` — outside both the library and the target, so
+`~/.local/state/loom/backups/<timestamp>/` — outside both the library and the target, so
 neither a `git clean` nor a target wipe destroys them. Only paths the plan will write are backed up.
-`hl rollback [--to TIMESTAMP]` restores. `[INF]`
+`loom rollback [--to TIMESTAMP]` restores. `[INF]`
 
 ### 8.4 Manifest
 
-`~/.local/state/harness-library/manifests/<sha256 of target path>.json` — outside `~/.claude/`, so
+`~/.local/state/loom/manifests/<sha256 of target path>.json` — outside `~/.claude/`, so
 installing never adds a file the harness itself must ignore. `[INF]`
 
 Per artifact: id, content hash, every file written with its own hash, timestamp, the backup

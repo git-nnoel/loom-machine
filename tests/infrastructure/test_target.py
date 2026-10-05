@@ -27,10 +27,10 @@ from pathlib import Path
 
 import pytest
 
-from harness_library.domain.hashing import hash_bytes
-from harness_library.domain.target import TargetFile, TargetRepository
-from harness_library.infrastructure.scanner import EDITOR_SWAP_SUFFIXES, is_text
-from harness_library.infrastructure.target import (
+from loom.domain.hashing import hash_bytes
+from loom.domain.target import TargetFile, TargetRepository
+from loom.infrastructure.scanner import EDITOR_SWAP_SUFFIXES, is_text
+from loom.infrastructure.target import (
     DIRECTORY_MODE,
     FILE_MODE,
     FilesystemTargetRepository,

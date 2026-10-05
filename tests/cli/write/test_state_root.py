@@ -1,4 +1,4 @@
-"""The state directory refusing the lock, through `hl`. Contract C-14, ruling R111. T-24.
+"""The state directory refusing the lock, through `loom`. Contract C-14, ruling R111. T-24.
 
 **The one disk step of a write run that had no code.** Every other failure of the same kind is
 typed and says what happened to the target — the backup gives `BACKUP_FAILED = 9`, the manifest
@@ -26,9 +26,9 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from harness_library.cli.exit_codes import LOCK_HELD, STATE_UNWRITABLE
-from harness_library.infrastructure.lock import lock_path_for
-from harness_library.infrastructure.manifest_store import MANIFESTS_DIRECTORY_NAME
+from loom.cli.exit_codes import LOCK_HELD, STATE_UNWRITABLE
+from loom.infrastructure.lock import lock_path_for
+from loom.infrastructure.manifest_store import MANIFESTS_DIRECTORY_NAME
 from tests.cli.write.conftest import digests, library_with, run
 
 ONLY = "skills/only/SKILL.md"

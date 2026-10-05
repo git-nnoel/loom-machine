@@ -21,10 +21,10 @@ from pathlib import Path
 
 import pytest
 
-from harness_library.domain.artifact import ArtifactKind
-from harness_library.domain.identity import ArtifactType
-from harness_library.domain.raw import LibraryScan, RawArtifact, SkipReason
-from harness_library.infrastructure.scanner import is_text, scan_library
+from loom.domain.artifact import ArtifactKind
+from loom.domain.identity import ArtifactType
+from loom.domain.raw import LibraryScan, RawArtifact, SkipReason
+from loom.infrastructure.scanner import is_text, scan_library
 from tests.infrastructure.conftest import FIXED_TIMESTAMPS, SCANNED_AT, write, write_skill
 
 
@@ -171,7 +171,7 @@ def test_a_symlink_is_never_followed_hashed_or_taken_into_the_artifact(tmp_path:
 
     assert paths(raw) == ["SKILL.md"]
     assert "linked.md" not in paths(raw)
-    from harness_library.domain.hashing import hash_bytes
+    from loom.domain.hashing import hash_bytes
 
     assert hash_bytes(outside.read_bytes()) not in {file.sha256 for file in raw.files}
 

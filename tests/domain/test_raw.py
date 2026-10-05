@@ -6,9 +6,9 @@ from datetime import UTC, datetime
 
 import pytest
 
-from harness_library.domain.artifact import ArtifactKind
-from harness_library.domain.identity import ArtifactType
-from harness_library.domain.raw import RawArtifact, RawEntry, SkippedPath, SkipReason
+from loom.domain.artifact import ArtifactKind
+from loom.domain.identity import ArtifactType
+from loom.domain.raw import RawArtifact, RawEntry, SkippedPath, SkipReason
 
 SCANNED_AT = datetime(2026, 8, 31, 12, 0, tzinfo=UTC)
 

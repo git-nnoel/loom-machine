@@ -12,12 +12,12 @@ the user's real `~/.claude/`.
 > **Is installing inspectable before it runs, reversible after it runs, and incapable of
 > destroying a file it did not put there?**
 
-**Inspectable — yes.** `hl diff` and `hl install --dry-run` describe every path the tool can see,
+**Inspectable — yes.** `loom diff` and `loom install --dry-run` describe every path the tool can see,
 and on the real tree the scan reported **1382 of 1382** paths with nothing omitted (§2.1). A dry
 run writes nothing, asserted on content hashes (§1, F-8).
 
 **Reversible — yes for content, no for permissions.** A `clean --foreign --remove` that deleted
-**1345 paths / 144 MB** of the real harness was put back by `hl rollback` **byte-identical on all
+**1345 paths / 144 MB** of the real harness was put back by `loom rollback` **byte-identical on all
 1382 paths, including the one symlink** (§2.7). But every restored file comes back at mode `0644`:
 `.credentials.json` goes `0600 → 0644`, an executable goes `0700 → 0644`. On the real tree that is
 **149 private files made world-readable and 56 executables disarmed** by the recovery path.
@@ -38,13 +38,13 @@ which is why this task reports them instead of fixing them.
 
 ## 1. Deliverable 1 — F-8 … F-16 and V11, through the CLI
 
-Every row was exercised through `hl`, which is the only human surface. `$HOME` was redirected on
+Every row was exercised through `loom`, which is the only human surface. `$HOME` was redirected on
 every invocation (L64) and every claim about a file is a content hash, never a command's own
 report (R31).
 
 | # | Verdict | Evidence |
 |---|---|---|
-| **F-8** | **Proved in part** | Eight of C-9's nine verdicts were produced through the CLI and read back as values: `create`, `unchanged`, `manifest_repair`, `update`, `local_edit`, `conflict`, `prune`, `foreign`, `skipped` — that is all nine, §1.1. `MANIFEST_REPAIR` rewrote the record and left every file byte-identical, asserted on the tree hash. `hl diff` on an untouched target reported `unchanged` for every path and exited 0. **Not re-proved here:** that the rule never emits `SKIPPED` (a domain sweep) and that the three impossible hash combinations raise — both are unit-level and both are inside the green gate. |
+| **F-8** | **Proved in part** | Eight of C-9's nine verdicts were produced through the CLI and read back as values: `create`, `unchanged`, `manifest_repair`, `update`, `local_edit`, `conflict`, `prune`, `foreign`, `skipped` — that is all nine, §1.1. `MANIFEST_REPAIR` rewrote the record and left every file byte-identical, asserted on the tree hash. `loom diff` on an untouched target reported `unchanged` for every path and exited 0. **Not re-proved here:** that the rule never emits `SKIPPED` (a domain sweep) and that the three impossible hash combinations raise — both are unit-level and both are inside the green gate. |
 | **F-9** | **Proved** | §1.2. Safe entries written, conflicted entries byte-identical, `INCOMPLETE = 6`, all three from one run. Modes `0644`/`0755` on the stat. `BACKUP_FAILED = 9` and a byte-identical target from a read-only backup directory. R63's ordering demonstrated through a *real* failure, not an injected one (§1.3). |
 | **F-9 (R75)** | **Proved** | §1.4. Six invalid artifacts came out `skipped` with a reason naming the code, were not written, and the run exited 6; `--force` installed all six. A WARNING-only artifact (`skill/messy`, V6 ×3) installed normally — the control. |
 | **F-10** | **Proved** | §1.5. Seven foreign paths byte-identical after apply. `clean --foreign` listed before removing, removed nothing the manifest knew, and removed nothing at all without `--remove`. |
@@ -54,7 +54,7 @@ report (R31).
 | **F-14** | **Proved** | §1.9. A held lock → `LOCK_HELD = 10` with the target's hash set unchanged. A sentinel naming a dead pid was broken and the apply proceeded. |
 | **F-15** | **Proved** | §1.10. `--resolve library` wrote the library's version; `--resolve target` left the file byte-identical and repaired the record; both exit 0 on a clean library. Per artifact: resolving one of two conflicts left the other still refused. |
 | **F-16** | **Proved** | §1.11. Entries are exactly the collection's artifacts' files as a path list; a PNG round-tripped byte-identical; two exports of one unchanged library are byte-identical. |
-| **V11** | **Proved** | §1.12. WARNING in `hl validate`, named and `skipped` in the plan, run exits `6` on the integer, everything else applied, and neither the link nor its destination written. `--force` did not lift it (R99). **One gap: `hl diff` does not name it** — observation O-1. |
+| **V11** | **Proved** | §1.12. WARNING in `loom validate`, named and `skipped` in the plan, run exits `6` on the integer, everything else applied, and neither the link nor its destination written. `--force` did not lift it (R99). **One gap: `loom diff` does not name it** — observation O-1. |
 | **Cross-cutting** | **Proved** | `~/.claude/` byte-identical on the narrowed manifest, §6. |
 
 ### 1.1 All nine verdicts, as values
@@ -62,7 +62,7 @@ report (R31).
 Against the committed fixture library and target:
 
 ```
-$ hl --library …/fixtures/library diff --target …/fixtures/target
+$ loom --library …/fixtures/library diff --target …/fixtures/target
 VERDICT   PATH                                                    ARTIFACT
 create    agents/nameless.md                                      agent/nameless
 conflict  agents/scribe.md                                        agent/scribe
@@ -75,7 +75,7 @@ EXIT=0
 Against a purpose-built clean library, with the target drifted four ways at once:
 
 ```
-$ hl --library …/clean/lib diff --target …/clean/t1
+$ loom --library …/clean/lib diff --target …/clean/t1
 VERDICT     PATH                              ARTIFACT
 local_edit  agents/beta.md                    agent/beta
 foreign     settings.json                     -
@@ -89,20 +89,20 @@ EXIT=0
 `unchanged` and `manifest_repair`:
 
 ```
-$ hl … diff --target …/clean/t1          # immediately after a clean install
+$ loom … diff --target …/clean/t1          # immediately after a clean install
 unchanged  agents/beta.md                    agent/beta
 unchanged  skills/alpha/SKILL.md             skill/alpha
 unchanged  skills/alpha/references/notes.md  skill/alpha
 3 path(s) …: unchanged 3.
 EXIT=0
 
-$ rm …/manifests/*.json && hl … diff --target …/clean/t1
+$ rm …/manifests/*.json && loom … diff --target …/clean/t1
 manifest_repair  agents/beta.md                    agent/beta
 manifest_repair  skills/alpha/SKILL.md             skill/alpha
 manifest_repair  skills/alpha/references/notes.md  skill/alpha
 EXIT=0
 
-$ hl … install --target …/clean/t1       # apply the repair
+$ loom … install --target …/clean/t1       # apply the repair
 Complete: everything was applied.   EXIT=0
 FILES BYTE-IDENTICAL after MANIFEST_REPAIR (asserted on content, not on the report)
 ```
@@ -112,7 +112,7 @@ FILES BYTE-IDENTICAL after MANIFEST_REPAIR (asserted on content, not on the repo
 ### 1.2 F-9 — one run, three guarantees
 
 ```
-$ hl --library …/clean/lib install --target …/clean/t1
+$ loom --library …/clean/lib install --target …/clean/t1
 4 path(s) …: update 1, local_edit 1, prune 1, foreign 1.
   written (1)
     skills/alpha/SKILL.md
@@ -154,11 +154,11 @@ The CLI reaches the same state without injection — a target directory that can
 
 ```
 $ chmod a-w target/ target/skills target/agents
-$ hl --library …/clean/lib install --target …/r6/target
+$ loom --library …/clean/lib install --target …/r6/target
 error [TARGET_UNWRITABLE]: agents/beta.md could not be written into the target: [Errno 13] …
 EXIT=7
 
-$ hl --library …/clean/lib diff --target …/r6/target
+$ loom --library …/clean/lib diff --target …/r6/target
 create   agents/beta.md                          agent/beta
 create   skills/alpha/SKILL.md                   skill/alpha
 ```
@@ -171,7 +171,7 @@ applied. EXIT=0`.
 ### 1.4 R75 and `--force`
 
 ```
-$ hl --library …/fixtures/library install --force --target …/r3/target
+$ loom --library …/fixtures/library install --force --target …/r3/target
   skills/no-entry/references/orphan.md          WRITTEN
   skills/misnamed/SKILL.md                      WRITTEN
   skills/incomplete/SKILL.md                    WRITTEN
@@ -195,7 +195,7 @@ refusal from being "refuses everything with a finding".
 ### 1.5 F-10
 
 ```
-$ hl … clean --target …/clean/t1
+$ loom … clean --target …/clean/t1
 foreign paths in …/clean/t1
   listed (1)
     settings.json
@@ -203,13 +203,13 @@ foreign paths in …/clean/t1
 EXIT=0
 settings.json still there? YES
 
-$ hl … clean --foreign --remove --target …/clean/t1
+$ loom … clean --foreign --remove --target …/clean/t1
   listed (1)  settings.json
   removed (1) settings.json
   backup      2026-09-21T20-03-08Z
 EXIT=0
 
-$ hl … rollback --target …/clean/t1
+$ loom … rollback --target …/clean/t1
   restored (1)  settings.json
 settings.json after rollback? RESTORED
 acb68981366d9bccb83ec79de1d54959897faef3e8b921cf3a50996696eda2ea   (the original digest)
@@ -220,7 +220,7 @@ acb68981366d9bccb83ec79de1d54959897faef3e8b921cf3a50996696eda2ea   (the original
 Fixture target, 9 paths, install then rollback, compared on a content-hash manifest of the tree:
 
 ```
-$ hl … rollback --target …/r1/target
+$ loom … rollback --target …/r1/target
   removed again (5)  …
 0 file(s) restored, 5 removed.   EXIT=0
 
@@ -233,7 +233,7 @@ Real scale is §2.6 and §2.7.
 
 ```
 $ echo "mine, not yours" > …/r1/target/skills/messy/NOTES.md
-$ hl … uninstall skill/messy --target …/r1/target
+$ loom … uninstall skill/messy --target …/r1/target
   removed (2)
     skills/messy/SKILL.md
     skills/messy/references/diagram.png
@@ -247,7 +247,7 @@ NOTES.md digest after  = 22a881baf36bcbbb5f50fe130428a43decee258b3334859116d7cfa
 `--prune` (§1.1's `prune` row applied):
 
 ```
-$ hl … install --prune --target …/clean/t1
+$ loom … install --prune --target …/clean/t1
   written (1)            agents/beta.md
   removed (--prune) (1)  skills/alpha/references/notes.md
 EXIT=0
@@ -270,14 +270,14 @@ t1's files unchanged:  YES
 
 ```
 $ sleep 120 &   # a real live pid, written into the sentinel by hand
-$ hl … install --target …/clean/t1
+$ loom … install --target …/clean/t1
 error [LOCK_HELD]: …/manifests/e9fe27…lock is held by process 1376546: another install is
 writing to this target, so this run wrote nothing. Wait for it to finish and run again
 EXIT=10
 TARGET HASH SET UNCHANGED — nothing was written
 
 $ kill %1   # same sentinel, pid now gone
-$ hl … install --target …/clean/t1
+$ loom … install --target …/clean/t1
 Complete: everything was applied.   EXIT=0
 sentinel left behind? no — released
 ```
@@ -287,11 +287,11 @@ sentinel left behind? no — released
 Per-artifact, on the fixture target's two conflicts:
 
 ```
-$ hl … install agent/scribe --resolve target --target …/r2/target
+$ loom … install agent/scribe --resolve target --target …/r2/target
 resolve target: agent/scribe
   record repaired (1)   agents/scribe.md
   note           the refusal is settled, the file is NOT pinned: the next
-                 hl install writes the library's version over the copy you kept.
+                 loom install writes the library's version over the copy you kept.
 left alone (9)
   conflict  skills/delivery-lead/SKILL.md        ← the other conflict, still refused
 
@@ -304,7 +304,7 @@ Exit 0 is only reachable on a library with no other refusal, which the fixture l
 be (§4, warning 1). Against the clean library:
 
 ```
-$ hl … install agent/beta --resolve target --target …/clean/t1
+$ loom … install agent/beta --resolve target --target …/clean/t1
 resolve target: agent/beta
   record repaired (1)  agents/beta.md
 Complete: everything was applied.   EXIT=0
@@ -314,7 +314,7 @@ beta.md byte-identical? YES
 `--resolve library`:
 
 ```
-$ hl … install skill/delivery-lead --resolve library --target …/r7/target
+$ loom … install skill/delivery-lead --resolve library --target …/r7/target
 resolve library: skill/delivery-lead
   written (1)  skills/delivery-lead/SKILL.md
 target == library? YES
@@ -323,13 +323,13 @@ target == library? YES
 `--resolve edit` and R102's `EDITOR_FAILED = 14`:
 
 ```
-$ env -u EDITOR hl … install agent/scribe --resolve edit --target …
+$ env -u EDITOR loom … install agent/scribe --resolve edit --target …
 error [EDITOR_FAILED]: no editor is configured: $EDITOR is unset or blank … EXIT=14
 
-$ EDITOR=/nonexistent/editor hl … --resolve edit …
+$ EDITOR=/nonexistent/editor loom … --resolve edit …
 error [EDITOR_FAILED]: the editor '/nonexistent/editor': [Errno 2] No such file or directory …
 
-$ EDITOR="sh -c 'ls -1 \"\$@\"' --" hl … --resolve edit …
+$ EDITOR="sh -c 'ls -1 \"\$@\"' --" loom … --resolve edit …
 resolve edit: agent/scribe
   shown in $EDITOR (1)  agents/scribe.md
 EXIT=6                                   ← nothing was decided, so the run stays incomplete
@@ -340,7 +340,7 @@ EXIT=6                                   ← nothing was decided, so the run sta
 ### 1.11 F-16
 
 ```
-$ hl … export delivery --output delivery.zip
+$ loom … export delivery --output delivery.zip
 delivery -> …/delivery.zip
   entries        3
   skills/delivery-lead/SKILL.md
@@ -351,7 +351,7 @@ unresolved members (1)
 EXIT=0
 ```
 
-Those three are exactly the collection's two resolvable members' files (`hl collections delivery`
+Those three are exactly the collection's two resolvable members' files (`loom collections delivery`
 lists `skill/delivery-lead` and `agent/scribe`). Binary round-trip and determinism:
 
 ```
@@ -364,7 +364,7 @@ hk2.zip  927c47ec5858a34b63cb39df384cd395f266d087070a630bc7548e2731c0f32a
 
 ### 1.12 V11
 
-`hl validate` reports the warning against the library:
+`loom validate` reports the warning against the library:
 
 ```
 library.yaml
@@ -373,7 +373,7 @@ library.yaml
   refuses this artifact and applies the rest (skills/linked-skill)
 ```
 
-`hl install` names it, skips it, applies everything else and exits 6 on the integer:
+`loom install` names it, skips it, applies everything else and exits 6 on the integer:
 
 ```
 skipped   skills/linked-skill    skill/linked-skill
@@ -398,7 +398,7 @@ Neither half was written: `skills/linked-skill` is absent from the target after 
 a second copy holding only the nine artifacts plus the `library.yaml` of §3. Nothing under
 `~/.claude/` was created, modified, deleted or moved; §6 proves it.
 
-### 2.1 `hl diff`
+### 2.1 `loom diff`
 
 ```
 1382 path(s) in <scratch>/home/.claude: foreign 1345, manifest_repair 37.
@@ -416,7 +416,7 @@ total missing:                     0
 The 37 `manifest_repair` rows are every file of all nine artifacts: the user's harness already
 holds the library's bytes exactly.
 
-### 2.2 `hl install --dry-run`, with **no** `--target`
+### 2.2 `loom install --dry-run`, with **no** `--target`
 
 Run deliberately without the flag, to prove `~/.claude` resolves inside the redirected home:
 
@@ -434,7 +434,7 @@ EXIT=6
 **The first real install of the user's own library refuses nine of its thirty-seven paths**, and
 the cause is a single unquoted colon in one `description:`. See O-3 and §3.
 
-### 2.3 `hl install`
+### 2.3 `loom install`
 
 ```
 1382 path(s) in <scratch>/home/.claude: foreign 1345, manifest_repair 28, skipped 9.
@@ -460,7 +460,7 @@ local_edit       skills/solution-designer/SKILL.md
 (everything else: unchanged, or foreign)
 ```
 
-### 2.5 `hl install` over the drift — **the sharpest measurement in this report**
+### 2.5 `loom install` over the drift — **the sharpest measurement in this report**
 
 ```
   written (2)
@@ -482,10 +482,10 @@ A content-hash diff of the whole 1382-path tree before and after shows **exactly
 digest of `testing.md` changing and the line for `conflicts.md` appearing. Nothing else in the
 user's harness moved.
 
-`hl install --resolve target skill/solution-designer` then settled the refusal; the edited file
+`loom install --resolve target skill/solution-designer` then settled the refusal; the edited file
 was byte-identical afterwards and no file in the tree changed.
 
-### 2.6 `hl rollback`
+### 2.6 `loom rollback`
 
 ```
 backup 2026-09-21T20-09-17Z
@@ -496,14 +496,14 @@ backup 2026-09-21T20-09-17Z
 THE WHOLE 1382-PATH TREE IS BYTE-IDENTICAL to its state before the install
 ```
 
-`hl uninstall skill/delivery-lead` then removed exactly the six files the record named, out of
+`loom uninstall skill/delivery-lead` then removed exactly the six files the record named, out of
 1381 paths, and left `skills/delivery-lead/` behind as an empty directory (O-2). A second
-`hl rollback` put all six back byte-identical.
+`loom rollback` put all six back byte-identical.
 
-### 2.7 `hl clean` — the listing, and then the whole harness
+### 2.7 `loom clean` — the listing, and then the whole harness
 
 ```
-$ hl … clean --target <scratch>/home/.claude
+$ loom … clean --target <scratch>/home/.claude
 foreign paths in <scratch>/home/.claude
   listed (1345)
     .credentials.json
@@ -516,9 +516,9 @@ EXIT=0                                   (1381 paths still present)
 On a second, pristine copy, with `--remove`:
 
 ```
-$ hl … clean --foreign --remove --target <scratch2>/.claude
+$ loom … clean --foreign --remove --target <scratch2>/.claude
   backup         2026-09-21T20-11-18Z
-1345 path(s) removed. Roll back with hl rollback.
+1345 path(s) removed. Roll back with loom rollback.
 EXIT=0
 paths left: 37 (was 1382)      backup size: 144M
 ```
@@ -526,7 +526,7 @@ paths left: 37 (was 1382)      backup size: 144M
 and then:
 
 ```
-$ hl … rollback --target <scratch2>/.claude
+$ loom … rollback --target <scratch2>/.claude
 1345 file(s) restored, 0 removed.   EXIT=0
 paths restored: 1382 (was 1382)
 BYTE-IDENTICAL: every one of the 1382 paths is back with its original content
@@ -631,7 +631,7 @@ collections:
 eighth error, and the eighth is not a false positive:
 
 ```
-$ hl --library <real skills+agents, no library.yaml> validate
+$ loom --library <real skills+agents, no library.yaml> validate
 skill/developers-orchestration  [INVALID]
   V3 ERROR: SKILL.md cites references/delegation.md,       which does not exist …
   V3 ERROR: SKILL.md cites references/review-and-merge.md, which does not exist …
@@ -652,7 +652,7 @@ EXIT=1
 **After** — all seven V3 findings gone, nothing else changed:
 
 ```
-$ hl --library <same tree + the library.yaml above> validate
+$ loom --library <same tree + the library.yaml above> validate
 skill/frontend-system-pattern  [INVALID]
   V10 ERROR: the frontmatter of SKILL.md does not parse at line 3, column 255 …
 
@@ -665,12 +665,12 @@ Seven for seven. L5 is confirmed exactly, and the mechanism is charter §8's V3 
 
 ### 3.2 R39 — initiative 01's F-5 gets its real-content proof
 
-F-5's criterion is *"`hl list --collection <key>` returns exactly the declared members"*. Five
+F-5's criterion is *"`loom list --collection <key>` returns exactly the declared members"*. Five
 collections over real artifacts, each returning exactly what it declares, with no unresolved
 member (so no V7):
 
 ```
-$ hl … collections
+$ loom … collections
 KEY          TITLE                MEMBERS  DESCRIPTION
 backend      Backend              2        The skill a backend specialist binds to, …
 frontend     Frontend             2        The skill a frontend specialist binds to, …
@@ -679,13 +679,13 @@ specialists  The specialist team  3        Every subordinate agent, addressable 
 deprecated   Redirect stubs       2        Kept only so an older plan or record citing …
 5 collection(s).   EXIT=0
 
-$ hl … list --collection specialists
+$ loom … list --collection specialists
 agent/backend-developer-specialist   file  ok  backend, specialist, subordinate
 agent/frontend-developer-specialist  file  ok  frontend, specialist, subordinate
 agent/phase-reviewer                 file  ok  review, gate, read-only
 3 artifact(s), sorted by name.   EXIT=0
 
-$ hl … list --collection deprecated
+$ loom … list --collection deprecated
 skill/developers-orchestration     directory  ok  deprecated, redirect       → skill/delivery-lead
 skill/frontend-ctg-system-pattern  directory  ok  deprecated, redirect, ctg  → skill/frontend-system-pattern
 2 artifact(s), sorted by name.   EXIT=0
@@ -698,7 +698,7 @@ collections all resolve against content nobody designed for them.
 
 ## 4. Deliverable 4 — T-22's two warnings to T-23
 
-### Warning 1 — "`hl install` over the committed fixture library is `INCOMPLETE = 6` by design, forever"
+### Warning 1 — "`loom install` over the committed fixture library is `INCOMPLETE = 6` by design, forever"
 
 **CONFIRMED.** Six artifacts carry an ERROR finding and are refused under R75; a seventh root is a
 symlink and is refused under R46, which `--force` does not lift. Two more paths are `CONFLICT`
@@ -725,15 +725,15 @@ a library other than the committed fixture one** (this report used a purpose-bui
 **CONFIRMED, with the overwrite observed.**
 
 ```
-$ hl … install agent/scribe --resolve target --target …/r2/target
+$ loom … install agent/scribe --resolve target --target …/r2/target
   note   the refusal is settled, the file is NOT pinned: the next
-         hl install writes the library's version over the copy you kept.
+         loom install writes the library's version over the copy you kept.
 kept (target) = 4e1fcd0b0b4d7cc004c4996fe02cb2e454bf8c8e307eeecaef7b94f59cd1774b
 
-$ hl … diff --target …/r2/target
+$ loom … diff --target …/r2/target
 update     agents/scribe.md      agent/scribe        ← the refusal has become a write
 
-$ hl … install --target …/r2/target
+$ loom … install --target …/r2/target
   written (1)   agents/scribe.md
 agents/scribe.md now = 630f349e06f80e5bf74056917ea2a11fab5cd091973238bdae8d16dcbc1bbc2a
                      = the library's digest
@@ -741,7 +741,7 @@ R100 CONFIRMED: the next plain install OVERWROTE the copy the user kept.
 ```
 
 Both halves of the surprise are real, and both are honestly signposted: the `note` on the resolve
-says it in as many words, and `hl diff` shows `update` before the next install runs. The
+says it in as many words, and `loom diff` shows `update` before the next install runs. The
 observation worth recording is the *direction* of the change: **`--resolve target` converts a
 verdict install refuses to touch (`local_edit`) into a verdict install writes without asking
 (`update`)**. Resolving a refusal strictly reduces the protection on that file. That is the
@@ -794,14 +794,14 @@ IDENTICAL — nothing under ~/.claude/skills, /agents, /plugins or its settings 
 ```
 
 `~/.claude/commands` does not exist and was not created. No state root was created under the real
-home (`~/.local/state/harness-library`: absent). The file-mode census of the real tree is
+home (`~/.local/state/loom`: absent). The file-mode census of the real tree is
 unchanged: 1364 of 1381 files are still not-`0644`, exactly as before.
 
 ---
 
 ## 7. Deliverable 6 — measurements
 
-**Method.** `/project/harness-library/.venv/bin/hl` invoked directly (not through `uv run`, which
+**Method.** `/project/loom-machine/.venv/bin/hl` invoked directly (not through `uv run`, which
 adds its own environment resolution), `$HOME` redirected, wall clock via `date +%s.%N` around each
 invocation, **best of N** reported because the distribution is one-sided. The target is a 145 MB /
 1382-path `cp -a` copy of the real `~/.claude`; the library is the nine real artifacts. The heavy
@@ -809,22 +809,22 @@ pair was re-copied from scratch before each repeat. Nothing else was running.
 
 | Operation | Work done | Best of | Wall |
 |---|---|---|---|
-| `hl --help` | **the floor** — interpreter start + imports, no work | 5 | **833 ms** |
-| `hl validate` | the 9-artifact library alone | 5 | 790 ms |
-| `hl diff` | scan 1382 paths / 145 MB, join three sources | 5 | **1294 ms** |
-| `hl install` | same, plus writing the record; **0 files written** | 5 | 1296 ms |
-| `hl install` | same, plus back up and write **2 files** | 3 | **1752 ms** |
-| `hl rollback` | restore 1 file, remove 1, rescan, rewrite record | 3 | **1682 ms** |
-| `hl uninstall` | remove 6 files, back up, rescan, rewrite record | 1 | 1295 ms |
-| `hl clean --foreign --remove` | back up **144 MB / 1345 paths**, then delete them | 2 | **9977 ms** |
-| `hl rollback` (of that) | restore **144 MB / 1345 paths** | 2 | **6676 ms** |
+| `loom --help` | **the floor** — interpreter start + imports, no work | 5 | **833 ms** |
+| `loom validate` | the 9-artifact library alone | 5 | 790 ms |
+| `loom diff` | scan 1382 paths / 145 MB, join three sources | 5 | **1294 ms** |
+| `loom install` | same, plus writing the record; **0 files written** | 5 | 1296 ms |
+| `loom install` | same, plus back up and write **2 files** | 3 | **1752 ms** |
+| `loom rollback` | restore 1 file, remove 1, rescan, rewrite record | 3 | **1682 ms** |
+| `loom uninstall` | remove 6 files, back up, rescan, rewrite record | 1 | 1295 ms |
+| `loom clean --foreign --remove` | back up **144 MB / 1345 paths**, then delete them | 2 | **9977 ms** |
+| `loom rollback` (of that) | restore **144 MB / 1345 paths** | 2 | **6676 ms** |
 
 **Is anything slow enough to matter? No — but the shape is not what you would guess.**
 
-* **The floor dominates everything except `clean --remove`.** 833 ms of a 1294 ms `hl diff` is
+* **The floor dominates everything except `clean --remove`.** 833 ms of a 1294 ms `loom diff` is
   process start and imports; the actual scan-and-join of 145 MB is ~460 ms. Initiative 01 measured
   17 ms of scan against a 1.8 s import and deferred the MCP SDK; the floor is now 833 ms and it is
-  still the largest single term in every routine command. Anyone optimising `hl diff` should
+  still the largest single term in every routine command. Anyone optimising `loom diff` should
   measure against 833 ms, not against zero.
 * **A write costs about 450 ms more than a read** (1752 vs 1294): that is one backup, one manifest
   write, two file writes and a second pass. It is not per-file — the 6-file uninstall was *faster*
@@ -847,15 +847,15 @@ catches `FileExistsError` and nothing else.
 
 ```
 $ chmod a-w <state_root>/manifests
-$ hl … install --target …
+$ loom … install --target …
   ❱ 183 descriptor = os.open(self._path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, SENTINEL_MODE)
 PermissionError: [Errno 13] Permission denied: '…/manifests/3bca0b62….lock'
 EXIT=1
 
-hl uninstall skill/alpha  -> exit 1 | PermissionError
-hl rollback               -> exit 1 | PermissionError
-hl clean --remove         -> exit 1 | PermissionError
-hl diff                   -> exit 0    (reads take no lock, R85)
+loom uninstall skill/alpha  -> exit 1 | PermissionError
+loom rollback               -> exit 1 | PermissionError
+loom clean --remove         -> exit 1 | PermissionError
+loom diff                   -> exit 0    (reads take no lock, R85)
 ```
 
 Every *other* failure of the same kind is typed and useful — the backup gives `BACKUP_FAILED = 9`,
@@ -878,8 +878,8 @@ Restoring a foreign path puts its **content** back exactly and its **mode** back
 
 ```
 before: 600 …/private.json | 700 …/exec.sh
-$ hl … clean --foreign --remove …      2 path(s) removed.
-$ hl … rollback …                      2 file(s) restored, 0 removed.
+$ loom … clean --foreign --remove …      2 path(s) removed.
+$ loom … rollback …                      2 file(s) restored, 0 removed.
 after : 644 …/private.json | 644 …/exec.sh
 content preserved? secret
 ```
@@ -923,15 +923,15 @@ world-readable and their hook scripts no longer executable, and with no message 
 Closing it is a **C-13 amendment** (a per-path mode in the record) plus a restore write that does
 not normalise. **Out of T-23's scope; raised for a ruling.**
 
-### O-1 — `hl diff` does not name a V11-skipped artifact
+### O-1 — `loom diff` does not name a V11-skipped artifact
 
-`hl install --dry-run` lists `skipped skills/linked-skill`; `hl diff` over the same library and
+`loom install --dry-run` lists `skipped skills/linked-skill`; `loom diff` over the same library and
 target does not mention it at all (21 rows vs 22). This is by construction — `diff_against_target`
 is the read-side use case and is not handed `symlinked_roots()`, which only `_plan` passes — and
-`hl diff`'s own docstring says `--dry-run` is the command that names what install would refuse.
+`loom diff`'s own docstring says `--dry-run` is the command that names what install would refuse.
 It is still the case that the command a user reaches for to ask *"what is the state of my
 harness?"* is silent about the one artifact that is invisible, which is the failure V11 exists to
-make visible. `hl validate` does report it.
+make visible. `loom validate` does report it.
 
 ### O-2 — an emptied directory is left behind, and it is V1-shaped
 
@@ -950,9 +950,9 @@ containing `: ` — *"Covers every brand: the project's brand reference is the v
 which ends the scalar and makes the frontmatter block a malformed mapping. **Claude Code's own
 loader accepts the file and lists the skill; PyYAML does not.**
 
-`hl` is not wrong: the file is not valid YAML, V10 is correctly raised with a line and column, and
+`loom` is not wrong: the file is not valid YAML, V10 is correctly raised with a line and column, and
 it correctly suppresses the V2/V3/V5 cascade behind it (R33, R37). But R75 then refuses to install
-the artifact, so **the user's first real `hl install` would leave nine of thirty-seven paths
+the artifact, so **the user's first real `loom install` would leave nine of thirty-seven paths
 unwritten for a skill that works today**, and the remedy is `--force` or quoting one string.
 
 This is a product question for the lead, not a code change: *should an artifact the harness itself
@@ -962,7 +962,7 @@ document is unusable rather than when it is non-standard.
 
 ### O-4 — `--resolve target` moves a file from "never touched" to "overwritten next time"
 
-See §4, warning 2. Signposted by the `note` and by `hl diff`, and a direct consequence of R100 and
+See §4, warning 2. Signposted by the `note` and by `loom diff`, and a direct consequence of R100 and
 of spec §8.5's "no merge UI". Flagged because initiative 03 will render the same transition in a
 UI, where a one-line note is easier to miss than in a terminal, and because there is no way at all
 to express *keep mine permanently* — a user who wants that must stop installing that artifact.
@@ -981,8 +981,8 @@ and the rollback, not the listing — and the backup is 144 MB per run.
 
 ### O-6 — backups accumulate with no surface to see or remove them
 
-`BackupStore` keeps every backup forever. There is no `hl backups` command, no retention, and no
-way to delete one through the CLI. `hl rollback [BACKUP_ID]` takes an id **the user has no way to
+`BackupStore` keeps every backup forever. There is no `loom backups` command, no retention, and no
+way to delete one through the CLI. `loom rollback [BACKUP_ID]` takes an id **the user has no way to
 discover except by listing the state directory by hand**, which makes "undo three installs instead
 of one" — the stated reason the argument exists — unreachable in practice. Each
 `clean --foreign --remove` on a real harness costs 144 MB of state.
@@ -994,8 +994,8 @@ nothing to write or delete. Correct — there is nothing to protect — but it m
 install into an already-populated harness is not rollback-able:
 
 ```
-$ hl … install --target …     backup -    Complete: everything was applied.   EXIT=0
-$ hl … rollback --target …
+$ loom … install --target …     backup -    Complete: everything was applied.   EXIT=0
+$ loom … rollback --target …
 error [BACKUP_FAILED]: no backup '(most recent)' is available for this target, so there is
 nothing to put back. …
 EXIT=9

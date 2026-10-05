@@ -22,17 +22,17 @@ from datetime import UTC, datetime
 
 import pytest
 
-from harness_library.application.write import PruneResult, prune_target, pruned_entries
-from harness_library.domain.errors import (
+from loom.application.write import PruneResult, prune_target, pruned_entries
+from loom.domain.errors import (
     BackupFailedError,
     ErrorCode,
     LockHeldError,
     RecordStaleError,
     TargetUnwritableError,
 )
-from harness_library.domain.hashing import hash_bytes
-from harness_library.domain.install_plan import InstallPlan, PlanEntry, Verdict
-from harness_library.domain.manifest import Manifest
+from loom.domain.hashing import hash_bytes
+from loom.domain.install_plan import InstallPlan, PlanEntry, Verdict
+from loom.domain.manifest import Manifest
 from tests.application.fakes import (
     FakeBackupStore,
     FakeManifestStore,
@@ -253,8 +253,8 @@ def test_pruned_entries_is_what_apply_and_prune_both_select_on() -> None:
     """One spelling of "what `--prune` removes", asserted as a fact about the function.
 
     `apply_install` calls this and so does `prune_target`; a second comprehension in either would
-    make `hl install --prune` and `hl prune` able to remove different files from one target while
-    both reported success. Nothing else in the suite notices a duplicate.
+    make `loom install --prune` and `loom prune` able to remove different files from one target
+    while both reported success. Nothing else in the suite notices a duplicate.
     """
     selected = pruned_entries(a_plan())
 

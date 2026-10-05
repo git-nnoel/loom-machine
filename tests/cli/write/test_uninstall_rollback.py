@@ -1,4 +1,4 @@
-"""`hl uninstall` and `hl rollback` — the two commands that undo. Features F-11, F-12.
+"""`loom uninstall` and `loom rollback` — the two commands that undo. Features F-11, F-12.
 
 One module rather than two, because the pair is only coherent together: uninstall takes a backup
 precisely so that rollback can undo it, and the criterion that matters most — *a target comes
@@ -11,7 +11,7 @@ What this layer decides, and what is asserted here:
   them will accept `None`; `clean_foreign`'s docstring says outright that answering "what does
   this mean for a target nothing was installed into" belongs to the composition root, and this
   is that answer;
-* **which backup a bare `hl rollback` puts back** — this target's most recent, never another
+* **which backup a bare `loom rollback` puts back** — this target's most recent, never another
   target's (R43).
 """
 
@@ -177,11 +177,11 @@ def test_rollback_undoes_an_uninstall(
 # -- A rollback with nothing to put back, and the listing that makes ids reachable (T-24) --------
 #
 # **Ruling R112.** A `MANIFEST_REPAIR`-only install writes the record and not one file, so it
-# takes no backup — and `hl rollback` after one exited `BACKUP_FAILED = 9`, the same status as
+# takes no backup — and `loom rollback` after one exited `BACKUP_FAILED = 9`, the same status as
 # *the backup could not be taken*. C-14's whole point is that a script can tell "you must decide"
 # from "it broke"; that made it tell a fact from a failure.
 #
-# **Ruling R113.** `hl rollback [BACKUP_ID]` takes an id and nothing in the tool would say one:
+# **Ruling R113.** `loom rollback [BACKUP_ID]` takes an id and nothing in the tool would say one:
 # `BackupStore.list()` has been on C-13 since T-16 and no command reached it, so "undo three
 # installs rather than the last" (R54) was unreachable in practice.
 
@@ -190,7 +190,7 @@ def an_already_populated_target(tmp_path: Path, target: Path) -> Path:
     """A target already holding the library's exact bytes, with no record of them.
 
     That is the `MANIFEST_REPAIR` case and it is the ordinary one: a user's harness holds the
-    artifacts already and the first `hl install` adopts them, writing the manifest and no file.
+    artifacts already and the first `loom install` adopts them, writing the manifest and no file.
     Returns the library.
     """
     library = library_with(tmp_path, only="The one skill.")
@@ -282,7 +282,7 @@ def test_backups_lists_an_id_rollback_accepts(
 ) -> None:
     """**Ruling R113, and the assertion is that the two commands agree.**
 
-    A listing whose ids `hl rollback` would not take is not a listing. So the id is read out of
+    A listing whose ids `loom rollback` would not take is not a listing. So the id is read out of
     this command's payload and passed straight to the other one, which is the whole journey
     R54's argument describes and which no test could make before T-24.
     """
@@ -308,10 +308,10 @@ def test_backups_lists_an_id_rollback_accepts(
 
 
 def test_backups_lists_only_this_targets_own(runner: CliRunner, tmp_path: Path) -> None:
-    """Ruling R43, the same filter `hl rollback` makes without an id, and one definition of it.
+    """Ruling R43, the same filter `loom rollback` makes without an id, and one definition of it.
 
     One state root holds every target's backups. A listing that showed them all would offer a
-    user ids that `hl rollback --target` would put back over a different directory — or refuse,
+    user ids that `loom rollback --target` would put back over a different directory — or refuse,
     which is no better for a command whose job is to say what can be undone.
     """
     library = library_with(tmp_path, only="The one skill.")
@@ -336,7 +336,7 @@ def test_backups_of_a_target_with_none_is_an_empty_listing_and_not_a_failure(
 
     And it needs **no manifest** — this command takes no lock and reads no record (R85), because
     a target whose record was deleted still has its backups and that is exactly when a user
-    comes looking for them. `hl uninstall`, `hl rollback` and `hl clean` all refuse such a
+    comes looking for them. `loom uninstall`, `loom rollback` and `loom clean` all refuse such a
     target; this one answers it.
     """
     result = run(runner, None, "backups", "--target", str(empty_target), "--json")

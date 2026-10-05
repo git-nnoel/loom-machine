@@ -1,4 +1,4 @@
-"""`hl install --resolve` — two write use cases in one command. Feature F-15, rulings R54, R104.
+"""`loom install --resolve` — two write use cases in one command. Feature F-15, rulings R54, R104.
 
 This is the only command in the project that runs **two** write use cases, and the two things
 that can go wrong with it are invisible to every layer below:
@@ -29,7 +29,7 @@ from typing import Any
 
 from typer.testing import CliRunner
 
-from harness_library.infrastructure.manifest_store import read_manifest
+from loom.infrastructure.manifest_store import read_manifest
 from tests.cli.write.conftest import (
     FIXTURE_LIBRARY,
     digests,
@@ -220,7 +220,7 @@ def test_the_resolve_help_says_that_target_does_not_pin(runner: CliRunner) -> No
     assert result.exit_code == 0
     rendered = flattened(result.stdout)
     assert "does NOT pin the file" in rendered
-    assert "NEXT hl install writes the library's version over the copy you kept" in rendered
+    assert "NEXT loom install writes the library's version over the copy you kept" in rendered
 
 
 def flattened(rendered: str) -> str:
@@ -337,7 +337,7 @@ def test_an_editor_that_cannot_be_run_is_reported_with_the_same_status(
     hang: there is no such program to wait for.
     """
     conflicted(tmp_path, empty_target)
-    monkeypatch.setenv("EDITOR", "hl-no-such-editor --wait")
+    monkeypatch.setenv("EDITOR", "loom-no-such-editor --wait")
 
     result = run(
         runner,
@@ -351,4 +351,4 @@ def test_an_editor_that_cannot_be_run_is_reported_with_the_same_status(
     )
 
     assert result.exit_code == 14
-    assert "hl-no-such-editor --wait" in result.stderr
+    assert "loom-no-such-editor --wait" in result.stderr

@@ -3,9 +3,9 @@
 **Date:** 2026-09-01 · **Base:** `main` at `cd687cd` · **Author:** backend specialist
 **Subject:** `~/.claude/` — six skills, two agents, 36 files, 668 406 bytes (652.7 KiB)
 
-Every command below was run exactly as written and its output pasted verbatim. The `hl` console
-script resolves only from `/project/harness-library/.venv/bin`; every session below prefixed
-`export PATH="/project/harness-library/.venv/bin:$PATH"`.
+Every command below was run exactly as written and its output pasted verbatim. The `loom` console
+script resolves only from `/project/loom-machine/.venv/bin`; every session below prefixed
+`export PATH="/project/loom-machine/.venv/bin:$PATH"`.
 
 ---
 
@@ -14,10 +14,10 @@ script resolves only from `/project/harness-library/.venv/bin`; every session be
 | F | Claim | Verdict |
 |---|---|---|
 | **F-1** | Every artifact lists, invalid ones included; filters and sorts defined; superseded ranked below successors (R8) | **PASS** |
-| **F-2** | `hl show` renders an invalid artifact with its findings rather than raising | **PASS** |
+| **F-2** | `loom show` renders an invalid artifact with its findings rather than raising | **PASS** |
 | **F-3** | ~~Phrase in a reference found with path/line/context~~; 184 KB HTML reported skipped as *not a markdown reference* | **PASS** |
-| **F-4** | V1–V7 fire on purpose-built content; `hl validate` exits non-zero on ERROR | **PASS on mechanism, but see D-1** |
-| **F-5** | `hl list --collection` returns exactly the declared members | **NOT PROVABLE HERE** — `~/.claude` declares no collections (L6) |
+| **F-4** | V1–V7 fire on purpose-built content; `loom validate` exits non-zero on ERROR | **PASS on mechanism, but see D-1** |
+| **F-5** | `loom list --collection` returns exactly the declared members | **NOT PROVABLE HERE** — `~/.claude` declares no collections (L6) |
 | **F-6** | Handshake enumerates four tools read from the server; each returns its payload; `get_reference` carries no parent entry text | **PASS** |
 
 **The software does what F-1 through F-6 claim.** It also found three real faults in the real
@@ -38,7 +38,7 @@ That is D-1 below, and it is the most important thing in this document.
 
 - **tags** read empty for all eight artifacts — not "no tags declared", simply nothing to declare
   them in;
-- **collections** read empty — `hl collections` prints *This library declares no collections*, and
+- **collections** read empty — `loom collections` prints *This library declares no collections*, and
   **F-5 is untestable against this tree**;
 - **supersession** reads empty — the `SUPERSEDED BY` column is `-` for both redirect stubs, R8's
   ranking never engages, and V3's exemption cannot fire. This is the whole of deliverable 2.
@@ -54,7 +54,7 @@ six features are only partly exercised by it.
 
 ## 1. The finished CLI against the real library, read-only
 
-### `hl --library ~/.claude list`
+### `loom --library ~/.claude list`
 
 ```
 ID                                   KIND       STATUS   TAGS  SUPERSEDED BY  FILES
@@ -73,7 +73,7 @@ skill/solution-designer              directory  ok       -     -              7
 Exit code `0`. All eight artifacts appear, five of them invalid — **nothing is hidden because it is
 broken**, which is F-1's core claim and the failure the product exists to close.
 
-### `hl --library ~/.claude list --json`
+### `loom --library ~/.claude list --json`
 
 Contract C-7 fields, one row per artifact (findings elided to their codes):
 
@@ -92,7 +92,7 @@ skill/solution-designer              | True     | 2026-08-25T18:03:26Z | []   | 
 `total=8`, `sort=name`. Every nullable field is present-and-null as C-7 promises; `superseded_by`
 is `null` on both stubs, not absent.
 
-### `hl --library ~/.claude validate`
+### `loom --library ~/.claude validate`
 
 ```
 skill/developers-orchestration  [INVALID]  skills/developers-orchestration
@@ -128,7 +128,7 @@ agent/frontend-developer-specialist  [INVALID]  agents/frontend-developer-specia
 Exit code `1`. Note **0 warnings**: no symlink, no swap file, no vendor tree anywhere in the real
 library, so V6 never fires here and R22's "a WARNING never blocks" is not exercised by this tree.
 
-### `hl --library ~/.claude collections` and `--json`
+### `loom --library ~/.claude collections` and `--json`
 
 ```
 This library declares no collections.
@@ -139,7 +139,7 @@ This library declares no collections.
 
 Both exit `0`. Correct and unhelpful — see L6 above. **F-5 is unproven against real content.**
 
-### `hl --library ~/.claude show skill/frontend-system-pattern`
+### `loom --library ~/.claude show skill/frontend-system-pattern`
 
 F-2's exact case: an invalid artifact rendered rather than raised on.
 
@@ -176,7 +176,7 @@ files (9, 280288 bytes)
 
 ### 2a. Without `library.yaml` — seven findings, exactly as L5 predicted
 
-Counted from `hl --library ~/.claude validate --json`:
+Counted from `loom --library ~/.claude validate --json`:
 
 ```
   7  V3  agent/backend-developer-specialist
@@ -205,7 +205,7 @@ artifacts:
     superseded_by: skill/frontend-system-pattern
 ```
 
-`hl --library <copy> validate` then reports:
+`loom --library <copy> validate` then reports:
 
 ```
 skill/frontend-system-pattern  [INVALID]  skills/frontend-system-pattern
@@ -229,14 +229,14 @@ agent/frontend-developer-specialist  [INVALID]  agents/frontend-developer-specia
 | V3 on `skill/developers-orchestration` | 6 | **0** |
 | V3 on `skill/frontend-ctg-system-pattern` | 1 | **0** |
 | V3 on the two agents | 8 | 8 (unchanged) |
-| both stubs' `STATUS` in `hl list` | `INVALID` | `ok` |
-| both stubs' rank in `hl list` | interleaved by name | **last two rows**, R8 applied |
+| both stubs' `STATUS` in `loom list` | `INVALID` | `ok` |
+| both stubs' rank in `loom list` | interleaved by name | **last two rows**, R8 applied |
 | `SUPERSEDED BY` column | `-` | `skill/delivery-lead`, `skill/frontend-system-pattern` |
 
 The exemption is exactly the seven-finding delta. **Charter §8's most important rule interaction
 works on real content.**
 
-`hl list` on the copy, showing R8:
+`loom list` on the copy, showing R8:
 
 ```
 ID                                   KIND       STATUS   TAGS  SUPERSEDED BY                  FILES
@@ -266,7 +266,7 @@ So a user has two ways to close the gap, and they are not equivalent in cost:
   puts library-level metadata inside a document a skill loader will also parse.
 
 **The gap, stated plainly:** the real library declares neither. Until someone authors one of the
-two, the two redirect stubs report seven ERRORs that are all correct prose, and `hl validate`
+two, the two redirect stubs report seven ERRORs that are all correct prose, and `loom validate`
 exits non-zero on a library whose stubs are working exactly as designed.
 
 ---
@@ -276,7 +276,7 @@ exits non-zero on a library whose stubs are working exactly as designed.
 The estimate in play was *"imperceptible at roughly 750 KB across eight artifacts."* Measured
 subject: 36 files, 668 406 bytes.
 
-**Method.** Ten runs of `hl --library ~/.claude list > /dev/null` timed with `/usr/bin/time -f %e`,
+**Method.** Ten runs of `loom --library ~/.claude list > /dev/null` timed with `/usr/bin/time -f %e`,
 each a fresh process. Then the same cost decomposed: bare interpreter, interpreter + import of the
 CLI module with no work done, and the scan itself timed in-process with `time.perf_counter()`
 around `FilesystemArtifactRepository(root).list_all()` (which forces the whole snapshot — walk,
@@ -285,11 +285,11 @@ available.
 
 | Measurement | Result |
 |---|---|
-| `hl list`, end to end, 10 runs | 2.19 – 2.26 s (median **2.21 s**) |
+| `loom list`, end to end, 10 runs | 2.19 – 2.26 s (median **2.21 s**) |
 | bare `python -c pass` | 0.03 s |
-| `python -c "import harness_library.cli.main"` | **2.15 – 2.23 s** |
+| `python -c "import loom.cli.main"` | **2.15 – 2.23 s** |
 | the scan itself, in-process, 5 reps | **15.9 – 17.5 ms** |
-| `hl mcp` cold start to `initialize` response, 5 runs | 1.85 – 1.92 s (median **1.88 s**) |
+| `loom mcp` cold start to `initialize` response, 5 runs | 1.85 – 1.92 s (median **1.88 s**) |
 
 **Verdict: the estimate held for the thing it described and was measuring the wrong thing.**
 The scan is ~16 ms — genuinely imperceptible, and about 0.7 % of what a user waits for. The other
@@ -298,18 +298,18 @@ The scan is ~16 ms — genuinely imperceptible, and about 0.7 % of what a user w
 `python -X importtime` names the cost:
 
 ```
-import time:      1837 |    1848645 | harness_library.cli.main
-import time:       346 |    1305417 |   harness_library.mcp
-import time:       429 |    1304623 |     harness_library.mcp.dispatch
+import time:      1837 |    1848645 | loom.cli.main
+import time:       346 |    1305417 |   loom.mcp
+import time:       429 |    1304623 |     loom.mcp.dispatch
 import time:        42 |    1295873 |       mcp.types
 import time:    302568 |     302568 |         mcp_types._v2026_07_28
 import time:    275116 |     275765 |         mcp_types._v2025_11_25
 import time:    229399 |     240562 |         mcp_types._types
-import time:       452 |     214643 |   harness_library.application.read
+import time:       452 |     214643 |   loom.application.read
 ```
 
-`cli/main.py` imports `from harness_library.mcp import serve_stdio` at module scope for the sake of
-one command. **`hl list` pays 1.31 s to import the MCP SDK it never touches** — 59 % of its total
+`cli/main.py` imports `from loom.mcp import serve_stdio` at module scope for the sake of
+one command. **`loom list` pays 1.31 s to import the MCP SDK it never touches** — 59 % of its total
 runtime. See D-3.
 
 **Consequence for the original question:** no caching is warranted. R5's git subprocess cost is also
@@ -340,7 +340,7 @@ Response:
     "capabilities": {"experimental": {}, "tools": {"listChanged": false}},
     "instructions": "A read-only view of a Claude Code harness library: its skills, its agents, their references and their validation findings. Call `list_artifacts` first to see what exists, `search_artifacts` to find a phrase across entry documents and markdown references, and `get_artifact` for one artifact in full. Prefer `get_reference` when you need a single reference file: these skills are reference-heavy and the entry document alone can run to hundreds of lines.",
     "protocolVersion": "2025-06-18",
-    "serverInfo": {"name": "harness-library", "title": "Harness library", "version": "0.1.0"}
+    "serverInfo": {"name": "loom-machine", "title": "Harness library", "version": "0.1.0"}
   }
 }
 ```
@@ -443,7 +443,7 @@ correct: it is text, so "binary" would be a false diagnosis, which is why R25/R2
 `preserveAspectRatio` appears **only** inside that HTML, nowhere in any `.md` in the library.
 
 ```
-$ hl --library ~/.claude search preserveAspectRatio
+$ loom --library ~/.claude search preserveAspectRatio
 No matches for 'preserveAspectRatio'.
 
 0 match(es).
@@ -484,7 +484,7 @@ is told, by name, which two files were not looked at.
 occurs in both the HTML *and* a markdown reference:
 
 ```
-$ hl --library ~/.claude search "CTG Sans"
+$ loom --library ~/.claude search "CTG Sans"
 skill/frontend-ctg-system-pattern:SKILL.md:3: description: Use when building or reviewing ... CTG Sans typography, ...
 skill/frontend-system-pattern:references/brand-ctg.md:135:       sans:    ['CTG Sans', 'Bricolage Grotesque', ...
 skill/frontend-system-pattern:references/brand-ctg.md:164: ## 3. Typography — CTG Sans is the brand typeface
@@ -580,7 +580,7 @@ an empty frontmatter mapping. Consequences:
 
 - two V5 ERRORs saying `required frontmatter key 'name' is missing` — about a file whose **second
   line is `name: frontend-system-pattern`**. True finding, false diagnosis;
-- `description` is `null` in every payload and `-` in `hl show`, so the artifact is unsearchable by
+- `description` is `null` in every payload and `-` in `loom show`, so the artifact is unsearchable by
   its own description and unreadable in a listing;
 - V2 cannot fire (it is silent when `name` is absent), so a *second* fault in the same file would
   be masked;
@@ -590,10 +590,10 @@ an empty frontmatter mapping. Consequences:
   carves out.
 
 Note the asymmetry that makes this dangerous: **Claude Code's own loader parses this file fine** —
-the skill's full description appears in a live session's skill listing. So `hl validate` calls
+the skill's full description appears in a live session's skill listing. So `loom validate` calls
 invalid a skill that the real runtime loads correctly. That is a false positive by the standard of
 "does this artifact work", and a true positive by the standard of "is this well-formed YAML".
-Which standard `hl` is supposed to hold is **an ambiguity I am not resolving** — see Open questions.
+Which standard `loom` is supposed to hold is **an ambiguity I am not resolving** — see Open questions.
 
 `scanner._read_entry`'s docstring already flagged this: *"Flagged to the delivery lead: a dedicated
 code would say it better."* T-9 is the event that flag was waiting for — it happened on the first
@@ -603,11 +603,11 @@ real run, on real content.
 `tests/infrastructure/test_repository.py::test_a_colon_in_an_unquoted_description_loses_the_whole_frontmatter`
 with `::test_quoting_the_same_description_makes_the_artifact_clean` as its positive control.
 
-### D-3 · `hl list` pays 1.31 s to import an MCP stack it never uses
+### D-3 · `loom list` pays 1.31 s to import an MCP stack it never uses
 
 **Severity: medium (usability), zero (correctness).** Measured in §3. `cli/main.py` does
-`from harness_library.mcp import serve_stdio` at module scope, so every `hl list`, `hl show`,
-`hl search`, `hl validate` and `hl collections` imports `mcp.types`, `mcp.client` and two versioned
+`from loom.mcp import serve_stdio` at module scope, so every `loom list`, `loom show`,
+`loom search`, `loom validate` and `loom collections` imports `mcp.types`, `mcp.client` and two versioned
 `mcp_types` schema modules costing 578 ms between them. A read-only listing of eight artifacts takes
 2.2 s, of which 16 ms is the actual work.
 
@@ -631,7 +631,7 @@ about to rise:
   the exposure is currently nil;
 - but the natural way to develop a skill against a live harness is
   `ln -s ~/work/my-skill ~/.claude/skills/my-skill`, and that is precisely the user this tool
-  serves. The failure mode is silent and self-consistent: `hl list` shows seven artifacts, the user
+  serves. The failure mode is silent and self-consistent: `loom list` shows seven artifacts, the user
   has eight, and nothing anywhere says which one is missing or why;
 - initiative 02 **installs**. A symlink at the *target* is a different and more urgent question
   than one at the source — installing over a symlinked root either follows it (writing outside the
@@ -716,8 +716,8 @@ authored.
 1. **D-1 — what should V3 mean for a FILE-kind artifact?** Option 2 (resolve citations
    library-wide) is the one that preserves the rule's stated purpose, and it is a plan-level change
    to charter §8. Until it is ruled on, every agent in every library is permanently invalid.
-2. **D-2 — what is `hl validate` measuring?** Claude Code's loader reads
-   `frontend-system-pattern`'s frontmatter successfully; `hl` does not. If the standard is "would
+2. **D-2 — what is `loom validate` measuring?** Claude Code's loader reads
+   `frontend-system-pattern`'s frontmatter successfully; `loom` does not. If the standard is "would
    this load", the current behaviour is a false positive and the parser should be as lenient as the
    runtime. If the standard is "is this well-formed", the finding is right and only the *message* is
    wrong, and the fix is the dedicated code `scanner._read_entry` already asks for. **These are

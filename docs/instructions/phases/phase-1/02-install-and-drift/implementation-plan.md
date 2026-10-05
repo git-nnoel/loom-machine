@@ -4,9 +4,9 @@
 **Reviewed:** 2026-09-21 · `phase-reviewer` × 2 · NOT READY (9 blocking), then NOT READY (7 blocking) · all sixteen resolved; one disputed in writing (§12); see the design record for the decisions behind them
 **Phase:** 1 · **Initiative:** 02-install-and-drift · **Owner:** delivery lead
 **Last updated:** 2026-09-21
-**Derived from:** `docs/specs/2026-08-28-harness-library-design.md` §8 · initiative 01's record (R6, R9, R34, R38, R43–R48, R50–R54) · `2026-09-21-design.md` in this folder
+**Derived from:** `docs/specs/2026-08-28-loom-machine-design.md` §8 · initiative 01's record (R6, R9, R34, R38, R43–R48, R50–R54) · `2026-09-21-design.md` in this folder
 **Depends on:** initiative 01, **closed 2026-09-21 at 437 tests** — contracts C-1 (per-file hashes), C-4 (`read_bytes`), C-6 (error taxonomy), C-8 (root resolution). Nothing here touches C-5. **C-7 is touched once** — `FindingPayload`'s code range widens with V11 (T-20). **Blocks:** 03-http-api
-**Independently deployable:** Yes — `hl install` replaces the manual `cp -a` on its own
+**Independently deployable:** Yes — `loom install` replaces the manual `cp -a` on its own
 
 > This plan carries no code. Signatures in §6 are frozen shapes; bodies are the specialist's.
 
@@ -51,7 +51,7 @@ Installing into a non-Claude harness layout (R47, closed).
 
 | # | Capability | Spec |
 |---|---|---|
-| **F-8** | **See what would change.** A plan over every artifact and path, grouped by verdict, before anything is written. `hl diff` reports drift without proposing a write. | §8.1 |
+| **F-8** | **See what would change.** A plan over every artifact and path, grouped by verdict, before anything is written. `loom diff` reports drift without proposing a write. | §8.1 |
 | **F-9** | **Install safely.** Apply the plan, backing up every path it will touch first, refusing on conflict. | §8.1, §8.3 |
 | **F-10** | **Never touch what we did not write.** Foreign paths are reported and left. Removing one is a deliberate, listed act. | §8.2 |
 | **F-11** | **Undo.** Restore a target to its state before any previous apply. | §8.3 |
@@ -69,7 +69,7 @@ Installing into a non-Claude harness layout (R47, closed).
 | **DEC-11** | **Apply refuses on `LOCAL-EDIT` and `CONFLICT`; resolution is an explicit flag.** | Non-interactive and scriptable, and it cannot destroy an edit you forgot you made — the failure that started this project. Safe verdicts still write; the run stops with the plan printed. | Interactive prompting — rejected: hangs unattended and needs a second code path for CI. Back-up-and-overwrite — rejected: turns "I edited that" into a restore operation. R48. | T-16, T-22 |
 | **DEC-12** | **`skill/synced` needs no rule.** | Claude Code's sync bucket is in the target, unknown to library and manifest — which is precisely `FOREIGN`. A named exclusion would silently hide whatever else lands there. | Special-casing the name — rejected. Suppressing its V1 — rejected: V1 is true, and suppressing a true finding to tidy a report is the shape two cold reads just undid. R44. | T-14 |
 | **DEC-13** | **V11 covers both halves in one initiative.** | R38 deferred the symlinked root here precisely so the scan warning and the install refusal are decided together, rather than a warning in 01 and an unrelated policy in 02. | Warning only, install left alone — rejected: splits one question across two initiatives, which R38 existed to avoid. R46. | T-20 |
-| **DEC-14** | **The manifest lives outside every tree it describes.** | `~/.local/state/harness-library/manifests/<sha256 of target path>.json`. Inside the target it would be a file the harness must learn to ignore; inside the library it would be committed and would differ per machine. | Either tree — rejected for the reasons above. Spec §8.4. | T-13 |
+| **DEC-14** | **The manifest lives outside every tree it describes.** | `~/.local/state/loom/manifests/<sha256 of target path>.json`. Inside the target it would be a file the harness must learn to ignore; inside the library it would be committed and would differ per machine. | Either tree — rejected for the reasons above. Spec §8.4. | T-13 |
 
 ## 6. Contracts & interfaces (C-N)
 
@@ -99,7 +99,7 @@ which is three tasks later.
 
 ## 7. Work breakdown & dispatch (T-N)
 
-Owner `backend-developer-specialist`, territory `src/harness_library/**` and `tests/**`.
+Owner `backend-developer-specialist`, territory `src/loom/**` and `tests/**`.
 **Ids are project-wide** (R51); initiative 01 used T-1…T-11 and F-1…F-7.
 
 | # | Deliverable | Layer | Depends on |
@@ -115,7 +115,7 @@ Owner `backend-developer-specialist`, territory `src/harness_library/**` and `te
 | **T-20** | **V11** (C-3 amendment, R46, R53): detection in `infrastructure/scanner.py`, the finding on `AssembledLibrary.findings` **like V7 and V9 — not V8**, whose docstring says explicitly that it attaches to the colliding artifacts because it has two real ones; V11 has none, because the root was never scanned. That docstring enumerates its members and T-20 must extend it. — severity via `for_code()`, and the install refusal of **that artifact only**, not the run. | domain + infra + application | T-16 |
 | **T-21** | `--resolve library\|target` per artifact plus `$EDITOR` with both versions (F-15, R54), and `ExportArtifact` as a plain zip (F-16, R45). **Also carries R97**: `symlinked_roots()` into C-4 and `read_link`/`write_link` into C-12, both of which T-20 left additive because the contracts were outside its scope. | application | T-20 |
 | **T-22** | CLI: `install`, `diff`, `uninstall`, `rollback`, `clean`, `export`; `--target`, `--dry-run`, `--prune`, `--resolve`. Exit statuses per C-14. | cli | T-21 |
-| **T-24** | Corrections from acceptance: **D-2** the backup records and restores file mode (R110, C-13 amendment, a security regression); **D-1** `STATE_UNWRITABLE = 15` and the lock translates `OSError` (R111); **R112** a rollback with nothing to put back is not an error; **R113** `hl backups` exposes `BackupStore.list()`. | domain + infra + cli | T-23 |
+| **T-24** | Corrections from acceptance: **D-2** the backup records and restores file mode (R110, C-13 amendment, a security regression); **D-1** `STATE_UNWRITABLE = 15` and the lock translates `OSError` (R111); **R112** a rollback with nothing to put back is not an error; **R113** `loom backups` exposes `BackupStore.list()`. | domain + infra + cli | T-23 |
 | **T-23** | Acceptance against the real library **and** the target fixture, including a real `library.yaml` authored with the user (P-2), which also gives initiative 01's **F-5** its real-content proof (R39). | — | T-22 |
 
 **Parallelism: none.** T-13 and T-14 looked like a pair, but both are infrastructure and both depend on
@@ -128,7 +128,7 @@ Stated as **values**, per L39: a criterion naming a thing rather than a value is
 
 | F | Criterion |
 |---|---|
-| **F-8** | **Eight of the nine `Verdict` members are producible here**; `SKIPPED` is T-20's and the rule must never emit it, asserted by a sweep. Each producible member is produced by a fixture built for it and asserted **as a verdict value**. The three impossible hash combinations raise rather than defaulting. `CREATE` fires for a library artifact absent from manifest and target; `PRUNE` for a manifest path gone from the library; `MANIFEST_REPAIR` rewrites the manifest and leaves every file byte-identical, asserted on the files. `hl diff` on an untouched target reports `UNCHANGED` for every path and exits 0. |
+| **F-8** | **Eight of the nine `Verdict` members are producible here**; `SKIPPED` is T-20's and the rule must never emit it, asserted by a sweep. Each producible member is produced by a fixture built for it and asserted **as a verdict value**. The three impossible hash combinations raise rather than defaulting. `CREATE` fires for a library artifact absent from manifest and target; `PRUNE` for a manifest path gone from the library; `MANIFEST_REPAIR` rewrites the manifest and leaves every file byte-identical, asserted on the files. `loom diff` on an untouched target reports `UNCHANGED` for every path and exits 0. |
 | **F-9** | A plan mixing safe and conflicted entries **writes every safe entry**, leaves every conflicted artifact byte-identical, and exits `INCOMPLETE = 6` — all three asserted in one test, because that combination is the ambiguity DEC-11 exists to settle. Installed files carry mode `0644` and directories `0755`, asserted on the stat (R56). **The manifest exists before the first file is written** — asserted by injecting a failure into the first file write and finding the manifest already on disk (R63). **A failed manifest write leaves the target byte-identical** and exits `MANIFEST_UNWRITABLE = 11`. A backup exists before the first byte is written. **A failed backup or a failed manifest write leaves the target byte-identical**, asserted per file — that is what R63's ordering buys. A failure at the *k*-th file write leaves earlier files written and the manifest over-claiming, which is deliberate: those paths return as `LOCAL_EDIT` on the next diff and the user is asked, rather than `FOREIGN` and unrecoverable. **Apply does not self-restore mid-run; that is rollback (F-11, T-18)** — R80. **Apply never writes a path absent from the plan**, asserted by a write-recording fake. **Apply refuses when the backup cannot be written**, simulated by a read-only backup directory. |
 | **F-10** | A foreign path is **byte-identical** after apply, asserted on the file, not on the report. `clean --foreign` lists every path before removing any, and removes nothing the manifest knows. |
 | **F-11** | Rollback restores a target to its exact prior hash set, asserted per file. |

@@ -18,8 +18,8 @@ from typing import Any
 
 from mcp.types import CallToolResult, TextContent
 
-from harness_library.infrastructure.repository import FilesystemArtifactRepository
-from harness_library.mcp import TOOLS, TOOLS_BY_NAME, call_tool
+from loom.infrastructure.repository import FilesystemArtifactRepository
+from loom.mcp import TOOLS, TOOLS_BY_NAME, call_tool
 
 
 def envelope_of(result: CallToolResult) -> dict[str, Any]:

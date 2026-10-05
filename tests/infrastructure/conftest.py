@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from harness_library.infrastructure.timestamps import FixedTimestamps
+from loom.infrastructure.timestamps import FixedTimestamps
 
 FIXTURE_LIBRARY = Path(__file__).resolve().parent.parent / "fixtures" / "library"
 """The committed fixture library. See `tests/fixtures/README.md`."""

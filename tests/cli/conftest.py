@@ -21,7 +21,7 @@ from typing import Any, Protocol
 import pytest
 from typer.testing import CliRunner, Result
 
-from harness_library.cli.main import app
+from loom.cli.main import app
 
 FIXTURE_LIBRARY = Path(__file__).resolve().parent.parent / "fixtures" / "library"
 """The committed fixture library — lesson L6: `~/.claude/` is a target layout, not a library."""
@@ -29,13 +29,14 @@ FIXTURE_LIBRARY = Path(__file__).resolve().parent.parent / "fixtures" / "library
 
 @pytest.fixture(autouse=True)
 def no_ambient_library(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Remove `$HL_LIBRARY` from every test that does not set it deliberately.
+    """Remove `$LOOM_LIBRARY` from every test that does not set it deliberately.
 
     Autouse and not optional: contract C-8's precedence is the thing this suite proves, and a
-    developer with `HL_LIBRARY` exported in their shell would otherwise get a different answer from
-    the same test than CI does — the precedence tests would pass locally for the wrong reason.
+    developer with `LOOM_LIBRARY` exported in their shell would otherwise get a different answer
+    from the same test than CI does — the precedence tests would pass locally for the wrong
+    reason.
     """
-    monkeypatch.delenv("HL_LIBRARY", raising=False)
+    monkeypatch.delenv("LOOM_LIBRARY", raising=False)
 
 
 @pytest.fixture
@@ -49,7 +50,7 @@ def fixture_library() -> Path:
 
 
 class Invoke(Protocol):
-    """Calling convention of the `hl` fixture: bare arguments, one `Result` back."""
+    """Calling convention of the `loom` fixture: bare arguments, one `Result` back."""
 
     def __call__(self, *arguments: str) -> Result: ...
 
@@ -61,8 +62,8 @@ def runner() -> CliRunner:
 
 
 @pytest.fixture
-def hl(runner: CliRunner, fixture_library: Path) -> Iterator[Invoke]:
-    """Invoke `hl` against the committed fixture library."""
+def loom_cli(runner: CliRunner, fixture_library: Path) -> Iterator[Invoke]:
+    """Invoke `loom` against the committed fixture library."""
 
     def invoke(*arguments: str) -> Result:
         return runner.invoke(app, ["--library", str(fixture_library), *arguments])

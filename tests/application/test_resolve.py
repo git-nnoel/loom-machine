@@ -22,15 +22,15 @@ from datetime import UTC, datetime
 
 import pytest
 
-from harness_library.application.read.drift import UNHASHED_TARGET_SHA, diff_against_target
-from harness_library.application.write import (
+from loom.application.read.drift import UNHASHED_TARGET_SHA, diff_against_target
+from loom.application.write import (
     ComparisonResult,
     ResolveResult,
     compare_versions,
     plan_install,
     resolve_conflict,
 )
-from harness_library.domain.errors import (
+from loom.domain.errors import (
     BackupFailedError,
     ErrorCode,
     LockHeldError,
@@ -38,13 +38,13 @@ from harness_library.domain.errors import (
     NothingToResolveError,
     TargetUnwritableError,
 )
-from harness_library.domain.hashing import hash_bytes
-from harness_library.domain.identity import ArtifactType
-from harness_library.domain.install_plan import InstallPlan, Verdict
-from harness_library.domain.manifest import Manifest
-from harness_library.domain.raw import SymlinkedRoot
-from harness_library.domain.resolution import Resolution
-from harness_library.domain.target import TargetFile
+from loom.domain.hashing import hash_bytes
+from loom.domain.identity import ArtifactType
+from loom.domain.install_plan import InstallPlan, Verdict
+from loom.domain.manifest import Manifest
+from loom.domain.raw import SymlinkedRoot
+from loom.domain.resolution import Resolution
+from loom.domain.target import TargetFile
 from tests.application.fakes import (
     TARGET_PATH,
     FakeArtifactRepository,

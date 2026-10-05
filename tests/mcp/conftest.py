@@ -1,4 +1,4 @@
-"""Shared scaffolding for the MCP suite — two ways to talk to a **real** `hl mcp` process.
+"""Shared scaffolding for the MCP suite — two ways to talk to a **real** `loom mcp` process.
 
 Charter §10 tests this adapter over real JSON-RPC frames, and nothing here fakes the transport.
 Two levels, because they prove different things:
@@ -11,8 +11,8 @@ Two levels, because they prove different things:
   `outputSchema` the server declared — so contract C-7 is enforced by the client rather than
   asserted by us.
 
-Both spawn `python -m harness_library.cli.main … mcp`. `pyproject.toml` still declares no
-`[project.scripts]`, so there is no `hl` on PATH to spawn; the module entry point is the same code
+Both spawn `python -m loom.cli.main … mcp`. `pyproject.toml` still declares no
+`[project.scripts]`, so there is no `loom` on PATH to spawn; the module entry point is the same code
 by the same route.
 """
 
@@ -52,7 +52,7 @@ def fixture_library() -> Path:
 def spawn_arguments(library: Path | None, *extra: str) -> list[str]:
     """The command a client spawns, as a client would spawn it."""
     root = [] if library is None else ["--library", str(library)]
-    return [sys.executable, "-m", "harness_library.cli.main", *root, "mcp", *extra]
+    return [sys.executable, "-m", "loom.cli.main", *root, "mcp", *extra]
 
 
 @dataclass
@@ -93,7 +93,7 @@ def speak(
     extra: Sequence[str] = (),
     expect_responses: int | None = None,
 ) -> Conversation:
-    """Send raw JSON-RPC frames to a real `hl mcp` process and collect everything it wrote.
+    """Send raw JSON-RPC frames to a real `loom mcp` process and collect everything it wrote.
 
     Responses are read **before** stdin is closed. Closing it first races the server's shutdown
     against its last write, and a test that lost the final frame to that race would be flaky in the
@@ -178,14 +178,14 @@ def handshake_frames() -> Iterator[dict[str, Any]]:
         "params": {
             "protocolVersion": "2025-06-18",
             "capabilities": {},
-            "clientInfo": {"name": "harness-library-tests", "version": "0"},
+            "clientInfo": {"name": "loom-machine-tests", "version": "0"},
         },
     }
     yield {"jsonrpc": "2.0", "method": "notifications/initialized"}
 
 
 def with_client[T](library: Path, work: Callable[[ClientSession], Awaitable[T]]) -> T:
-    """Run `work` against a real MCP client session connected to a real `hl mcp` subprocess.
+    """Run `work` against a real MCP client session connected to a real `loom mcp` subprocess.
 
     Synchronous on the outside deliberately: the project has no async test plugin and needs none —
     the only async thing about this server is its transport, so one `asyncio.run` at the edge keeps

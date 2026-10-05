@@ -35,22 +35,22 @@ from pathlib import Path
 
 import pytest
 
-from harness_library.application.read.drift import diff_against_target
-from harness_library.application.write import (
+from loom.application.read.drift import diff_against_target
+from loom.application.write import (
     CleanResult,
     apply_install,
     clean_foreign,
     plan_install,
 )
-from harness_library.domain.identity import ArtifactType
-from harness_library.domain.manifest import Manifest
-from harness_library.infrastructure.backup import FilesystemBackupStore
-from harness_library.infrastructure.lock import FilesystemWriteLock
-from harness_library.infrastructure.manifest_store import (
+from loom.domain.identity import ArtifactType
+from loom.domain.manifest import Manifest
+from loom.infrastructure.backup import FilesystemBackupStore
+from loom.infrastructure.lock import FilesystemWriteLock
+from loom.infrastructure.manifest_store import (
     FilesystemManifestStore,
     read_manifest,
 )
-from harness_library.infrastructure.target import FilesystemTargetRepository
+from loom.infrastructure.target import FilesystemTargetRepository
 from tests.application.fakes import FakeArtifactRepository, make_artifact, make_file
 from tests.infrastructure.conftest import FIXTURE_TARGET
 

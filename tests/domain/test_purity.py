@@ -17,7 +17,7 @@ from types import ModuleType
 
 import pytest
 
-import harness_library.domain
+import loom.domain
 
 FORBIDDEN_ROOTS = frozenset(
     {
@@ -78,9 +78,7 @@ domain module means adding it here — which is the point.
 def _domain_modules() -> list[ModuleType]:
     modules = [
         importlib.import_module(info.name)
-        for info in pkgutil.iter_modules(
-            harness_library.domain.__path__, f"{harness_library.domain.__name__}."
-        )
+        for info in pkgutil.iter_modules(loom.domain.__path__, f"{loom.domain.__name__}.")
     ]
     assert modules, "positive control: no domain modules were discovered, so nothing was checked"
     discovered = {module.__name__.rpartition(".")[2] for module in modules}

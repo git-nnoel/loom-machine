@@ -24,9 +24,9 @@ from datetime import UTC, datetime
 
 import pytest
 
-from harness_library.application.read.drift import diff_against_target
-from harness_library.application.write import ApplyResult, apply_install, plan_install
-from harness_library.domain.errors import (
+from loom.application.read.drift import diff_against_target
+from loom.application.write import ApplyResult, apply_install, plan_install
+from loom.domain.errors import (
     BackupFailedError,
     ErrorCode,
     LockHeldError,
@@ -34,11 +34,11 @@ from harness_library.domain.errors import (
     RecordStaleError,
     TargetUnwritableError,
 )
-from harness_library.domain.identity import ArtifactType
-from harness_library.domain.install_plan import InstallPlan, PlanEntry, Verdict
-from harness_library.domain.manifest import Manifest
-from harness_library.domain.raw import SymlinkedRoot
-from harness_library.domain.validation import ValidationCode
+from loom.domain.identity import ArtifactType
+from loom.domain.install_plan import InstallPlan, PlanEntry, Verdict
+from loom.domain.manifest import Manifest
+from loom.domain.raw import SymlinkedRoot
+from loom.domain.validation import ValidationCode
 from tests.application.fakes import (
     TARGET_PATH,
     FakeArtifactRepository,
@@ -201,7 +201,7 @@ def test_planning_an_install_writes_nothing_to_the_target() -> None:
 
 
 def test_a_plan_over_three_agreeing_sources_proposes_nothing_and_is_complete() -> None:
-    """F-8: `hl diff` on an untouched target reports `UNCHANGED` for every path and exits 0. The
+    """F-8: `loom diff` on an untouched target reports `UNCHANGED` for every path and exits 0. The
     exit status is T-22's; what this layer owes it is a complete plan of unchanged entries."""
     files = (make_file(ENTRY, INSTALLED_BYTES), make_file("references/a.md", b"a\n"))
     plan = plan_install(
@@ -993,7 +993,7 @@ def test_the_manifest_is_on_disk_before_the_first_file_is_written() -> None:
     notices, because a run that does not fail cannot tell the two orders apart.
 
     Why this ordering: a manifest written first can only over-claim, and an over-claim comes back
-    as `LOCAL_EDIT` or `CONFLICT` on the next `hl diff`. A manifest written last would leave the
+    as `LOCAL_EDIT` or `CONFLICT` on the next `loom diff`. A manifest written last would leave the
     target modified with no record at all, every installed path reading `FOREIGN` — untouchable by
     install, unremovable by uninstall, recoverable by nothing this initiative ships.
     """

@@ -1,6 +1,6 @@
 """Ruling R3 and charter §11 — no log record reaches stdout, in any process, at any level.
 
-**This is the configuration T-8 inherits**, and `hl mcp` dies on a single stdout byte because
+**This is the configuration T-8 inherits**, and `loom mcp` dies on a single stdout byte because
 stdout is the JSON-RPC transport. The guarantee is therefore proven here rather than asserted in a
 docstring, and it is proven with a positive control: an absence test whose subject never emitted
 anything is a test that passes for the wrong reason.
@@ -15,8 +15,8 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from harness_library.cli.logging import configure_logging, get_logger
-from harness_library.cli.main import app
+from loom.cli.logging import configure_logging, get_logger
+from loom.cli.main import app
 
 
 def _emit_every_level() -> None:
@@ -77,7 +77,7 @@ def test_a_failing_command_writes_nothing_at_all_to_stdout(
     runner: CliRunner, fixture_library: Path
 ) -> None:
     """The failure path matters as much: a diagnosis on stdout would corrupt a JSON-RPC stream
-    just as effectively as a log line, and would break `hl list --json | jq` for a missing id."""
+    just as effectively as a log line, and would break `loom list --json | jq` for a missing id."""
     result = runner.invoke(
         app, ["--library", str(fixture_library), "show", "skill/does-not-exist", "--json"]
     )

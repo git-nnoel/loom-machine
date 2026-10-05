@@ -12,13 +12,13 @@ against it with confidence.
 
 | What | Where | Verify |
 |---|---|---|
-| Spec suite | `docs/specs/2026-08-28-harness-library-design.md` — **one file, Tier 1** | `ls docs/specs/` |
+| Spec suite | `docs/specs/2026-08-28-loom-machine-design.md` — **one file, Tier 1** | `ls docs/specs/` |
 | Instruction tree | `docs/instructions/` | `find docs/instructions -type f` |
 | Backend charter | `docs/instructions/backend-charter.md` | — |
 | Dispatch lessons | `docs/instructions/specialist-dispatch-lessons.md` | — |
 | Phase map | `docs/instructions/README.md` | — |
 | Initiatives | `docs/instructions/phases/phase-N/nn-<topic>/` | `find docs/instructions/phases -maxdepth 2 -type d` |
-| Backend code | `src/harness_library/{domain,application,infrastructure,cli,mcp}/` | `ls src/harness_library/` |
+| Backend code | `src/loom/{domain,application,infrastructure,cli,mcp}/` | `ls src/loom/` |
 | Tests | `tests/{domain,application,infrastructure,cli,mcp}/`, `tests/fixtures/` | `ls tests/` |
 | Fixture library | `tests/fixtures/library/` — the regression suite; **never deleted** | charter §10 |
 
@@ -35,7 +35,7 @@ no frontend territory**; initiative 04 opens one.
 
 ## 2. Precedence, and spec-versus-code disagreement
 
-1. `docs/specs/2026-08-28-harness-library-design.md` — behaviour, the locked decisions D1–D8, the data model.
+1. `docs/specs/2026-08-28-loom-machine-design.md` — behaviour, the locked decisions D1–D8, the data model.
 2. *(no brand reference; no mockups)*
 3. `docs/instructions/backend-charter.md` — how this team builds. §8's rule register is the operational authority on validation rules.
 
@@ -118,7 +118,7 @@ Every rule a design or plan may silently break. Each anchored, each checkable re
 | I-1 | `domain/` imports nothing from another layer and binds no forbidden stdlib | charter §2, L13 | `uv run lint-imports`; `uv run pytest tests/domain/test_purity.py` |
 | I-2 | `mcp/` never imports `application.write` | D6, charter §2 | `uv run lint-imports` — contract `mcp-is-read-only` |
 | I-3 | `cli` sits **above** `mcp`; `application` and `infrastructure` are siblings | R28 | `grep -A6 '^layers' pyproject.toml` |
-| I-4 | Nothing writes to stdout in the `hl mcp` process | D8, R3, charter §11 | `uv run pytest tests/mcp/test_stdout_purity.py` |
+| I-4 | Nothing writes to stdout in the `loom mcp` process | D8, R3, charter §11 | `uv run pytest tests/mcp/test_stdout_purity.py` |
 | I-5 | `is_valid` means **no ERROR finding**; a WARNING never blocks | R22, DEC-4 | `uv run pytest -k warning_finding_does_not_make` |
 | I-6 | A finding's severity comes from the register via `for_code()` | R13 | `uv run pytest -k severity_from_the_register` |
 | I-7 | Charter §8's register is the authority; a rule reaches a report or its row is decorative | R22, R23 | `uv run pytest tests/domain/test_validation.py` |
@@ -164,7 +164,7 @@ Incidents that actually happened here, and what they became. A reviewer should e
 | A ruling amended contract C-4 in the documents but no dispatch changed the protocol, so the ruling was unimplementable under `mypy --strict` | R26 — transcription is not amendment |
 | `[project.scripts]` was reported as committed and was not; a hand-verification passed against a **stale installed entry point** | R31, L34 |
 | V3 fired 15 times on the real library with **zero** true positives; the rule's scope was wrong, not its regex | DEC-9, R32 |
-| `hl validate` called a skill invalid that Claude Code loads fine, reporting "name is missing" about a file whose second line is `name:` | V10, R33 |
+| `loom validate` called a skill invalid that Claude Code loads fine, reporting "name is missing" about a file whose second line is `name:` | V10, R33 |
 | An interrupted mutation check was misdiagnosed as half-finished work by the orchestrator | L35 |
 
 **The shape to expect:** defects here are rules that are *wrong or unreachable*, documents that are

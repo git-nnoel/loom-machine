@@ -1,4 +1,4 @@
-"""Charter §11 — **nothing but JSON-RPC frames ever reaches stdout in the `hl mcp` process.**
+"""Charter §11 — **nothing but JSON-RPC frames ever reaches stdout in the `loom mcp` process.**
 
 This is the acceptance criterion the whole task lives or dies by, and it is asserted about *bytes*
 on a real pipe from a real process, because that is the only level at which the guarantee means
@@ -92,7 +92,7 @@ def test_the_answers_still_arrive_while_stdout_stays_pure(fixture_library: Path)
 def test_an_invalid_flag_writes_nothing_to_stdout(fixture_library: Path) -> None:
     """Feature F-6, and lesson L7 — Typer's own usage error must not reach the transport.
 
-    `hl mcp --nope` never gets as far as serving, so the SDK's fd-1 diversion is not protecting
+    `loom mcp --nope` never gets as far as serving, so the SDK's fd-1 diversion is not protecting
     anything here: this is charter §11 holding on its own, in the window before the transport
     exists. The positive control is on stderr, where the complaint belongs."""
     conversation = speak([], library=fixture_library, extra=["--nope"], expect_responses=0)

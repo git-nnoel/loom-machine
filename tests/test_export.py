@@ -22,8 +22,8 @@ import zipfile
 
 import pytest
 
-from harness_library.application.read import export_collection
-from harness_library.infrastructure.repository import FilesystemArtifactRepository
+from loom.application.read import export_collection
+from loom.infrastructure.repository import FilesystemArtifactRepository
 from tests.infrastructure.conftest import FIXED_TIMESTAMPS, FIXTURE_LIBRARY
 
 COLLECTION = "housekeeping"

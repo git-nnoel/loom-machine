@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from harness_library.domain.identity import ArtifactType, make_artifact_id, parse_artifact_id
+from loom.domain.identity import ArtifactType, make_artifact_id, parse_artifact_id
 
 
 def test_id_is_type_slash_name() -> None:

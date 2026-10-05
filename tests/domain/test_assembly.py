@@ -17,21 +17,21 @@ from datetime import UTC, datetime
 
 import pytest
 
-from harness_library.domain.artifact import Artifact, ArtifactFile, ArtifactKind
-from harness_library.domain.assembly import (
+from loom.domain.artifact import Artifact, ArtifactFile, ArtifactKind
+from loom.domain.assembly import (
     assemble_artifact,
     assemble_library,
     cited_reference_paths,
 )
-from harness_library.domain.hashing import content_hash_of_files, hash_bytes
-from harness_library.domain.identity import ArtifactType
-from harness_library.domain.metadata import (
+from loom.domain.hashing import content_hash_of_files, hash_bytes
+from loom.domain.identity import ArtifactType
+from loom.domain.metadata import (
     ArtifactMetadata,
     Collection,
     DuplicateKey,
     LibraryMetadata,
 )
-from harness_library.domain.raw import (
+from loom.domain.raw import (
     EntryParseError,
     RawArtifact,
     RawEntry,
@@ -39,7 +39,7 @@ from harness_library.domain.raw import (
     SkipReason,
     SymlinkedRoot,
 )
-from harness_library.domain.validation import Severity, ValidationCode
+from loom.domain.validation import Severity, ValidationCode
 
 SCANNED_AT = datetime(2026, 8, 31, 12, 0, tzinfo=UTC)
 NO_METADATA = LibraryMetadata.empty()
@@ -642,7 +642,7 @@ def test_a_library_with_no_collision_reports_no_v8() -> None:
 
 def test_v8_is_attached_to_the_artifacts_and_not_to_the_library() -> None:
     """Unlike V7 there *are* artifacts to hang it on, and hanging it only on the library would
-    leave `hl show skill/Foo` silent about the fault."""
+    leave `loom show skill/Foo` silent about the fault."""
     library = assemble_library([raw_skill("Foo"), raw_skill("foo")], NO_METADATA)
 
     assert library.findings == ()

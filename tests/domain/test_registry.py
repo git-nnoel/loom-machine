@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from harness_library.domain.artifact import ArtifactKind
-from harness_library.domain.identity import ArtifactType
-from harness_library.domain.registry import (
+from loom.domain.artifact import ArtifactKind
+from loom.domain.identity import ArtifactType
+from loom.domain.registry import (
     ARTIFACT_DIRECTORIES,
     ARTIFACT_TYPE_SPECS,
     TypeSpec,

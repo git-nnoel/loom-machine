@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from harness_library.domain.metadata import (
+from loom.domain.metadata import (
     EMPTY_ARTIFACT_METADATA,
     ArtifactMetadata,
     Collection,

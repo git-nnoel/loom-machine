@@ -15,8 +15,8 @@ from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 
-from harness_library.domain.artifact import ArtifactFile
-from harness_library.domain.manifest import Manifest, ManifestArtifact, ManifestStore
+from loom.domain.artifact import ArtifactFile
+from loom.domain.manifest import Manifest, ManifestArtifact, ManifestStore
 
 INSTALLED_AT = datetime(2026, 9, 21, 14, 30, tzinfo=UTC)
 

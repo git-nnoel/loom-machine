@@ -22,17 +22,17 @@ from datetime import UTC, datetime
 
 import pytest
 
-from harness_library.application.write import CleanResult, clean_foreign, foreign_entries
-from harness_library.domain.errors import (
+from loom.application.write import CleanResult, clean_foreign, foreign_entries
+from loom.domain.errors import (
     BackupFailedError,
     ErrorCode,
     LockHeldError,
     RecordStaleError,
     TargetUnwritableError,
 )
-from harness_library.domain.hashing import hash_bytes
-from harness_library.domain.install_plan import InstallPlan, PlanEntry, Verdict
-from harness_library.domain.manifest import Manifest
+from loom.domain.hashing import hash_bytes
+from loom.domain.install_plan import InstallPlan, PlanEntry, Verdict
+from loom.domain.manifest import Manifest
 from tests.application.fakes import (
     FakeBackupStore,
     FakeManifestStore,

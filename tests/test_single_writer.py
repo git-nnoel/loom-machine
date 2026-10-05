@@ -45,8 +45,8 @@ from pathlib import Path
 
 import pytest
 
-from harness_library.application.read.drift import diff_against_target
-from harness_library.application.write import (
+from loom.application.read.drift import diff_against_target
+from loom.application.write import (
     ApplyResult,
     CleanResult,
     PruneResult,
@@ -58,21 +58,21 @@ from harness_library.application.write import (
     rollback_install,
     uninstall_artifact,
 )
-from harness_library.domain.backup import BackupRecord, BackupStore
-from harness_library.domain.errors import ErrorCode, LockHeldError
-from harness_library.domain.hashing import hash_bytes
-from harness_library.domain.install_plan import InstallPlan, PlanEntry, Verdict
-from harness_library.domain.manifest import Manifest
-from harness_library.domain.repository import ArtifactRepository
-from harness_library.domain.target import TargetFile, TargetRepository
-from harness_library.infrastructure.backup import FilesystemBackupStore
-from harness_library.infrastructure.lock import (
+from loom.domain.backup import BackupRecord, BackupStore
+from loom.domain.errors import ErrorCode, LockHeldError
+from loom.domain.hashing import hash_bytes
+from loom.domain.install_plan import InstallPlan, PlanEntry, Verdict
+from loom.domain.manifest import Manifest
+from loom.domain.repository import ArtifactRepository
+from loom.domain.target import TargetFile, TargetRepository
+from loom.infrastructure.backup import FilesystemBackupStore
+from loom.infrastructure.lock import (
     SCHEMA_VERSION,
     FilesystemWriteLock,
     lock_path_for,
 )
-from harness_library.infrastructure.manifest_store import FilesystemManifestStore
-from harness_library.infrastructure.target import FilesystemTargetRepository
+from loom.infrastructure.manifest_store import FilesystemManifestStore
+from loom.infrastructure.target import FilesystemTargetRepository
 from tests.application.fakes import FakeArtifactRepository, make_artifact, make_file
 
 SKILL_NAME = "delivery-lead"

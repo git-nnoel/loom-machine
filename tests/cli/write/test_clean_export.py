@@ -1,11 +1,11 @@
-"""`hl clean` and `hl export`. Features F-10, F-12 and F-16, ruling R96.
+"""`loom clean` and `loom export`. Features F-10, F-12 and F-16, ruling R96.
 
-`hl clean` is the one command in this project that removes a path **nothing** describes — no
+`loom clean` is the one command in this project that removes a path **nothing** describes — no
 library, no manifest, no backup taken by anyone else. Its safety model is the listing, and
 ruling R96 states it as two halves this layer owns: *it lists by default, and removes only when
 asked*. Both are asserted here on the files, not on the report.
 
-`hl export` is the opposite: it writes one archive and touches no target at all. The criterion
+`loom export` is the opposite: it writes one archive and touches no target at all. The criterion
 F-16 is stated as is a **path list**, so that is what is asserted — against `zipfile`'s own
 `namelist()`, read back off the file the command wrote.
 """
@@ -121,7 +121,7 @@ def test_a_clean_and_rollback_puts_the_modes_back_too(
 ) -> None:
     """**Acceptance's D-2 repro, as a test. Ruling R110.**
 
-    `clean --foreign --remove` followed by `hl rollback` put every path's *content* back exactly
+    `clean --foreign --remove` followed by `loom rollback` put every path's *content* back exactly
     and its *mode* back never: on the real harness, 149 private files made world-readable and 56
     executables disarmed, by the recovery path. The command a user reaches for when they think
     better of a deletion left them worse off than the deletion did.

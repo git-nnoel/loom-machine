@@ -22,8 +22,8 @@ from datetime import UTC, datetime
 
 import pytest
 
-from harness_library.application.write import UninstallResult, uninstall_artifact
-from harness_library.domain.errors import (
+from loom.application.write import UninstallResult, uninstall_artifact
+from loom.domain.errors import (
     ArtifactNotFoundError,
     BackupFailedError,
     ErrorCode,
@@ -31,7 +31,7 @@ from harness_library.domain.errors import (
     RecordStaleError,
     TargetUnwritableError,
 )
-from harness_library.domain.manifest import Manifest
+from loom.domain.manifest import Manifest
 from tests.application.fakes import (
     TARGET_PATH,
     FakeBackupStore,
@@ -205,7 +205,7 @@ def test_a_loose_foreign_file_elsewhere_in_the_target_survives() -> None:
 def test_another_recorded_artifact_is_untouched() -> None:
     """Uninstall targets **one** artifact. The other's file and record both survive, asserted on
     the bytes and on the manifest, because `--prune` and `clean` are T-19's and neither of them
-    is what `hl uninstall <id>` means."""
+    is what `loom uninstall <id>` means."""
     target = a_target()
 
     result = uninstall(target)
@@ -237,8 +237,8 @@ def test_uninstall_never_scans_the_target() -> None:
 def test_the_manifest_drops_the_artifact_and_keeps_every_other_field() -> None:
     """The record must stop claiming what is no longer there, and must keep claiming what is.
 
-    `backup_id` becomes this run's backup — which is what makes `hl rollback` able to undo an
-    `hl uninstall` — and `library_git_sha` is carried over, because the artifacts still recorded
+    `backup_id` becomes this run's backup — which is what makes `loom rollback` able to undo an
+    `loom uninstall` — and `library_git_sha` is carried over, because the artifacts still recorded
     really did come from that library state and this run changed none of them.
     """
     target = a_target()
@@ -328,7 +328,7 @@ def test_a_backup_of_every_path_it_will_delete_is_taken_before_the_first_delete(
     remove.
 
     The backup covers exactly the paths that will go, and the id reaches the new record — which
-    is what makes `hl rollback` able to undo this run.
+    is what makes `loom rollback` able to undo this run.
     """
     target = a_target()
     backups = FakeBackupStore(target)

@@ -3,7 +3,7 @@
 Real sentinels under `tmp_path`, never a fake filesystem (charter §10) — the whole mechanism *is*
 a filesystem behaviour, and a fake that answered "already exists" would be asserting its own
 `if`. Every state root here is `tmp_path`; `default_state_root()` is called by nothing but the
-composition root, so no test creates a real `~/.local/state/harness-library`.
+composition root, so no test creates a real `~/.local/state/loom`.
 
 **What this module cannot see.** It cannot see that an apply takes the lock, that it releases it
 when the apply fails, or that a second apply consequently writes nothing. Those are
@@ -24,15 +24,15 @@ from pathlib import Path
 
 import pytest
 
-from harness_library.domain.errors import ErrorCode, LockHeldError, StateUnwritableError
-from harness_library.domain.lock import WriteLock
-from harness_library.infrastructure.lock import (
+from loom.domain.errors import ErrorCode, LockHeldError, StateUnwritableError
+from loom.domain.lock import WriteLock
+from loom.infrastructure.lock import (
     LOCK_SUFFIX,
     SCHEMA_VERSION,
     FilesystemWriteLock,
     lock_path_for,
 )
-from harness_library.infrastructure.manifest_store import (
+from loom.infrastructure.manifest_store import (
     MANIFESTS_DIRECTORY_NAME,
     manifest_path_for,
 )
@@ -57,7 +57,7 @@ def a_pid_that_is_gone() -> int:
     """The pid of a process that really has exited and been reaped.
 
     A spawned-and-waited child rather than a large literal, so the pid check is exercised against
-    the same `ProcessLookupError` a crashed `hl` would produce. The precondition is asserted
+    the same `ProcessLookupError` a crashed `loom` would produce. The precondition is asserted
     rather than assumed: if this machine managed to reuse the pid in the microseconds since, the
     test says so instead of quietly proving nothing.
     """
@@ -237,7 +237,7 @@ def test_a_second_lock_on_a_held_target_is_refused(tmp_path: Path) -> None:
 
 
 def test_a_sentinel_naming_this_very_process_is_still_refused(tmp_path: Path) -> None:
-    """The lock is per **target**, not per process. Two threads in one `hl` interleaving two
+    """The lock is per **target**, not per process. Two threads in one `loom` interleaving two
     applies is the same corruption as two processes doing it, so "the holder is me" is not a
     reason to proceed — and it is exactly what the test above relies on."""
     state_root = tmp_path / "state"

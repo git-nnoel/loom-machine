@@ -1,9 +1,9 @@
 """Charter §13 and ruling R104 — the one object that reads the environment, and `$EDITOR`.
 
-`$HL_LIBRARY`'s half of this is proven in `test_composition.py`, which walks contract C-8's
+`$LOOM_LIBRARY`'s half of this is proven in `test_composition.py`, which walks contract C-8's
 precedence. What T-22 adds is the variable that is **not** in this tool's namespace: `$EDITOR`
 belongs to the user's shell and every other editor-launching program on the machine already
-reads it, so an `HL_EDITOR` nobody sets would open a different editor from `git commit`.
+reads it, so an `LOOM_EDITOR` nobody sets would open a different editor from `git commit`.
 
 **No test in this module — or anywhere in this suite — spawns an editor.** T-21 made the runner
 an injected parameter for that reason, and the one thing left to prove at this layer is the
@@ -14,23 +14,23 @@ from __future__ import annotations
 
 import pytest
 
-from harness_library.cli.composition import ReportingConflictEditor
-from harness_library.cli.settings import Settings, editor_command
-from harness_library.domain.errors import EditorFailedError, ErrorCode
-from harness_library.domain.resolution import ConflictVersions
+from loom.cli.composition import ReportingConflictEditor
+from loom.cli.settings import Settings, editor_command
+from loom.domain.errors import EditorFailedError, ErrorCode
+from loom.domain.resolution import ConflictVersions
 
 
 def test_the_editor_comes_from_editor_and_not_from_the_hl_namespace(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The `validation_alias` is what takes this one field outside the `HL_` prefix.
+    """The `validation_alias` is what takes this one field outside the `LOOM_` prefix.
 
     Asserted in **both** directions, because an alias that silently stopped working would make
-    `$EDITOR` read as unset and an `HL_EDITOR` that quietly started working would open something
+    `$EDITOR` read as unset and an `LOOM_EDITOR` that quietly started working would open something
     the user never configured.
     """
     monkeypatch.setenv("EDITOR", "vim -d")
-    monkeypatch.setenv("HL_EDITOR", "something-else")
+    monkeypatch.setenv("LOOM_EDITOR", "something-else")
 
     assert Settings().editor == "vim -d"
 

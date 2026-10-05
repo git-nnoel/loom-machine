@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import pytest
 
-from harness_library.domain.artifact import ArtifactFile
-from harness_library.domain.hashing import (
+from loom.domain.artifact import ArtifactFile
+from loom.domain.hashing import (
     content_hash,
     content_hash_of_digests,
     content_hash_of_files,

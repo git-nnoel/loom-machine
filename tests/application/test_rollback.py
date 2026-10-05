@@ -21,15 +21,15 @@ from datetime import UTC, datetime
 
 import pytest
 
-from harness_library.application.write import RollbackResult, rollback_install
-from harness_library.domain.errors import (
+from loom.application.write import RollbackResult, rollback_install
+from loom.domain.errors import (
     BackupNotFoundError,
     ErrorCode,
     LockHeldError,
     RecordStaleError,
     RestoreFailedError,
 )
-from harness_library.domain.manifest import Manifest
+from loom.domain.manifest import Manifest
 from tests.application.fakes import (
     TARGET_PATH,
     FakeBackupStore,
@@ -127,7 +127,7 @@ def test_the_new_record_carries_the_digest_the_restored_file_now_holds() -> None
     The record apply left behind claimed the library's digest for this path. After the rollback
     the path holds what the *previous* install put there, and the record has to say so — a
     manifest still claiming the newer digest would report the restored file as a `LOCAL_EDIT` on
-    the next `hl diff` and ask the user to decide about a file this tool put back itself.
+    the next `loom diff` and ask the user to decide about a file this tool put back itself.
 
     The digest is read off the restored disk because there is nowhere else to read it from:
     `ManifestStore` has one member (C-15) and apply overwrote the record that described this
@@ -165,7 +165,7 @@ def test_the_record_keeps_the_is_text_the_previous_one_carried() -> None:
     so the flag is carried over from the record rather than decided a second time here.
 
     A binary file restored by a rollback stays binary in the manifest, which is what keeps it out
-    of `hl search` afterwards.
+    of `loom search` afterwards.
     """
     binary = b"\x89PNG\r\n\x1a\n\x00rolled back\n"
     target = target_holding((INSTALLED_ENTRY, binary))

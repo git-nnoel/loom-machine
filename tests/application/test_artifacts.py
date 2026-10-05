@@ -12,14 +12,14 @@ from datetime import UTC, datetime
 
 import pytest
 
-from harness_library.application.read import (
+from loom.application.read import (
     ArtifactFilter,
     SortKey,
     get_artifact,
     get_artifact_file,
     list_artifacts,
 )
-from harness_library.domain.errors import (
+from loom.domain.errors import (
     ArtifactFileNotFoundError,
     ArtifactNotFoundError,
     CollectionNotFoundError,
@@ -27,9 +27,9 @@ from harness_library.domain.errors import (
     FileNotTextError,
     InvalidFilePathError,
 )
-from harness_library.domain.identity import ArtifactType
-from harness_library.domain.metadata import Collection
-from harness_library.domain.validation import ValidationCode
+from loom.domain.identity import ArtifactType
+from loom.domain.metadata import Collection
+from loom.domain.validation import ValidationCode
 from tests.application.fakes import (
     FakeArtifactRepository,
     finding,

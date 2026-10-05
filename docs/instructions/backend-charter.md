@@ -122,14 +122,14 @@ it is emitted.**
 
 Structured logging to **stderr**, always. One line per MCP tool call.
 
-**Nothing may write to stdout in the `hl mcp` process** — not a log line, not a warning, not Typer's own
+**Nothing may write to stdout in the `loom mcp` process** — not a log line, not a warning, not Typer's own
 error output on a bad flag. stdout is the JSON-RPC channel. A single stray byte kills the client
 connection and surfaces as a malformed stream with no diagnosable cause. The stdout-purity test is an
 acceptance criterion, not a nicety. This is D8 turned into a mechanism instead of a promise.
 
 ## 12. Concurrency posture
 
-**Reads:** no locking. Multiple concurrent `hl mcp` processes are safe — each holds its own snapshot.
+**Reads:** no locking. Multiple concurrent `loom mcp` processes are safe — each holds its own snapshot.
 
 **Writes (initiative 02, ruling R50):** a **single-writer advisory lock** — an `O_EXCL` sentinel beside
 the manifest, held for the duration of an apply, released on exit, stale-broken by pid check. A second
@@ -138,7 +138,7 @@ apply against a held lock exits `LOCK_HELD = 10` without writing. **Built in T-1
 **Every write use case takes a `WriteLock` as a required keyword-only parameter** (C-16, R82) — a
 write path that simply does not take one keeps every gate green while sitting outside this section.
 
-**Reads take no lock** (R85). `hl diff` can therefore describe a target an install is midway through
+**Reads take no lock** (R85). `loom diff` can therefore describe a target an install is midway through
 writing. Stated, not fixed: locking reads would serialise the one operation that is always safe.
 
 **The state root is local-only** (R84). The staleness check reads the local process table, so a state
@@ -148,7 +148,7 @@ the sentinel for a human and is deliberately not part of the decision.
 ## 13. Configuration
 
 One settings object is the sole reader of the environment; no other module calls `os.environ`.
-Library-root precedence: `--library` flag → `$HL_LIBRARY` → current directory. Resolution **fails loudly**
+Library-root precedence: `--library` flag → `$LOOM_LIBRARY` → current directory. Resolution **fails loudly**
 on a directory that is not a library, rather than silently returning an empty list.
 
 ## 13b. The record-ordering rule (R86)

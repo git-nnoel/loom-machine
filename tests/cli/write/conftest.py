@@ -13,7 +13,7 @@ see what is being claimed.
 Two guards are worth naming, because both protect something outside this repository.
 
 **`sandbox_home` is autouse for this whole package.** `default_state_root()` is
-`~/.local/state/harness-library` and `default_target_root()` is `~/.claude`, so a test that
+`~/.local/state/loom` and `default_target_root()` is `~/.claude`, so a test that
 forgot `--target`, or any command at all, would reach into the developer's own machine. Pointing
 `$HOME` at `tmp_path` means the *real* code path runs — the same `Path.home()` a user gets —
 while everything it produces lands in the sandbox. Charter §10 forbids writing to `~/.claude/`
@@ -35,7 +35,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner, Result
 
-from harness_library.cli.main import app
+from loom.cli.main import app
 
 FIXTURE_LIBRARY = Path(__file__).resolve().parents[2] / "fixtures" / "library"
 """The committed fixture library — lesson L6: `~/.claude/` is a target layout, not a library."""
@@ -60,12 +60,12 @@ def sandbox_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
     Autouse in every module that imports it. See the module docstring: this is what makes it
     impossible for a test in this suite to touch the developer's real `~/.claude/` or their real
-    `~/.local/state/harness-library`, rather than merely unlikely.
+    `~/.local/state/loom`, rather than merely unlikely.
     """
     home = tmp_path / "home"
     home.mkdir(exist_ok=True)
     monkeypatch.setenv("HOME", str(home))
-    monkeypatch.delenv("HL_LIBRARY", raising=False)
+    monkeypatch.delenv("LOOM_LIBRARY", raising=False)
     monkeypatch.delenv("EDITOR", raising=False)
     return home
 
@@ -77,7 +77,7 @@ def state_root(sandbox_home: Path) -> Path:
     Computed the same way `manifest_store.default_state_root()` computes it, from the sandboxed
     home, so a test that reads a manifest back off disk reads the one the command really wrote.
     """
-    return sandbox_home / ".local" / "state" / "harness-library"
+    return sandbox_home / ".local" / "state" / "loom-machine"
 
 
 @pytest.fixture
@@ -158,6 +158,6 @@ def digests(root: Path) -> dict[str, str]:
 
 
 def run(runner: CliRunner, library: Path | None, *arguments: str) -> Result:
-    """Invoke `hl`, optionally against a library. Returns the `Result`; asserts nothing."""
+    """Invoke `loom`, optionally against a library. Returns the `Result`; asserts nothing."""
     root = [] if library is None else ["--library", str(library)]
     return runner.invoke(app, [*root, *arguments])

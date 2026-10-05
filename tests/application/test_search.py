@@ -17,13 +17,13 @@ from __future__ import annotations
 
 import pytest
 
-from harness_library.application.read import (
+from loom.application.read import (
     SEARCH_RESULT_LIMIT,
     ArtifactFilter,
     SearchSkipReason,
     search_artifacts,
 )
-from harness_library.domain.errors import ErrorCode, InvalidQueryError
+from loom.domain.errors import ErrorCode, InvalidQueryError
 from tests.application.fakes import (
     FakeArtifactRepository,
     make_artifact,
@@ -275,7 +275,7 @@ def test_an_empty_query_is_refused_rather_than_matching_everything() -> None:
 
 
 def test_search_honours_the_artifact_filter() -> None:
-    """One vocabulary for `hl list --tag x` and `hl search --tag x`, so they cannot disagree."""
+    """One vocabulary for `loom list --tag x` and `loom search --tag x`, so they cannot disagree."""
     tagged, tagged_contents = skill_with_entry("tagged", "needle here\n", tags=("process",))
     plain, plain_contents = skill_with_entry("plain", "needle here\n")
     repository = FakeArtifactRepository(

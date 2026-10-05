@@ -12,13 +12,13 @@ from pathlib import Path
 
 import pytest
 
-from harness_library.domain.errors import (
+from loom.domain.errors import (
     ErrorCode,
     HarnessLibraryError,
     LibraryYamlError,
 )
-from harness_library.domain.metadata import EMPTY_ARTIFACT_METADATA, LibraryMetadata
-from harness_library.infrastructure.library_yaml import (
+from loom.domain.metadata import EMPTY_ARTIFACT_METADATA, LibraryMetadata
+from loom.infrastructure.library_yaml import (
     LIBRARY_YAML_FILENAME,
     read_library_metadata,
 )
@@ -118,7 +118,7 @@ def test_a_malformed_file_is_not_confused_with_an_absent_one(tmp_path: Path) -> 
     assert read_library_metadata(tmp_path) == LibraryMetadata.empty()
 
 
-def test_the_error_is_a_harness_library_error_with_a_stable_code() -> None:
+def test_the_error_is_a_loom_error_with_a_stable_code() -> None:
     """Charter §9: adapters catch the base type and branch on `code`, never on the message."""
     error = LibraryYamlError("something", path="/library/library.yaml", line=7, column=3)
 

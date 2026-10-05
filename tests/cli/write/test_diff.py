@@ -1,15 +1,15 @@
-"""`hl diff` — the read half of the install path. Feature F-8.
+"""`loom diff` — the read half of the install path. Feature F-8.
 
 The one command in this initiative that **cannot** write, and the difference between it and
-`hl install --dry-run` is worth stating because both print a plan:
+`loom install --dry-run` is worth stating because both print a plan:
 
-* `hl diff` calls `diff_against_target`, the read use case, so it takes no lock (R85) and
+* `loom diff` calls `diff_against_target`, the read use case, so it takes no lock (R85) and
   `mcp/` could reach the same composition. It describes drift and nothing else;
-* `hl install --dry-run` calls `plan_install`, the **write**-side planner, so it also applies
+* `loom install --dry-run` calls `plan_install`, the **write**-side planner, so it also applies
   R75's refusal of an artifact that does not validate and V11's refusal of a symlinked root —
   and its exit status says whether the plan could be applied without a decision.
 
-`hl diff` therefore exits 0 whatever it finds, like `hl list`. That is a decision this task made
+`loom diff` therefore exits 0 whatever it finds, like `loom list`. That is a decision this task made
 and no criterion fixes; it is in T-22's task plan §8.
 """
 
@@ -59,7 +59,7 @@ def test_diff_reports_drift_and_still_exits_zero(runner: CliRunner, fixture_targ
 
     The committed pair drifts in every direction at once — paths the library holds and the
     target does not, paths the target holds and nobody claims, and one the two disagree about —
-    and `hl diff` exits 0 over all of it. `hl install --dry-run` is the command whose status
+    and `loom diff` exits 0 over all of it. `loom install --dry-run` is the command whose status
     answers "could this be applied without a decision".
     """
     result = run(runner, FIXTURE_LIBRARY, "diff", "--target", str(fixture_target), "--json")
@@ -78,7 +78,7 @@ def test_diff_writes_nothing_at_all(
 ) -> None:
     """Asserted on the target's digests **and** on the absence of a state directory.
 
-    The second half is the one that matters: `hl diff` composes a plan from the same three
+    The second half is the one that matters: `loom diff` composes a plan from the same three
     sources an install does, and a read command that wrote a manifest would make the next
     install believe it had installed something it never did.
     """

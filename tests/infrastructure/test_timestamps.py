@@ -21,9 +21,9 @@ from pathlib import Path
 
 import pytest
 
-from harness_library.domain.raw import RawArtifact
-from harness_library.infrastructure.scanner import scan_library
-from harness_library.infrastructure.timestamps import (
+from loom.domain.raw import RawArtifact
+from loom.infrastructure.scanner import scan_library
+from loom.infrastructure.timestamps import (
     FixedTimestamps,
     GitTimestamps,
     Timestamp,

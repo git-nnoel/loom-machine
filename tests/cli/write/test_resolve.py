@@ -23,7 +23,6 @@ keep. Ruling R100 puts that overwrite on the **next** install, and
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +36,7 @@ from tests.cli.write.conftest import (
     run,
     write,
 )
+from tests.rendering import flattened
 
 ALPHA = "skills/alpha/SKILL.md"
 BETA = "skills/beta/SKILL.md"
@@ -211,9 +211,15 @@ def test_the_resolve_help_says_that_target_does_not_pin(runner: CliRunner) -> No
     """**Ruling R100, asserted on the help text**, because that is where the ruling puts it.
 
     A user reading "keep what is on disk" will expect the opposite of what happens next, and the
-    only place this tool can tell them before they choose is the flag's own help. The rendering
-    is flattened first: Typer wraps every option's help to the terminal width and boxes it, and
-    neither a line break nor a box rule is a contract.
+    only place this tool can tell them before they choose is the flag's own help.
+
+    **The assertion is about the wording and nothing else** (R117). The rendering is decoration,
+    not contract: Typer wraps every option's help to the terminal width, boxes it, and \u2014 where
+    Rich thinks it has a terminal \u2014 colours the box rules, which puts escapes inside any phrase
+    that crossed the panel's edge. `flattened` takes all three out. The width that decides
+    where the wrap falls is pinned by `pinned_terminal_width`, so this reads the same here as in
+    CI; it is pinned narrow enough that the phrase still wraps, because a wrap it never meets is
+    a wrap it cannot survive.
     """
     result = run(runner, None, "install", "--help")
 
@@ -221,11 +227,6 @@ def test_the_resolve_help_says_that_target_does_not_pin(runner: CliRunner) -> No
     rendered = flattened(result.stdout)
     assert "does NOT pin the file" in rendered
     assert "NEXT loom install writes the library's version over the copy you kept" in rendered
-
-
-def flattened(rendered: str) -> str:
-    """Help text with its box rules and line wrapping taken out. Plumbing, not a verdict."""
-    return re.sub(r"\s+", " ", rendered.replace("\u2502", " "))
 
 
 def test_the_next_install_overwrites_a_kept_copy(

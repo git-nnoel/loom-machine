@@ -1,6 +1,6 @@
 # Implementation plan — Install, backup, drift
 
-**Status:** REOPENED 2026-10-05 for T-25 — two test-fragility defects found after the rename. Thirteen tasks accepted; T-25 outstanding.
+**Status:** CLOSED 2026-10-05 — fourteen tasks accepted, 1090 tests. T-25 closed two test-fragility defects whose cause was ambient `FORCE_COLOR`, not the rename (R119).
 **Reviewed:** 2026-09-21 · `phase-reviewer` × 2 · NOT READY (9 blocking), then NOT READY (7 blocking) · all sixteen resolved; one disputed in writing (§12); see the design record for the decisions behind them
 **Phase:** 1 · **Initiative:** 02-install-and-drift · **Owner:** delivery lead
 **Last updated:** 2026-09-21

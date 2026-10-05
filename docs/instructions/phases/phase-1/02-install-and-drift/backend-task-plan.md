@@ -2189,3 +2189,83 @@ uv run ruff format --check . && uv run ruff check . && uv run mypy src tests && 
 
 Whole, every time (L2), exit code read without a pipe (L44). Baseline **1038 passed**; the count
 must go up.
+
+---
+
+# Backend task plan — T-25, two Rich-rendering test defects
+
+## 1. The diagnosis, after checking the one I was given
+
+Both failures have **one** root cause, and it is not the one in the dispatch: a literal is matched
+against a stream **Rich decorated**, and the decoration landed inside the literal. R117 names this
+exactly.
+
+What actually turns the decoration on is ambient **`FORCE_COLOR=3`**, which this sandbox exports.
+Rich honours it over `isatty()` (`Console.is_terminal` returns on `FORCE_COLOR` before it ever
+reaches the file), so a `CliRunner` buffer and a subprocess pipe are both colourised. With
+`FORCE_COLOR` unset, **both tests pass unmodified**. Checked:
+
+```
+env -u FORCE_COLOR uv run pytest <the two tests> -q   →   2 passed
+```
+
+* **`test_an_invalid_flag_writes_nothing_to_stdout`.** The dispatch is right. Typer's option
+  highlighter styles the first hyphen as its own span — the bytes are
+  `ESC[1;36m-ESC[0mESC[1;36m-nopeESC[0m` — so the literal `--nope` is not in the stream. The
+  subject is intact: stdout is `''` and the exit status is 2.
+
+* **`test_the_resolve_help_says_that_target_does_not_pin`.** The dispatch is **wrong on cause**.
+  The rename did not break it; it was already broken. The panel's box rule is emitted as
+  `ESC[2m│ESC[0m`, and `flattened` removes the `│` but leaves the escapes, so a phrase that
+  crosses the panel's right edge keeps two escape runs in its middle and no longer matches.
+  Verified against the pre-rename tree itself — `git archive 73b3f22^` into `/tmp`, import
+  `harness_library.cli.main`, render:
+
+  | tree | assertion as written | with ANSI stripped |
+  |---|---|---|
+  | pre-rename (`hl`) | **False** | True |
+  | post-rename (`loom`) | **False** | True |
+
+  Two characters changed where the phrase wraps (2 lines → 3); they did not change whether it
+  wraps. `COLUMNS=200` "fixes" it only by pushing the decoration out of the phrase, which is why
+  it reads as a width bug.
+
+## 2. The fix
+
+**`tests/rendering.py`** — one shared plumbing module, asserting nothing (L29). `without_ansi`
+drops CSI/OSC escapes; `flattened` is `without_ansi` plus box rules plus whitespace collapse, moved
+here from `test_resolve.py` because the next caller is already visible.
+
+**The width is pinned at the seam**, not inherited: `typer.rich_utils.MAX_WIDTH` is what
+`_get_rich_console` reads, so an autouse fixture in `tests/cli/conftest.py` sets it. Pinned at
+**80** — Rich's own non-tty fallback, so nothing re-renders today — and deliberately *not* wide
+enough to un-wrap the phrase, because a pin that makes the wrap disappear is `COLUMNS=200` moved
+indoors and would leave the flattening unexercised. `monkeypatch.setattr` fails loudly if Typer
+ever renames the global.
+
+No env var is set, on the gate or anywhere else.
+
+## 3. The control that rotted, and saying so (L61)
+
+`"--nope" in stderr` is the positive control for an absence assertion, and it stopped meaning
+anything for a reason with no connection to stdout purity. Both repaired assertions now carry a
+docstring line naming the rendering as **decoration, not contract**, so the next reader knows the
+literal is matched against text and why.
+
+## 4. Mutation check (L35 — read this if the session was interrupted)
+
+| Mutation | Must fail | Must stay green |
+|---|---|---|
+| one byte to stdout in the `loom mcp` entry path | `test_an_invalid_flag_writes_nothing_to_stdout` **and** `test_every_byte_on_stdout_is_a_json_rpc_frame`, on the **subject** (`stdout == ""` / the line is not JSON), not on the repaired control | `test_the_server_still_reports_its_tool_calls_on_stderr` — so the rule stays "nothing on stdout", not "no output at all" |
+
+`src/loom/cli/main.py` is copied to the scratchpad before the mutation and restored from that copy.
+
+## 5. Gate
+
+```
+export PATH="$HOME/.local/bin:$PATH"
+uv run ruff format --check . && uv run ruff check . && uv run mypy src tests && uv run lint-imports && uv run pytest
+```
+
+Whole (L2), exit code read without a pipe (L44). Baseline **1088 passed, 2 failed**; target
+**1090 passed**, exit 0.

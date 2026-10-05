@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from tests.mcp.conftest import handshake_frames, speak
+from tests.rendering import without_ansi
 
 TOOLS_LIST = {"jsonrpc": "2.0", "id": 2, "method": "tools/list"}
 GET_REFERENCE = {
@@ -94,12 +95,19 @@ def test_an_invalid_flag_writes_nothing_to_stdout(fixture_library: Path) -> None
 
     `loom mcp --nope` never gets as far as serving, so the SDK's fd-1 diversion is not protecting
     anything here: this is charter §11 holding on its own, in the window before the transport
-    exists. The positive control is on stderr, where the complaint belongs."""
+    exists. The positive control is on stderr, where the complaint belongs.
+
+    **The control reads stderr as text, and that is not incidental** (R117). Typer's option
+    highlighter styles the leading hyphen of a flag as a span of its own, so the raw stream holds
+    `ESC[1;36m-ESC[0mESC[1;36m-nopeESC[0m` and the literal `--nope` is nowhere in it. The control
+    once matched the raw bytes and rotted the day Rich decided it had a terminal — the guarantee
+    never moved, only the styling around it. What is claimed here is that the complaint *names
+    the flag*; the colour it names it in is decoration (L61)."""
     conversation = speak([], library=fixture_library, extra=["--nope"], expect_responses=0)
 
     assert conversation.stdout == ""
     assert conversation.exit_code != 0
-    assert "--nope" in conversation.stderr
+    assert "--nope" in without_ansi(conversation.stderr)
 
 
 def test_a_non_library_root_writes_nothing_to_stdout(tmp_path: Path) -> None:

@@ -10,6 +10,16 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.import_linter_cache/
+
+# Gate output. The gate's exit code is read with `; echo $?`, never through a pipe,
+# so runs are routinely redirected to a log.
+gate*.log
+
+# Editor and OS noise
+*.swp
+*.swo
+.DS_Store
 
 # Build artefacts
 build/
